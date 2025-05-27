@@ -92,7 +92,7 @@ func setupInitialSetupPage(ctx *app.AppContext) {
 		AddTextView("Hint:", "Use Right-Click or Ctrl+V to paste path.", 0, 1, true, false).
 		AddButton("Load Mods & Start", func() { HandleLoadModsAndStart(ctx) }).
 		AddButton("Quit", func() { ctx.App.Stop() })
-	ctx.SetupForm.SetBorder(true).SetTitle("Minecraft Mod Bisect Tool - Setup")
+	ctx.SetupForm.SetBorder(true).SetTitle("Qendolin's Fabric Mod Bisect Tool - Setup")
 
 	setupLayout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(ctx.SetupForm, 9, 0, true). // Form takes proportional space, gets initial focus if flex does
