@@ -47,7 +47,11 @@ func InitializeTUIPrimitives(ctx *app.AppContext) {
 	ctx.SearchSpaceList = listSetup("Search Space")
 	ctx.GroupAList = listSetup("Group A")
 	ctx.GroupBList = listSetup("Group B")
-	ctx.AllModsList = listSetup("All Mods (E/D to toggle Force)")
+	ctx.AllModsList = tview.NewTable().
+		SetBorders(false).
+		SetFixed(1, 0).
+		SetEvaluateAllRows(true).
+		SetSelectable(true, false)
 	ctx.ForceEnabledList = listSetup("Force Enabled")
 	ctx.ForceDisabledList = listSetup("Force Disabled")
 	ctx.ModSearchInput = tview.NewInputField().SetLabel("Search: ").SetFieldWidth(30)
@@ -185,13 +189,15 @@ func setupBisectionPage(ctx *app.AppContext) {
 }
 
 func setupModSelectionPage(ctx *app.AppContext) {
-	ctx.AllModsList.SetSelectedFunc(func(i int, mt, st string, r rune) { HandleModListSelect(ctx) })
 	ctx.ModSearchInput.SetChangedFunc(func(text string) { ctx.PopulateAllModsList() })
 	ctx.ModSearchInput.SetDoneFunc(func(key tcell.Key) { HandleModSearchDone(ctx, key) })
 
 	forcedListsFlex := tview.NewFlex().
 		AddItem(ctx.ForceEnabledList, 0, 1, true).
 		AddItem(ctx.ForceDisabledList, 0, 1, true)
+
+	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable").SetBorder(true)
+
 	modListAndForcedFlex := tview.NewFlex().
 		AddItem(ctx.AllModsList, 0, 2, true).
 		AddItem(forcedListsFlex, 0, 1, false) // This flex's children are focusable
@@ -201,7 +207,7 @@ func setupModSelectionPage(ctx *app.AppContext) {
 		AddItem(modListAndForcedFlex, 0, 1, false)
 
 	modSelectionFrame := tview.NewFrame(modSelectionLayout).
-		AddText("Mod Management | E/D on mod in 'All Mods' | Tab/Shift+Tab | Esc to Bisection",
+		AddText("Mod Management | Tab/Shift+Tab | Esc to close",
 			true, tview.AlignCenter, tcell.ColorYellow)
 
 	modSelectionFocusElements := []tview.Primitive{

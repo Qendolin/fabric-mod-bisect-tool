@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -33,7 +34,7 @@ type AppContext struct {
 	SearchSpaceList   *tview.List
 	GroupAList        *tview.List
 	GroupBList        *tview.List
-	AllModsList       *tview.List
+	AllModsList       *tview.Table
 	ForceEnabledList  *tview.List
 	ForceDisabledList *tview.List
 	ModSearchInput    *tview.InputField
@@ -200,9 +201,12 @@ func (ctx *AppContext) PopulateAllModsList() {
 	sort.Strings(fdNames)
 
 	// Store current selection *before* clearing, to be restored later
-	currentAllModsIdx := -1
-	if ctx.AllModsList.GetItemCount() > 0 { // Only get index if list is not empty
-		currentAllModsIdx = ctx.AllModsList.GetCurrentItem()
+	currentSelectedRow := -1               // Use -1 to indicate no valid selection or header selected
+	if ctx.AllModsList.GetRowCount() > 1 { // Check if there are any data rows (row 0 is header)
+		r, _ := ctx.AllModsList.GetSelection()
+		if r >= 1 { // Ensure selection is on a data row (not header)
+			currentSelectedRow = r
+		}
 	}
 
 	// --- Queue the entire UI update (clear and repopulate) ---
@@ -215,6 +219,18 @@ func (ctx *AppContext) PopulateAllModsList() {
 		// This will store IDs of items *actually added* in this specific update run
 		newlyDisplayedModIDsInThisRun := make([]string, 0, len(displayMods))
 
+		// Add table headers
+		headers := []string{"Status", "Name", "ID", "File"}
+		expansions := []int{1, 3, 3, 3}
+		for colIdx, headerName := range headers {
+			headerCell := tview.NewTableCell(headerName).
+				SetTextColor(tcell.ColorYellow).
+				SetAlign(tview.AlignLeft).
+				SetSelectable(false).SetExpansion(expansions[colIdx])
+			ctx.AllModsList.SetCell(0, colIdx, headerCell)
+		}
+		tableRowIndex := 1 // Data rows start from index 1
+
 		// Populate forced lists
 		for _, name := range feNames {
 			ctx.ForceEnabledList.AddItem(tview.Escape(name), "", 0, nil)
@@ -223,7 +239,7 @@ func (ctx *AppContext) PopulateAllModsList() {
 			ctx.ForceDisabledList.AddItem(tview.Escape(name), "", 0, nil)
 		}
 
-		// Populate AllModsList
+		// Populate AllModsList (Table)
 		for _, dispInfo := range displayMods {
 			mod := dispInfo.Mod
 			modID := dispInfo.ID
@@ -235,49 +251,72 @@ func (ctx *AppContext) PopulateAllModsList() {
 				continue
 			}
 
-			statusColor := "[white]"
+			// Determine Status
 			statusText := ""
+			statusTextColor := tcell.ColorWhite
 			if ctx.Bisector.ForceEnabled[modID] {
-				statusText = "(Force)"
-				statusColor = "[lime]"
+				statusText = "Force"
+				statusTextColor = tcell.ColorLimeGreen
+			} else if ctx.Bisector.ForceDisabled[modID] {
+				statusText = "Force"
+				statusTextColor = tcell.ColorRed
+			} else if mod.ConfirmedGood {
+				statusText = "Good "
+				statusTextColor = tcell.ColorGreen
+			} else if !mod.IsCurrentlyActive {
+				statusText = "Off"
+				statusTextColor = tcell.ColorGray
 			}
-			if ctx.Bisector.ForceDisabled[modID] {
-				statusText = "(Force)"
-				statusColor = "[red]"
-			}
-			if mod != nil && mod.ConfirmedGood {
-				statusText = "(Good) "
-				statusColor = "[green]"
-			}
-			if mod != nil && !mod.IsCurrentlyActive && statusText == "" {
-				statusText = "[gray](Off)  [white]"
-			}
+
 			if statusText == "" {
-				statusText = "       "
+				statusText = ""
 			}
 
-			mainDisplay := fmt.Sprintf("%s%s %s[grey]", statusColor, statusText, tview.Escape(friendlyName))
-			mainDisplay += fmt.Sprintf(" / %s / %s.jar", tview.Escape(modID), tview.Escape(mod.BaseFilename))
+			statusCell := tview.NewTableCell(statusText).
+				SetTextColor(statusTextColor).
+				SetAlign(tview.AlignLeft).
+				SetExpansion(expansions[0])
 
-			ctx.AllModsList.AddItem(mainDisplay, "", 0, nil)
+			nameCell := tview.NewTableCell(tview.Escape(friendlyName)).
+				SetTextColor(tcell.ColorWhite). // Default color for name
+				SetAlign(tview.AlignLeft).
+				SetExpansion(expansions[1]).
+				SetMaxWidth(35)
+
+			idCell := tview.NewTableCell(tview.Escape(modID)).
+				SetTextColor(tcell.ColorWhite).
+				SetAlign(tview.AlignLeft).
+				SetExpansion(expansions[2])
+
+			fileText := tview.Escape(mod.BaseFilename) + ".jar"
+			fileCell := tview.NewTableCell(fileText).
+				SetTextColor(tcell.ColorWhite).
+				SetAlign(tview.AlignLeft).
+				SetExpansion(expansions[3])
+
+			ctx.AllModsList.SetCell(tableRowIndex, 0, statusCell)
+			ctx.AllModsList.SetCell(tableRowIndex, 1, nameCell)
+			ctx.AllModsList.SetCell(tableRowIndex, 2, idCell)
+			ctx.AllModsList.SetCell(tableRowIndex, 3, fileCell)
+
 			newlyDisplayedModIDsInThisRun = append(newlyDisplayedModIDsInThisRun, modID)
+			tableRowIndex++
 		}
 		// Update the shared list of displayed IDs *after* this run has populated everything
 		ctx.currentlyDisplayedModIDsInAllModsList = newlyDisplayedModIDsInThisRun
 
 		// Restore selection logic more carefully
-		if currentAllModsIdx >= 0 { // If there was a selection
-			if ctx.AllModsList.GetItemCount() > 0 { // And the list is not empty now
-				if currentAllModsIdx < ctx.AllModsList.GetItemCount() {
-					ctx.AllModsList.SetCurrentItem(currentAllModsIdx)
+		if currentSelectedRow >= 1 { // If there was a selection on a data row
+			if ctx.AllModsList.GetRowCount() > 1 { // And the table has data rows now
+				if currentSelectedRow < ctx.AllModsList.GetRowCount() {
+					ctx.AllModsList.Select(currentSelectedRow, 0) // Select column 0 by default
 				} else {
-					// If previous index is now out of bounds, select the last item
-					ctx.AllModsList.SetCurrentItem(ctx.AllModsList.GetItemCount() - 1)
+					// If previous row index is now out of bounds, select the last data row
+					ctx.AllModsList.Select(ctx.AllModsList.GetRowCount()-1, 0)
 				}
 			}
-			// If list became empty, selection is implicitly -1 (no selection)
-		} else if ctx.AllModsList.GetItemCount() > 0 { // No previous selection, but list has items
-			ctx.AllModsList.SetCurrentItem(0) // Default to first item
+		} else if ctx.AllModsList.GetRowCount() > 1 { // No previous selection, but table has data rows
+			ctx.AllModsList.Select(1, 0) // Default to first data row, column 0
 		}
 	})
 }
@@ -285,15 +324,20 @@ func (ctx *AppContext) PopulateAllModsList() {
 // GetSelectedModIDFromAllModsList retrieves the mod ID of the currently selected item in AllModsList.
 // This relies on currentlyDisplayedModIDsInAllModsList being kept in sync.
 func (ctx *AppContext) GetSelectedModIDFromAllModsList() (string, bool) {
-	if ctx.AllModsList == nil || ctx.AllModsList.GetItemCount() == 0 {
+	if ctx.AllModsList == nil || ctx.AllModsList.GetRowCount() <= 1 { // <=1 because row 0 is header
 		return "", false
 	}
-	selectedIndex := ctx.AllModsList.GetCurrentItem()
-	if selectedIndex < 0 || selectedIndex >= len(ctx.currentlyDisplayedModIDsInAllModsList) {
-		log.Printf("%sError: Selected index %d is out of bounds for displayed mods list (len %d)", LogErrorPrefix, selectedIndex, len(ctx.currentlyDisplayedModIDsInAllModsList))
+	selectedRow, _ := ctx.AllModsList.GetSelection()
+
+	// Data rows start at index 1 in the table, corresponding to index 0 in currentlyDisplayedModIDsInAllModsList
+	dataRowIndex := selectedRow - 1
+
+	if dataRowIndex < 0 || dataRowIndex >= len(ctx.currentlyDisplayedModIDsInAllModsList) {
+		// This can happen if header is selected or selection is otherwise invalid
+		log.Printf("%sWarning: Selected table row %d (data index %d) is out of bounds for displayed mods list (len %d). No mod selected.", LogWarningPrefix, selectedRow, dataRowIndex, len(ctx.currentlyDisplayedModIDsInAllModsList))
 		return "", false
 	}
-	return ctx.currentlyDisplayedModIDsInAllModsList[selectedIndex], true
+	return ctx.currentlyDisplayedModIDsInAllModsList[dataRowIndex], true
 }
 
 // AskBisectionQuestion shows the modal for user feedback.
@@ -417,22 +461,22 @@ func (ctx *AppContext) ReinitializeAppContextForSetup() {
 
 	// Clear TUI lists associated with bisection
 	if ctx.SearchSpaceList != nil {
-		ctx.SearchSpaceList.Clear().SetTitle("Search Space")
+		ctx.SearchSpaceList.Clear()
 	}
 	if ctx.GroupAList != nil {
-		ctx.GroupAList.Clear().SetTitle("Group A")
+		ctx.GroupAList.Clear()
 	}
 	if ctx.GroupBList != nil {
-		ctx.GroupBList.Clear().SetTitle("Group B")
+		ctx.GroupBList.Clear()
 	}
 	if ctx.AllModsList != nil {
-		ctx.AllModsList.Clear().SetTitle("All Mods")
+		ctx.AllModsList.Clear()
 	}
 	if ctx.ForceEnabledList != nil {
-		ctx.ForceEnabledList.Clear().SetTitle("Force Enabled")
+		ctx.ForceEnabledList.Clear()
 	}
 	if ctx.ForceDisabledList != nil {
-		ctx.ForceDisabledList.Clear().SetTitle("Force Disabled")
+		ctx.ForceDisabledList.Clear()
 	}
 	if ctx.ModSearchInput != nil {
 		ctx.ModSearchInput.SetText("")
