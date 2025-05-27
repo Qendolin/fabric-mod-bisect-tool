@@ -480,8 +480,8 @@ func (b *Bisector) recalculateAndApplyCurrentModset(reason string) {
 		if b.IterationCount == 0 && len(b.CurrentSearchSpace) > 0 {
 			// Before first iteration, apply a neutral set (all enabled by default, respecting forces)
 			effectiveGroupToReapply = make(map[string]bool)
-			for id, m := range b.AllMods {
-				if m.IsCurrentlyActive && !b.ForceDisabled[id] {
+			for id := range b.AllMods {
+				if !b.ForceDisabled[id] {
 					effectiveGroupToReapply[id] = true
 				}
 			}

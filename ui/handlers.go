@@ -304,13 +304,6 @@ func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tc
 	return event // Event not handled by this specific handler
 }
 
-func HandleModListSelect(ctx *app.AppContext) { // Called on Enter in AllModsList
-	ctx.Pages.SwitchToPage(PageNameBisection)
-	ctx.App.SetFocus(ctx.SearchSpaceList)
-	currentStatus := "Returned to bisection page. Press 'S' to continue."
-	ctx.UpdateInfo(currentStatus, false)
-}
-
 func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) { // Called on Enter/Esc in ModSearchInput
 	if key == tcell.KeyEnter {
 		ctx.App.SetFocus(ctx.AllModsList) // Move focus from search to the list
