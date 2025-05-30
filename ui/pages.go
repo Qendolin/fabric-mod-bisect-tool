@@ -216,7 +216,7 @@ func setupModSelectionPage(ctx *app.AppContext) {
 		AddItem(ctx.ForceEnabledList, 0, 1, false).
 		AddItem(ctx.ForceDisabledList, 0, 1, false)
 
-	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable").SetBorder(true)
+	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable | [yellow](+ Shift)[white] All").SetBorder(true)
 
 	modListAndForcedFlex := tview.NewFlex().
 		AddItem(ctx.AllModsList, 0, 2, true).
