@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app"
 	"github.com/gdamore/tcell/v2"
@@ -62,6 +63,8 @@ func HandleLoadModsAndStart(ctx *app.AppContext) {
 }
 
 func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
+	currentPage, _ := ctx.Pages.GetFrontPage()
+
 	if event.Key() == tcell.KeyRune && (event.Rune() == 'q' || event.Rune() == 'Q') {
 		focusedPrimitive := ctx.App.GetFocus()
 		if _, isInput := focusedPrimitive.(*tview.InputField); isInput {
@@ -71,7 +74,6 @@ func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.Event
 			return event
 		}
 
-		currentPage, _ := ctx.Pages.GetFrontPage()
 		if currentPage == PageNameBisection || currentPage == PageNameModSelection || currentPage == PageNameInitialSetup {
 			ctx.Pages.ShowPage(PageNameConfirmQuitModal)
 			ctx.App.SetFocus(ctx.ConfirmQuitModal)
@@ -79,12 +81,13 @@ func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.Event
 		}
 	}
 
-	currentPage, _ := ctx.Pages.GetFrontPage()
 	switch currentPage {
 	case PageNameBisection:
 		return handleBisectionPageInput(ctx, event)
 	case PageNameModSelection:
 		return handleModSelectionPageInput(ctx, event)
+	case PageNameImportGoodMods:
+		return handleImportListPageInput(ctx, event)
 	}
 	return event
 }
@@ -118,16 +121,15 @@ func HandleQuestionModalDone(ctx *app.AppContext, buttonIndex int, buttonLabel s
 		log.Printf("%sModal response: '%s' (Issue Occurred: %t)", app.LogInfoPrefix, buttonLabel, issueOccurred)
 
 		done, nextQuestion, status := ctx.Bisector.ProcessUserFeedback(issueOccurred)
-		ctx.UpdateBisectionLists() // Update lists after Bisector processes feedback
+		ctx.UpdateBisectionLists()
 
 		if done {
 			ctx.UpdateInfo(status+"\n\nPress 'R' to Reset, or 'Q' to Quit.", false)
 		} else {
-			ctx.UpdateInfo(status, false) // Display current iteration status
-			if nextQuestion != "" {       // If there's a specific next question (e.g., for Group B)
+			ctx.UpdateInfo(status, false)
+			if nextQuestion != "" {
 				ctx.AskBisectionQuestion(nextQuestion, PageNameBisection, ctx.SearchSpaceList)
 			}
-			// If no nextQuestion, it implies a new iteration will be prepared by 'S' key
 		}
 
 	case ModalButtonInterrupt:
@@ -222,8 +224,6 @@ func handleStartBisectionStep(ctx *app.AppContext) {
 		ctx.AskBisectionQuestion(question, PageNameBisection, ctx.SearchSpaceList)
 	} else {
 		log.Printf("%shandleStartBisectionStep: Not done, but no question generated. Phase: %d. Status: %s", app.LogErrorPrefix, currentPhase, status)
-		// This can happen if a strategy decides not to test B and directly prepares for next iteration.
-		// The status message from ProcessUserFeedback (via strategy) should guide the user.
 	}
 }
 
@@ -248,29 +248,26 @@ func handleManageMods(ctx *app.AppContext) {
 	ctx.PopulateAllModsList()
 	ctx.Pages.SwitchToPage(PageNameModSelection)
 	ctx.App.SetFocus(ctx.ModSearchInput)
-	ctx.UpdateInfo("Mod Management: Use E/D to toggle Force. Press Esc to return to bisection.", false)
+	ctx.UpdateInfo("Mod Management: Use E/D/G to toggle Force/Good. Press Esc to return to bisection.", false)
 }
 
 func handleReset(ctx *app.AppContext) {
 	if ctx.Bisector != nil {
 		ctx.Bisector.RestoreInitialModState()
 	}
-	// Preserve mods path and selected strategy, but reset everything else.
 	currentModsPath := ctx.GetModsPath()
-	currentStrategy := ctx.BisectionStrategy // Store before reinitialize
+	currentStrategy := ctx.BisectionStrategy
 
-	ctx.ReinitializeAppContextForSetup() // Resets bisector and UI elements
+	ctx.ReinitializeAppContextForSetup()
 
-	ctx.SetModsPath(currentModsPath)        // Restore mods path
-	ctx.BisectionStrategy = currentStrategy // Restore strategy
+	ctx.SetModsPath(currentModsPath)
+	ctx.BisectionStrategy = currentStrategy
 
 	go ctx.App.QueueUpdateDraw(func() {
 		if setupForm := ctx.SetupForm; setupForm != nil && setupForm.GetFormItemCount() > 0 {
-			// Update path input field
 			if pathInput, ok := setupForm.GetFormItem(0).(*tview.InputField); ok {
 				pathInput.SetText(ctx.GetModsPath())
 			}
-			// Update strategy dropdown
 			if strategyDropDown, ok := setupForm.GetFormItem(1).(*tview.DropDown); ok {
 				for i := range app.BisectionStrategyTypeStrings {
 					if i == ctx.BisectionStrategy {
@@ -288,55 +285,78 @@ func handleReset(ctx *app.AppContext) {
 }
 
 func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
-	// Focus handling is now primarily managed by the page's SetInputCapture in pages.go
-	// This function will handle specific key actions for focused elements.
 	if ctx.AllModsList.HasFocus() && event.Key() == tcell.KeyRune {
+		if ctx.Bisector == nil {
+			ctx.UpdateInfo("Bisector not initialized. Load mods first.", true)
+			return nil
+		}
 
 		if event.Modifiers()&tcell.ModShift != 0 {
 			switch event.Rune() {
 			case 'e', 'E':
 				ctx.Bisector.ToggleForceEnable(ctx.Bisector.AllModIDsSorted...)
 				ctx.PopulateAllModsList()
+				ctx.UpdateBisectionLists()
 				return nil
 			case 'd', 'D':
 				ctx.Bisector.ToggleForceDisable(ctx.Bisector.AllModIDsSorted...)
 				ctx.PopulateAllModsList()
+				ctx.UpdateBisectionLists()
+				return nil
+			case 'g', 'G':
+				ctx.Bisector.ToggleConfirmedGood(ctx.Bisector.AllModIDsSorted...)
+				ctx.PopulateAllModsList()
+				ctx.UpdateBisectionLists()
 				return nil
 			}
-		}
-
-		modID, found := ctx.GetSelectedModIDFromAllModsList()
-		if found {
-			switch event.Rune() {
-			case 'e', 'E':
-				ctx.Bisector.ToggleForceEnable(modID)
-				ctx.PopulateAllModsList()
-				return nil
-			case 'd', 'D':
-				ctx.Bisector.ToggleForceDisable(modID)
-				ctx.PopulateAllModsList()
-				return nil
+		} else {
+			modID, found := ctx.GetSelectedModIDFromAllModsList()
+			if found {
+				switch event.Rune() {
+				case 'e', 'E':
+					ctx.Bisector.ToggleForceEnable(modID)
+					ctx.PopulateAllModsList()
+					ctx.UpdateBisectionLists()
+					return nil
+				case 'd', 'D':
+					ctx.Bisector.ToggleForceDisable(modID)
+					ctx.PopulateAllModsList()
+					ctx.UpdateBisectionLists()
+					return nil
+				case 'g', 'G':
+					ctx.Bisector.ToggleConfirmedGood(modID)
+					ctx.PopulateAllModsList()
+					ctx.UpdateBisectionLists()
+					return nil
+				}
 			}
 		}
 	}
+
 	if event.Key() == tcell.KeyEscape {
 		if ctx.ModSearchInput.HasFocus() && ctx.ModSearchInput.GetText() != "" {
-			// defer event handling to search input
 			return event
 		}
 		ctx.Pages.SwitchToPage(PageNameBisection)
-		ctx.App.SetFocus(ctx.SearchSpaceList) // Default focus for bisection page
+		if ctx.SearchSpaceList != nil {
+			ctx.App.SetFocus(ctx.SearchSpaceList)
+		}
 		currentStatus := "Press 'S' to start or continue bisection."
+		if ctx.Bisector != nil && ctx.Bisector.GetIterationCount() > 0 {
+			currentStatus = fmt.Sprintf("Iteration %d. Press 'S' to continue.", ctx.Bisector.GetIterationCount())
+		} else if ctx.Bisector == nil {
+			currentStatus = "Bisector not ready. Load mods first."
+		}
 		ctx.UpdateInfo(currentStatus, false)
-		return nil // Event handled
+		return nil
 	}
-	return event // Event not handled by this specific handler
+	return event
 }
 
 func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) {
 	if key == tcell.KeyEnter {
-		if ctx.AllModsList.GetRowCount() > 1 { // Check if list has content rows
-			ctx.AllModsList.Select(1, 0) // Select first data row
+		if ctx.AllModsList.GetRowCount() > 1 {
+			ctx.AllModsList.Select(1, 0)
 		}
 		ctx.App.SetFocus(ctx.AllModsList)
 	} else if key == tcell.KeyEscape {
@@ -344,4 +364,148 @@ func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) {
 			ctx.ModSearchInput.SetText("")
 		}
 	}
+}
+
+func handleImportListPageInput(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
+	currentPage, _ := ctx.Pages.GetFrontPage()
+
+	if event.Key() == tcell.KeyEscape {
+		if currentPage == PageNameImportGoodMods {
+			ctx.Pages.SwitchToPage(PageNameModSelection)
+			ctx.App.SetFocus(ctx.ModSearchInput)
+			ctx.UpdateInfo("Mod Management: Use E/D/G to toggle. Press Esc to return to bisection.", false)
+			return nil
+		}
+	}
+
+	return event
+}
+
+func handleExportGoodModsAction(ctx *app.AppContext) {
+	file, err := os.OpenFile("open_mods.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("%sError opening open_mods.txt for export: %v", app.LogErrorPrefix, err)
+		ctx.UpdateInfo(fmt.Sprintf("Error exporting good mods list: %v", err), true)
+		return
+	}
+	file.WriteString("# A list of mod id's that haven't been confirmed good\n")
+	for _, modID := range ctx.Bisector.AllModIDsSorted {
+		mod := ctx.Bisector.AllMods[modID]
+		if !mod.ConfirmedGood {
+			file.WriteString(mod.ModID() + "\n")
+		}
+	}
+	if err = file.Close(); err != nil {
+		log.Printf("%sError closing open_mods.txt after export: %v", app.LogErrorPrefix, err)
+		ctx.UpdateInfo(fmt.Sprintf("Error closing export file: %v", err), true)
+		return
+	}
+	log.Printf("%sSuccessfully exported list of non-good mods to open_mods.txt", app.LogInfoPrefix)
+	ctx.UpdateInfo("Successfully exported list of non-good mods to open_mods.txt", false)
+}
+
+// handleImportGoodModsAction processes the list of mod identifiers from the import text area.
+// markProvidedListAsGood: If true, mods in the list are marked good.
+// If false, mods NOT in the list are marked good (limit search space to list).
+func handleImportGoodModsAction(ctx *app.AppContext, markProvidedListAsGood bool) {
+	if ctx.Bisector == nil {
+		ctx.UpdateInfo("Bisector not initialized. Load mods first.", true)
+		return
+	}
+	if ctx.ImportGoodModsTextArea == nil {
+		log.Printf("%sImportGoodModsTextArea is nil. Cannot process action.", app.LogErrorPrefix)
+		return
+	}
+
+	text := ctx.ImportGoodModsTextArea.GetText()
+	lines := strings.Split(text, "\n")
+	var inputIdentifiers []string
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" && !strings.HasPrefix(trimmedLine, "#") {
+			inputIdentifiers = append(inputIdentifiers, trimmedLine)
+		}
+	}
+
+	if len(inputIdentifiers) == 0 {
+		ctx.UpdateInfo("No mod identifiers provided in the import list.", true)
+		ctx.Pages.SwitchToPage(PageNameModSelection)
+		ctx.App.SetFocus(ctx.ModSearchInput)
+		return
+	}
+
+	var resolvedInputModIDs []string
+	fileNameToIDMap := make(map[string]string)
+	for modID, mod := range ctx.Bisector.AllMods {
+		// Store lowercase for case-insensitive matching of filenames
+		fileNameToIDMap[strings.ToLower(mod.BaseFilename+".jar")] = modID
+		fileNameToIDMap[strings.ToLower(mod.BaseFilename+".jar.disabled")] = modID
+	}
+
+	for _, identifier := range inputIdentifiers {
+		lowerIdentifier := strings.ToLower(identifier)
+		// Try matching as filename first
+		if modID, found := fileNameToIDMap[lowerIdentifier]; found {
+			resolvedInputModIDs = append(resolvedInputModIDs, modID)
+		} else { // If not a filename, assume it's a mod ID (case-sensitive for mod IDs)
+			if _, found := ctx.Bisector.AllMods[identifier]; found {
+				resolvedInputModIDs = append(resolvedInputModIDs, identifier)
+			} else {
+				log.Printf("%sImport: Identifier '%s' not found in loaded mods (checked as filename and mod ID).", app.LogWarningPrefix, identifier)
+			}
+		}
+	}
+
+	if len(resolvedInputModIDs) == 0 {
+		ctx.UpdateInfo("None of the provided identifiers matched loaded mods.", true)
+		ctx.Pages.SwitchToPage(PageNameModSelection)
+		ctx.App.SetFocus(ctx.ModSearchInput)
+		return
+	}
+
+	var modsToMakeGood []string
+	var modsToMakeNotGood []string // Only used if !markProvidedListAsGood
+	reason := ""
+
+	if markProvidedListAsGood {
+		reason = "Import: Mark provided list as good"
+		modsToMakeGood = resolvedInputModIDs // All resolved IDs from the list
+		// modsToMakeNotGood remains empty
+		log.Printf("%s%s. Input list resolved to %d mod IDs: %v", app.LogInfoPrefix, reason, len(modsToMakeGood), modsToMakeGood)
+	} else { // Limit search space to the list (mark everything else as good)
+		reason = "Import: Limit search space to provided list"
+		inputSet := make(map[string]bool)
+		for _, id := range resolvedInputModIDs {
+			inputSet[id] = true
+		}
+
+		for _, modID := range ctx.Bisector.AllModIDsSorted {
+			// Mod is IN the list, should be kept in search space (i.e., NOT good)
+			if inputSet[modID] {
+				modsToMakeNotGood = append(modsToMakeNotGood, modID)
+			} else { // Mod is NOT in the list, should be excluded (i.e., good)
+				modsToMakeGood = append(modsToMakeGood, modID)
+			}
+		}
+		log.Printf("%s%s. Input list resolved to %d mod IDs to keep: %v", app.LogInfoPrefix, reason, len(modsToMakeNotGood), modsToMakeNotGood)
+	}
+
+	ctx.Bisector.BatchUpdateGoodStatus(modsToMakeGood, modsToMakeNotGood, reason)
+
+	uniqueResolvedCount := 0
+	if len(resolvedInputModIDs) > 0 {
+		seen := make(map[string]bool)
+		for _, id := range resolvedInputModIDs {
+			if !seen[id] {
+				seen[id] = true
+				uniqueResolvedCount++
+			}
+		}
+	}
+
+	ctx.PopulateAllModsList()
+	ctx.UpdateBisectionLists()
+	ctx.Pages.SwitchToPage(PageNameModSelection)
+	ctx.App.SetFocus(ctx.AllModsList)
+	ctx.UpdateInfo(fmt.Sprintf("Import action '%s' processed. %d unique mods matched from list.", reason, uniqueResolvedCount), false)
 }

@@ -16,6 +16,7 @@ const (
 	PageNameModSelection     = "modSelection"
 	PageNameQuestionModal    = "questionModal"
 	PageNameConfirmQuitModal = "confirmQuitModal"
+	PageNameImportGoodMods   = "importGoodMods"
 )
 
 const (
@@ -56,8 +57,8 @@ func InitializeTUIPrimitives(ctx *app.AppContext) {
 		SetSelectable(true, false)
 	ctx.ForceEnabledList = listSetup("Force Enabled")
 	ctx.ForceDisabledList = listSetup("Force Disabled")
-	ctx.ModSearchInput = tview.NewInputField().SetLabel("Search: ").SetFieldWidth(30)
-	ctx.ModSearchInput.SetBorder(true)
+
+	ctx.ModSearchInput = tview.NewInputField().SetLabel("Search: ").SetFieldWidth(0)
 
 	ctx.QuestionModal = tview.NewModal().
 		AddButtons([]string{ModalButtonFailure, ModalButtonSuccess, ModalButtonInterrupt})
@@ -68,6 +69,9 @@ func InitializeTUIPrimitives(ctx *app.AppContext) {
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			HandleConfirmQuitModalDone(ctx, buttonIndex, buttonLabel)
 		})
+
+	ctx.ImportGoodModsTextArea = tview.NewTextArea().
+		SetPlaceholder("Paste list of mod IDs or filenames here, one per line.")
 }
 
 func SetupPages(ctx *app.AppContext) {
@@ -78,6 +82,7 @@ func SetupPages(ctx *app.AppContext) {
 	setupModSelectionPage(ctx)
 	setupQuestionModalPage(ctx)
 	setupConfirmQuitModalPage(ctx)
+	setupImportGoodModsPage(ctx)
 
 	ctx.Pages.SwitchToPage(PageNameInitialSetup)
 	ctx.UpdateInfo("Enter mod folder path. Use Tab/Shift+Tab to navigate, Enter to interact.", false)
@@ -111,46 +116,38 @@ func setupInitialSetupPage(ctx *app.AppContext) {
 	ctx.SetupForm.SetBorder(true).SetTitle(" Qendolin's Fabric Mod Bisect Tool ")
 
 	setupLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ctx.SetupForm, 11, 0, true).    // Form takes proportional space
-		AddItem(ctx.InfoTextView, 3, 0, false). // Fixed height for info
-		AddItem(ctx.DebugLogView, 0, 2, false)  // Log view takes proportional space
+		AddItem(ctx.SetupForm, 11, 0, true).
+		AddItem(ctx.InfoTextView, 3, 0, false).
+		AddItem(ctx.DebugLogView, 0, 2, false)
 
-	// Allow tabbing from DebugLogView back to the form.
 	ctx.DebugLogView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
-			// Try to focus the first interactive element of the form
 			if ctx.SetupForm.GetFormItemCount() > 0 {
 				ctx.App.SetFocus(ctx.SetupForm.GetFormItem(0))
 			} else {
-				ctx.App.SetFocus(ctx.SetupForm) // Fallback to form itself
+				ctx.App.SetFocus(ctx.SetupForm)
 			}
 			return nil
 		}
 		return event
 	})
 
-	// Explicit Tab/Backtab handling from Form elements to DebugLogView
-	// Last button in the form
 	if quitButton := ctx.SetupForm.GetButton(ctx.SetupForm.GetButtonCount() - 1); quitButton != nil {
 		quitButton.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyTab && event.Modifiers() == 0 { // Tab forward
+			if event.Key() == tcell.KeyTab && event.Modifiers() == 0 {
 				ctx.App.SetFocus(ctx.DebugLogView)
 				return nil
 			}
-			return event // Pass to default form handling
+			return event
 		})
 	}
-	// First form item (pathInput)
 	pathInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyBacktab { // Shift+Tab
+		if event.Key() == tcell.KeyBacktab {
 			ctx.App.SetFocus(ctx.DebugLogView)
 			return nil
 		}
-		// For Enter key, default behavior (move to next field or submit if button) is desired
-		// For other keys, default InputField behavior is desired
 		return event
 	})
-	// Handle tabbing for the DropDown as well if necessary, though Form usually handles items.
 
 	ctx.Pages.AddPage(PageNameInitialSetup, setupLayout, true, true)
 }
@@ -212,27 +209,60 @@ func setupModSelectionPage(ctx *app.AppContext) {
 	ctx.ModSearchInput.SetChangedFunc(func(text string) { ctx.PopulateAllModsList() })
 	ctx.ModSearchInput.SetDoneFunc(func(key tcell.Key) { HandleModSearchDone(ctx, key) })
 
+	importButton := tview.NewButton("Import").SetSelectedFunc(func() {
+		if ctx.Bisector == nil {
+			ctx.UpdateInfo("Bisector not initialized. Load mods first.", true)
+			return
+		}
+		if ctx.ImportGoodModsTextArea != nil {
+			ctx.ImportGoodModsTextArea.SetText("", true)
+		}
+		ctx.Pages.SwitchToPage(PageNameImportGoodMods)
+		ctx.App.SetFocus(ctx.ImportGoodModsTextArea)
+	})
+
+	exportButton := tview.NewButton("Export").SetSelectedFunc(func() {
+		if ctx.Bisector == nil {
+			ctx.UpdateInfo("Bisector not initialized. Load mods first.", true)
+			return
+		}
+		handleExportGoodModsAction(ctx)
+	})
+
+	buttonRowFlex := tview.NewFlex().
+		AddItem(importButton, len(importButton.GetLabel())+4, 0, false).
+		AddItem(nil, 1, 0, false).
+		AddItem(exportButton, len(exportButton.GetLabel())+4, 0, false)
+
+	searchInputAndButtonFlex := tview.NewFlex().
+		AddItem(ctx.ModSearchInput, 0, 2, true).
+		AddItem(nil, 2, 0, false).
+		AddItem(buttonRowFlex, 0, 1, false)
+
 	forcedListsFlex := tview.NewFlex().
 		AddItem(ctx.ForceEnabledList, 0, 1, false).
 		AddItem(ctx.ForceDisabledList, 0, 1, false)
 
-	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable | [yellow](+ Shift)[white] All").SetBorder(true)
+	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable | [yellow](G)[white]ood | [yellow](+ Shift)[white] All").SetBorder(true)
 
 	modListAndForcedFlex := tview.NewFlex().
 		AddItem(ctx.AllModsList, 0, 2, true).
 		AddItem(forcedListsFlex, 0, 1, false)
 
 	modSelectionLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ctx.ModSearchInput, 3, 0, true).
-		AddItem(modListAndForcedFlex, 0, 1, false)
+		AddItem(ctx.InfoTextView, 3, 0, false).        // Info / Status text
+		AddItem(searchInputAndButtonFlex, 1, 0, true). // Search and import button
+		AddItem(modListAndForcedFlex, 0, 1, false)     // Main list and side lists
 
 	modSelectionFrame := tview.NewFrame(modSelectionLayout).
 		AddText("Mod Management | Tab/Shift+Tab | Esc to close",
 			true, tview.AlignCenter, tcell.ColorYellow)
 
 	modSelectionFocusElements := []tview.Primitive{
-		ctx.ModSearchInput, ctx.AllModsList, ctx.ForceEnabledList, ctx.ForceDisabledList,
+		ctx.ModSearchInput, ctx.AllModsList, ctx.ForceEnabledList, ctx.ForceDisabledList, importButton, exportButton,
 	}
+	// Input capture for Tab/Shift+Tab cycling within the ModSelectionPage
+	// This ensures that focus cycles correctly between search, import button, and lists.
 	modSelectionLayout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		currentFocus := ctx.App.GetFocus()
 		isOneOfOurElements := false
@@ -242,6 +272,7 @@ func setupModSelectionPage(ctx *app.AppContext) {
 				break
 			}
 		}
+
 		if isOneOfOurElements {
 			if event.Key() == tcell.KeyTab {
 				cycleFocus(ctx.App, modSelectionFocusElements, false)
@@ -251,8 +282,10 @@ func setupModSelectionPage(ctx *app.AppContext) {
 				return nil
 			}
 		}
+		// If focus is not on one of our managed elements, let specific handlers (like AllModsList's own) work.
 		return event
 	})
+
 	ctx.Pages.AddPage(PageNameModSelection, modSelectionFrame, true, false)
 }
 
@@ -287,13 +320,56 @@ func setupConfirmQuitModalPage(ctx *app.AppContext) {
 	ctx.Pages.HidePage(PageNameConfirmQuitModal)
 }
 
+func setupImportGoodModsPage(ctx *app.AppContext) {
+
+	excludeButton := tview.NewButton("Exclude List from Search").SetSelectedFunc(func() {
+		handleImportGoodModsAction(ctx, true)
+	})
+
+	limitButton := tview.NewButton("Limit Search to List").SetSelectedFunc(func() {
+		handleImportGoodModsAction(ctx, false)
+	})
+
+	buttonLayout := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(excludeButton, 0, 1, true).
+		AddItem(nil, 3, 0, false).
+		AddItem(limitButton, 0, 1, true).
+		AddItem(nil, 0, 1, false)
+
+	buttonLayout.SetBorder(true)
+
+	// Layout for the import page
+	importLayout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(ctx.ImportGoodModsTextArea, 0, 1, true).
+		AddItem(buttonLayout, 3, 0, false)
+
+	importLayout.SetBorder(true).
+		SetTitle("Import Good Mods List | Esc to Cancel")
+
+	importFocusElements := []tview.Primitive{ctx.ImportGoodModsTextArea, excludeButton, limitButton}
+
+	importLayout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyTab {
+			cycleFocus(ctx.App, importFocusElements, false)
+			return nil
+		} else if event.Key() == tcell.KeyBacktab {
+			cycleFocus(ctx.App, importFocusElements, true)
+			return nil
+		}
+		return event
+	})
+
+	ctx.Pages.AddPage(PageNameImportGoodMods, importLayout, true, false)
+}
+
 func cycleFocus(appObj *tview.Application, elements []tview.Primitive, reverse bool) {
 	if len(elements) == 0 {
 		return
 	}
 	currentFocusIdx := -1
 	for i, el := range elements {
-		if el != nil && el.HasFocus() {
+		if el.HasFocus() {
 			currentFocusIdx = i
 			break
 		}
