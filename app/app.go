@@ -46,19 +46,20 @@ type AppContext struct {
 	BisectionStrategy BisectionStrategyType
 
 	// TUI Primitives (managed by UI package, but stored here for access)
-	Pages             *tview.Pages
-	InfoTextView      *tview.TextView
-	SearchSpaceList   *tview.List
-	GroupAList        *tview.List
-	GroupBList        *tview.List
-	AllModsList       *tview.Table
-	ForceEnabledList  *tview.List
-	ForceDisabledList *tview.List
-	ModSearchInput    *tview.InputField
-	DebugLogView      *tview.TextView
-	QuestionModal     *tview.Modal
-	SetupForm         *tview.Form
-	ConfirmQuitModal  *tview.Modal
+	Pages                  *tview.Pages
+	InfoTextView           *tview.TextView
+	SearchSpaceList        *tview.List
+	GroupAList             *tview.List
+	GroupBList             *tview.List
+	AllModsList            *tview.Table
+	ForceEnabledList       *tview.List
+	ForceDisabledList      *tview.List
+	ModSearchInput         *tview.InputField
+	DebugLogView           *tview.TextView
+	QuestionModal          *tview.Modal
+	SetupForm              *tview.Form
+	ConfirmQuitModal       *tview.Modal
+	ImportGoodModsTextArea *tview.TextArea
 
 	// Internal state
 	uiLogLines     []string // Stores lines for the TUI DebugLogView
@@ -111,9 +112,9 @@ func (ctx *AppContext) UpdateBisectionLists() {
 		list.Clear()
 
 		if len(modIDs) == 0 {
-			if effectiveCount < 0 {
+			if effectiveCount < 0 { // Title format with only one %d
 				list.SetTitle(fmt.Sprintf(titleFmt, 0))
-			} else {
+			} else { // Title format with two %d
 				list.SetTitle(fmt.Sprintf(titleFmt, 0, 0))
 			}
 			return
@@ -141,9 +142,9 @@ func (ctx *AppContext) UpdateBisectionLists() {
 			list.AddItem(tview.Escape(modInfo.name), "", 0, nil)
 		}
 
-		if effectiveCount < 0 {
+		if effectiveCount < 0 { // Title format with only one %d
 			list.SetTitle(fmt.Sprintf(titleFmt, len(modsToDisplay)))
-		} else {
+		} else { // Title format with two %d
 			list.SetTitle(fmt.Sprintf(titleFmt, len(modsToDisplay), effectiveCount))
 		}
 	}
@@ -385,7 +386,7 @@ func (ctx *AppContext) PerformAsyncModLoading(pageNameInitialSetup, pageNameBise
 		strategy = NewFullStrategy()
 	default:
 		log.Printf("%sUnknown bisection strategy %d, defaulting to Fast.", LogWarningPrefix, ctx.BisectionStrategy)
-		strategy = NewFastStrategy() // Fallback
+		strategy = NewFastStrategy()
 	}
 
 	ctx.Bisector = NewBisector(absModsDir, allMods, sortedModIDs, providesMap, strategy)
@@ -487,6 +488,9 @@ func (ctx *AppContext) ReinitializeAppContextForSetup() {
 	}
 	if ctx.InfoTextView != nil {
 		ctx.InfoTextView.SetText("")
+	}
+	if ctx.ImportGoodModsTextArea != nil {
+		ctx.ImportGoodModsTextArea.SetText("", true)
 	}
 
 	ctx.ClearUILogs()
