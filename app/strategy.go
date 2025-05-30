@@ -37,6 +37,18 @@ func NewFastStrategy() BisectionStrategy {
 }
 
 func (s *fastStrategy) DetermineNextActionAfterA(issueOccurredInA bool, b *Bisector) NextActionOutcome {
+
+	// Check if this is potentially a final confirmation step
+	if !issueOccurredInA && len(b.CurrentGroupBOriginal) <= 1 {
+		// We NEED to test group B to confirm that the issue is still present at all.
+		log.Printf("%sFastStrategy: Group A (size %d) passed. Potentially final step. Testing Group B (size %d) for confirmation.",
+			LogInfoPrefix, len(b.CurrentGroupAOriginal), len(b.CurrentGroupBOriginal))
+
+		questionForB := b.formatQuestion("B (Final)", b.CurrentGroupBOriginal, b.CurrentGroupBEffective)
+		statusMsg := fmt.Sprintf("Fast Strategy: Iteration %d. Group A passed. Confirming with Group B.", b.IterationCount)
+		return NextActionOutcome{TestB: true, NextQuestionForB: questionForB, Message: statusMsg}
+	}
+
 	if issueOccurredInA { // Issue in A -> problem is in A original candidates
 		log.Printf("%sFastStrategy: Issue in A. Assuming problem in Group A original candidates (%v). Marking Group B original (%v) as good.",
 			LogInfoPrefix, b.CurrentGroupAOriginal, b.CurrentGroupBOriginal)
@@ -53,12 +65,33 @@ func (s *fastStrategy) DetermineNextActionAfterA(issueOccurredInA bool, b *Bisec
 }
 
 func (s *fastStrategy) DetermineNextActionAfterB(issueOccurredInB bool, issueWasPresentInA bool, b *Bisector) NextActionOutcome {
-	// This method should ideally not be called for FastStrategy.
-	// If it is, it implies an unexpected state transition.
-	// For robustness, log and proceed as if preparing a new iteration with current search space.
-	log.Printf("%sFastStrategy: DetermineNextActionAfterB called unexpectedly. This indicates an issue with bisection flow control.", LogErrorPrefix)
-	msg := fmt.Sprintf("Fast Strategy (Error): Iteration %d. Unexpected Group B test. Search space: %d mods.", b.IterationCount, len(b.CurrentSearchSpace))
-	return NextActionOutcome{Conclude: false, Message: msg}
+
+	if issueWasPresentInA || len(b.CurrentGroupBOriginal) != 1 {
+		// This should not happen
+		log.Printf("%sFastStrategy: DetermineNextActionAfterB called unexpectedly. This indicates an issue with bisection flow control.", LogErrorPrefix)
+		msg := fmt.Sprintf("Fast Strategy (Error): Iteration %d. Unexpected Group B test. Search space: %d mods.", b.IterationCount, len(b.CurrentSearchSpace))
+		return NextActionOutcome{Conclude: false, Message: msg}
+	}
+
+	// This path is only used in the final confirmation step
+
+	if issueOccurredInB { // B FAILED (A passed, B failed) -> B is the culprit
+		log.Printf("%sFastStrategy (Confirmation): Group A passed, Group B failed. Problem is in Group B original (%v). Marking Group A original (%v) as good.",
+			LogInfoPrefix, b.CurrentGroupBOriginal, b.CurrentGroupAOriginal)
+		b.markModsAsGood(b.CurrentGroupAOriginal)
+		b.CurrentSearchSpace = b.CurrentGroupBOriginal
+		modID := b.CurrentSearchSpace[0]
+		conclusion := fmt.Sprintf("Problematic mod identified: %s (%s). Group A passed, Group B (containing it) failed.",
+			b.AllMods[modID].FriendlyName(), modID)
+		return NextActionOutcome{Conclude: true, Message: conclusion}
+	} else { // B PASSED (A passed, B passed) -> Both passed, inconclusive
+		log.Printf("%sFastStrategy (Confirmation): Both A and B passed. Bisection inconclusive for this step.", LogInfoPrefix)
+		b.markModsAsGood(b.CurrentGroupAOriginal)
+		b.markModsAsGood(b.CurrentGroupBOriginal)
+		b.CurrentSearchSpace = []string{}
+		conclusion := "Bisection inconclusive (Fast Strategy): Issue disappeared in both Group A and Group B."
+		return NextActionOutcome{Conclude: true, Message: conclusion}
+	}
 }
 
 type partialStrategy struct{}
