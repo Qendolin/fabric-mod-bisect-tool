@@ -105,20 +105,23 @@ func (b *Bisector) PrepareNextTestOrConclude() (bool, string, string) {
 		return true, "", b.determineConclusionForEmptySearchSpace()
 	}
 
-	// Handle specific inconclusive case: narrowed to 1, but previous iteration ended on success.
-	if len(b.CurrentSearchSpace) == 1 && (b.IterationCount > 0 || len(b.History) > 0) && !b.lastTestCausedIssue {
-		modID := b.CurrentSearchSpace[0]
-		modName := modID
-		if mod, ok := b.AllMods[modID]; ok {
-			modName = mod.FriendlyName()
-		}
-		finalMsg := fmt.Sprintf("Bisection inconclusive. Narrowed to %s, but the test sequence leading to this state ended with a SUCCESS.", modName)
-		return true, "", b.formatConclusionMessage(finalMsg)
-	}
-
 	b.IterationCount++
 	log.Printf("%sStarting Iteration %d / ~%d. Search Space: %d mods.", LogInfoPrefix, b.IterationCount, b.MaxIterations, len(b.CurrentSearchSpace))
 
+	b.splitSearchSpaceAndRecordHistory()
+
+	b.CurrentGroupAEffective = b.calculateEffectiveGroup(b.CurrentGroupAOriginal, "A")
+	b.CurrentGroupBEffective = b.calculateEffectiveGroup(b.CurrentGroupBOriginal, "B")
+
+	b.applyModSet(b.CurrentGroupAEffective)
+	b.testingPhase = PhaseTestingA
+
+	status := fmt.Sprintf("Iteration %d. Search Space: %d mods.", b.IterationCount, len(b.CurrentSearchSpace))
+	question := b.formatQuestion("A", b.CurrentGroupAOriginal, b.CurrentGroupAEffective)
+	return false, question, status
+}
+
+func (b *Bisector) splitSearchSpaceAndRecordHistory() {
 	currentHistoryEntry := BisectionStep{
 		SearchSpace:           slices.Clone(b.CurrentSearchSpace),
 		ForceEnabledSnapshot:  cloneMap(b.ForceEnabled),
@@ -126,11 +129,10 @@ func (b *Bisector) PrepareNextTestOrConclude() (bool, string, string) {
 	}
 	// Add to history before modifying CurrentGroupA/BOriginal for the new step
 	b.History = append(b.History, currentHistoryEntry)
-
 	historyIdx := len(b.History) - 1
 
 	mid := len(b.CurrentSearchSpace) / 2
-	if len(b.CurrentSearchSpace) == 1 {
+	if len(b.CurrentSearchSpace) == 1 { // If only one mod, it becomes Group A
 		mid = 1
 	}
 	b.CurrentGroupAOriginal = slices.Clone(b.CurrentSearchSpace[:mid])
@@ -141,20 +143,6 @@ func (b *Bisector) PrepareNextTestOrConclude() (bool, string, string) {
 
 	b.History[historyIdx].GroupAOriginal = b.CurrentGroupAOriginal
 	b.History[historyIdx].GroupBOriginal = b.CurrentGroupBOriginal
-
-	b.CurrentGroupAEffective = b.calculateEffectiveGroup(b.CurrentGroupAOriginal, "A")
-	if len(b.CurrentGroupBOriginal) > 0 {
-		b.CurrentGroupBEffective = b.calculateEffectiveGroup(b.CurrentGroupBOriginal, "B")
-	} else {
-		b.CurrentGroupBEffective = make(map[string]bool)
-	}
-
-	b.applyModSet(b.CurrentGroupAEffective)
-	b.testingPhase = PhaseTestingA
-
-	status := fmt.Sprintf("Iteration %d. Search Space: %d mods.", b.IterationCount, len(b.CurrentSearchSpace))
-	question := b.formatQuestion("A", b.CurrentGroupAOriginal, b.CurrentGroupAEffective)
-	return false, question, status
 }
 
 func (b *Bisector) determineConclusionForEmptySearchSpace() string {
@@ -175,91 +163,94 @@ func (b *Bisector) ProcessUserFeedback(issueOccurred bool) (bool, string, string
 		return true, "", "Error: Bisection state error (no history)."
 	}
 	currentIterationHistory := &b.History[len(b.History)-1]
-	currentTestFailed := issueOccurred // Outcome of the specific test group just completed
+
+	b.lastTestCausedIssue = issueOccurred
 
 	switch b.testingPhase {
 	case PhaseTestingA:
-		currentIterationHistory.IssuePresentInA = currentTestFailed
-		b.recordTestOutcomeDetails(currentTestFailed, "A", b.CurrentGroupAEffective)
-
-		if !currentTestFailed { // Group A SUCCESS (issue GONE)
-			log.Printf("%sGroup A passed. Problem is in Group B original candidates.", LogInfoPrefix)
-			b.markModsAsGood(b.CurrentGroupAOriginal)
-			b.CurrentSearchSpace = b.CurrentGroupBOriginal
-			b.testingPhase = PhasePrepareA
-			return b.PrepareNextTestOrConclude()
-		}
-		// Group A FAILED (issue PRESENT)
-		log.Printf("%sGroup A failed. Proceeding to test Group B.", LogInfoPrefix)
-		if len(b.CurrentGroupBOriginal) == 0 {
-			log.Printf("%sGroup A failed, and Group B is empty. Problem must be in Group A original candidates.", LogInfoPrefix)
-			b.CurrentSearchSpace = b.CurrentGroupAOriginal
-			if len(b.CurrentSearchSpace) == 1 {
-				modID := b.CurrentSearchSpace[0]
-				modName := modID
-				if mod, ok := b.AllMods[modID]; ok {
-					modName = mod.FriendlyName()
-				}
-				msg := fmt.Sprintf("Problematic mod identified: %s (%s). It was in the failing Group A, and Group B was empty.", modName, modID)
-				return true, "", b.formatConclusionMessage(msg)
-			}
-			b.testingPhase = PhasePrepareA
-			return b.PrepareNextTestOrConclude()
-		}
-		b.applyModSet(b.CurrentGroupBEffective) // CurrentGroupBEffective already calculated
-		b.testingPhase = PhaseTestingB
-		status := fmt.Sprintf("Iteration %d. Group A failed. Now testing Group B.", b.IterationCount)
-		question := b.formatQuestion("B", b.CurrentGroupBOriginal, b.CurrentGroupBEffective)
-		return false, question, status
-
+		return b.processGroupAResult(issueOccurred, currentIterationHistory)
 	case PhaseTestingB:
-		b.recordTestOutcomeDetails(currentTestFailed, "B", b.CurrentGroupBEffective)
-
-		if !currentIterationHistory.IssuePresentInA {
-			// This indicates a logical flaw if Group A had passed but we proceeded to test B.
-			log.Printf("%sError: Tested Group B, but Group A was marked as passed for this iteration. State inconsistency.", LogErrorPrefix)
-			b.testingPhase = PhasePrepareA
-			return b.PrepareNextTestOrConclude() // Attempt to recover by preparing a new iteration.
-		}
-
-		// Group A FAILED. Now evaluate Group B result.
-		if !currentTestFailed { // Group B SUCCESS (issue GONE) -> A failed, B passed
-			log.Printf("%sGroup A failed, Group B passed. Problem is in Group A original candidates.", LogInfoPrefix)
-			b.markModsAsGood(b.CurrentGroupBOriginal)
-			b.CurrentSearchSpace = b.CurrentGroupAOriginal
-			if len(b.CurrentSearchSpace) == 1 {
-				modID := b.CurrentSearchSpace[0]
-				modName := modID
-				if mod, ok := b.AllMods[modID]; ok {
-					modName = mod.FriendlyName()
-				}
-				msg := fmt.Sprintf("Problematic mod identified: %s (%s). Group A (containing it) failed, and Group B passed.", modName, modID)
-				return true, "", b.formatConclusionMessage(msg)
-			}
-		} else { // Group B FAILED (issue PRESENT) - Both A and B failed
-			log.Printf("%sBoth Groups A and B failed. Problem in shared elements.", LogInfoPrefix)
-			b.CurrentSearchSpace = b.calculateIntersectionSearchSpace(
-				currentIterationHistory.SearchSpace,
-				b.CurrentGroupAEffective,
-				b.CurrentGroupBEffective,
-			)
-			if len(b.CurrentSearchSpace) == 1 {
-				modID := b.CurrentSearchSpace[0]
-				modName := modID
-				if mod, ok := b.AllMods[modID]; ok {
-					modName = mod.FriendlyName()
-				}
-				msg := fmt.Sprintf("Problematic mod identified: %s (%s). It was common to both failing Group A and Group B.", modName, modID)
-				return true, "", b.formatConclusionMessage(msg)
-			}
-		}
-		b.testingPhase = PhasePrepareA
-		return b.PrepareNextTestOrConclude()
-
+		return b.processGroupBResult(issueOccurred, currentIterationHistory)
 	default:
 		log.Printf("%sProcessUserFeedback called in unexpected phase: %d", LogErrorPrefix, b.testingPhase)
 		return true, "", "Error: Unexpected bisection phase."
 	}
+}
+
+func (b *Bisector) prepareNewIteration() (bool, string, string) {
+	b.testingPhase = PhasePrepareA
+	return b.PrepareNextTestOrConclude()
+}
+
+func (b *Bisector) concludeBisectionWithSingleMod(modID string, reasonTemplate string) (bool, string, string) {
+	modName := modID
+	if mod, ok := b.AllMods[modID]; ok {
+		modName = mod.FriendlyName()
+	}
+	finalMsg := fmt.Sprintf(reasonTemplate, modName, modID)
+	return true, "", b.formatConclusionMessage(finalMsg)
+}
+
+func (b *Bisector) processGroupAResult(issueOccurredInA bool, currentIterationHistory *BisectionStep) (bool, string, string) {
+	currentIterationHistory.IssuePresentInA = issueOccurredInA
+	b.recordTestOutcomeDetails(issueOccurredInA, "A", b.CurrentGroupAEffective) // Log and store bad set if needed
+
+	if !issueOccurredInA { // Group A SUCCESS (issue GONE)
+		log.Printf("%sGroup A passed. Problem is in Group B original candidates.", LogInfoPrefix)
+		b.markModsAsGood(b.CurrentGroupAOriginal)
+		b.CurrentSearchSpace = b.CurrentGroupBOriginal
+		return b.prepareNewIteration()
+	}
+
+	// Group A FAILED (issue PRESENT)
+	log.Printf("%sGroup A failed.", LogInfoPrefix)
+	if len(b.CurrentGroupBOriginal) == 0 {
+		log.Printf("%sGroup A failed, and Group B is empty. Problem must be in Group A original candidates.", LogInfoPrefix)
+		b.CurrentSearchSpace = b.CurrentGroupAOriginal
+		if len(b.CurrentSearchSpace) == 1 {
+			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). It was in the failing Group A, and Group B was empty.")
+		}
+		return b.prepareNewIteration()
+	}
+
+	// Group A failed, Group B exists, proceed to test B
+	log.Printf("%sProceeding to test Group B.", LogInfoPrefix)
+	b.applyModSet(b.CurrentGroupBEffective) // CurrentGroupBEffective already calculated
+	b.testingPhase = PhaseTestingB
+	status := fmt.Sprintf("Iteration %d. Group A failed. Now testing Group B.", b.IterationCount)
+	question := b.formatQuestion("B", b.CurrentGroupBOriginal, b.CurrentGroupBEffective)
+	return false, question, status
+}
+
+func (b *Bisector) processGroupBResult(issueOccurredInB bool, currentIterationHistory *BisectionStep) (bool, string, string) {
+	b.recordTestOutcomeDetails(issueOccurredInB, "B", b.CurrentGroupBEffective) // Log and store bad set if needed
+
+	if !currentIterationHistory.IssuePresentInA {
+		// This indicates a logical flaw if Group A had passed but we proceeded to test B.
+		log.Printf("%sError: Tested Group B, but Group A was marked as passed for this iteration. State inconsistency.", LogErrorPrefix)
+		return b.prepareNewIteration() // Attempt to recover by preparing a new iteration.
+	}
+
+	// Group A FAILED. Now evaluate Group B result.
+	if !issueOccurredInB { // Group B SUCCESS (issue GONE) -> A failed, B passed
+		log.Printf("%sGroup A failed, Group B passed. Problem is in Group A original candidates.", LogInfoPrefix)
+		b.markModsAsGood(b.CurrentGroupBOriginal)
+		b.CurrentSearchSpace = b.CurrentGroupAOriginal
+		if len(b.CurrentSearchSpace) == 1 {
+			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). Group A (containing it) failed, and Group B passed.")
+		}
+	} else { // Group B FAILED (issue PRESENT) - Both A and B failed
+		log.Printf("%sBoth Groups A and B failed. Problem in shared elements.", LogInfoPrefix)
+		b.CurrentSearchSpace = b.calculateIntersectionSearchSpace(
+			currentIterationHistory.SearchSpace,
+			b.CurrentGroupAEffective,
+			b.CurrentGroupBEffective,
+		)
+		if len(b.CurrentSearchSpace) == 1 {
+			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). It was common to both failing Group A and Group B.")
+		}
+	}
+	return b.prepareNewIteration()
 }
 
 func (b *Bisector) formatQuestion(groupDesignator string, originalGroup []string, effectiveGroup map[string]bool) string {
@@ -287,8 +278,11 @@ func (b *Bisector) formatConclusionMessage(baseMessage string) string {
 	return conclusion
 }
 
-func (b *Bisector) recordTestOutcomeDetails(issueOccurred bool, groupTested string, effectiveSetTested map[string]bool) {
-	if issueOccurred {
+// recordTestOutcomeDetails logs the outcome of a specific test group and updates LastKnownBadEffectiveSet if the issue occurred.
+// b.lastTestCausedIssue is assumed to be already set by the caller (ProcessUserFeedback)
+// based on the direct outcome of the user's test.
+func (b *Bisector) recordTestOutcomeDetails(testGroupCausedIssue bool, groupTested string, effectiveSetTested map[string]bool) {
+	if testGroupCausedIssue {
 		b.LastKnownBadEffectiveSet = cloneMap(effectiveSetTested)
 		log.Printf("%sIssue PRESENT with Group %s. Effective set (%d mods): %v",
 			LogInfoPrefix, groupTested, len(effectiveSetTested), mapKeys(effectiveSetTested))

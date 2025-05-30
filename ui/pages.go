@@ -89,7 +89,7 @@ func SetupPages(ctx *app.AppContext) {
 func setupInitialSetupPage(ctx *app.AppContext) {
 	ctx.SetupForm = tview.NewForm().
 		AddInputField("Mods Folder Path:", "", 60, nil, func(text string) { ctx.SetModsPath(text) }).
-		AddTextView("Hint:", "Use Right-Click or Ctrl+V to paste path.", 0, 1, true, false).
+		AddTextView("Hint:", "Use Right-Click or Ctrl+V to paste the path.", 0, 1, true, false).
 		AddButton("Load Mods & Start", func() { HandleLoadModsAndStart(ctx) }).
 		AddButton("Quit", func() { ctx.App.Stop() })
 	ctx.SetupForm.SetBorder(true).SetTitle("Qendolin's Fabric Mod Bisect Tool - Setup")
