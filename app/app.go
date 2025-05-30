@@ -17,6 +17,22 @@ const (
 	LogErrorPrefix   = "ERR:  "
 )
 
+// BisectionStrategyType defines the available bisection strategies.
+type BisectionStrategyType int
+
+const (
+	StrategyFast BisectionStrategyType = iota // Default, current behavior
+	StrategyPartial
+	StrategyFull
+)
+
+// BisectionStrategyTypeStrings provides user-friendly names for strategies.
+var BisectionStrategyTypeStrings = map[BisectionStrategyType]string{
+	StrategyFast:    "Fast (Only test one half)",
+	StrategyPartial: "Partial (Test other half on failure)",
+	StrategyFull:    "Full (Always test both halves)",
+}
+
 // ModalReturnContext stores information about where to return after a modal.
 type ModalReturnContext struct {
 	PageName       string
@@ -25,8 +41,9 @@ type ModalReturnContext struct {
 
 // AppContext holds all shared application state, TUI components, and logic.
 type AppContext struct {
-	App      *tview.Application
-	Bisector *Bisector
+	App               *tview.Application
+	Bisector          *Bisector
+	BisectionStrategy BisectionStrategyType
 
 	// TUI Primitives (managed by UI package, but stored here for access)
 	Pages             *tview.Pages
@@ -60,10 +77,11 @@ type AppContext struct {
 // NewAppContext creates and initializes a new application context.
 func NewAppContext() *AppContext {
 	return &AppContext{
-		App:            tview.NewApplication(),
-		uiLogLines:     make([]string, 0, 200),
-		maxUILogLines:  1000, // Increased max lines for TUI log
-		logRelayStopCh: make(chan struct{}),
+		App:               tview.NewApplication(),
+		uiLogLines:        make([]string, 0, 200),
+		maxUILogLines:     1000,
+		logRelayStopCh:    make(chan struct{}),
+		BisectionStrategy: StrategyFast, // Default strategy
 	}
 }
 
@@ -89,15 +107,14 @@ func (ctx *AppContext) UpdateBisectionLists() {
 		return
 	}
 
-	// updateList is a local helper function to populate a tview.List
 	updateList := func(list *tview.List, titleFmt string, modIDs []string, effectiveCount int) {
-		list.Clear() // Clear existing items
+		list.Clear()
 
-		if len(modIDs) == 0 { // Handle empty list case early
+		if len(modIDs) == 0 {
 			if effectiveCount < 0 {
 				list.SetTitle(fmt.Sprintf(titleFmt, 0))
 			} else {
-				list.SetTitle(fmt.Sprintf(titleFmt, 0, 0)) // Assuming effective count is 0 if original is 0
+				list.SetTitle(fmt.Sprintf(titleFmt, 0, 0))
 			}
 			return
 		}
@@ -107,37 +124,30 @@ func (ctx *AppContext) UpdateBisectionLists() {
 			name string
 		}
 
-		// Create a slice of modSortInfo to hold IDs and their friendly names for sorting
 		modsToDisplay := make([]modSortInfo, 0, len(modIDs))
 		for _, modID := range modIDs {
-			friendlyName := modID // Default to ID if mod info not found
+			friendlyName := modID
 			if mod, ok := ctx.Bisector.AllMods[modID]; ok {
 				friendlyName = mod.FriendlyName()
 			}
 			modsToDisplay = append(modsToDisplay, modSortInfo{id: modID, name: friendlyName})
 		}
 
-		// Sort the slice by friendly name (case-insensitive)
 		sort.Slice(modsToDisplay, func(i, j int) bool {
 			return strings.ToLower(modsToDisplay[i].name) < strings.ToLower(modsToDisplay[j].name)
 		})
 
-		// Add sorted items to the tview.List
 		for _, modInfo := range modsToDisplay {
-			// The primary text is the friendly name. Secondary text could be the ID if desired, but spec says false.
 			list.AddItem(tview.Escape(modInfo.name), "", 0, nil)
 		}
 
-		// Update the list title
-		if effectiveCount < 0 { // For SearchSpaceList
+		if effectiveCount < 0 {
 			list.SetTitle(fmt.Sprintf(titleFmt, len(modsToDisplay)))
-		} else { // For GroupA/B lists
+		} else {
 			list.SetTitle(fmt.Sprintf(titleFmt, len(modsToDisplay), effectiveCount))
 		}
 	}
 
-	// The rest of the function correctly calls updateList for each list.
-	// The go ctx.App.QueueUpdateDraw is important as you noted.
 	go ctx.App.QueueUpdateDraw(func() {
 		updateList(ctx.SearchSpaceList, "Search Space (%d)", ctx.Bisector.CurrentSearchSpace, -1)
 
@@ -145,7 +155,6 @@ func (ctx *AppContext) UpdateBisectionLists() {
 		if ctx.Bisector.CurrentGroupAEffective != nil {
 			effACount = len(ctx.Bisector.CurrentGroupAEffective)
 		}
-		// Pass the original list of mod IDs. updateList will handle fetching names and sorting.
 		updateList(ctx.GroupAList, "Group A (Orig: %d, Eff: %d)", ctx.Bisector.CurrentGroupAOriginal, effACount)
 
 		effBCount := 0
@@ -201,25 +210,21 @@ func (ctx *AppContext) PopulateAllModsList() {
 	sort.Strings(fdNames)
 
 	// Store current selection *before* clearing, to be restored later
-	currentSelectedRow := -1               // Use -1 to indicate no valid selection or header selected
-	if ctx.AllModsList.GetRowCount() > 1 { // Check if there are any data rows (row 0 is header)
+	currentSelectedRow := -1
+	if ctx.AllModsList.GetRowCount() > 1 {
 		r, _ := ctx.AllModsList.GetSelection()
-		if r >= 1 { // Ensure selection is on a data row (not header)
+		if r >= 1 {
 			currentSelectedRow = r
 		}
 	}
 
-	// --- Queue the entire UI update (clear and repopulate) ---
 	go ctx.App.QueueUpdateDraw(func() {
-		// Clear lists inside the queued function
 		ctx.AllModsList.Clear()
 		ctx.ForceEnabledList.Clear()
 		ctx.ForceDisabledList.Clear()
 
-		// This will store IDs of items *actually added* in this specific update run
 		newlyDisplayedModIDsInThisRun := make([]string, 0, len(displayMods))
 
-		// Add table headers
 		headers := []string{"Status", "Name", "ID", "File"}
 		expansions := []int{1, 3, 3, 3}
 		for colIdx, headerName := range headers {
@@ -229,9 +234,8 @@ func (ctx *AppContext) PopulateAllModsList() {
 				SetSelectable(false).SetExpansion(expansions[colIdx])
 			ctx.AllModsList.SetCell(0, colIdx, headerCell)
 		}
-		tableRowIndex := 1 // Data rows start from index 1
+		tableRowIndex := 1
 
-		// Populate forced lists
 		for _, name := range feNames {
 			ctx.ForceEnabledList.AddItem(tview.Escape(name), "", 0, nil)
 		}
@@ -251,7 +255,6 @@ func (ctx *AppContext) PopulateAllModsList() {
 				continue
 			}
 
-			// Determine Status
 			statusText := ""
 			statusTextColor := tcell.ColorWhite
 			if ctx.Bisector.ForceEnabled[modID] {
@@ -269,7 +272,7 @@ func (ctx *AppContext) PopulateAllModsList() {
 			}
 
 			if statusText == "" {
-				statusText = ""
+				statusText = "     " // just for spacing
 			}
 
 			statusCell := tview.NewTableCell(statusText).
@@ -278,7 +281,7 @@ func (ctx *AppContext) PopulateAllModsList() {
 				SetExpansion(expansions[0])
 
 			nameCell := tview.NewTableCell(tview.Escape(friendlyName)).
-				SetTextColor(tcell.ColorWhite). // Default color for name
+				SetTextColor(tcell.ColorWhite).
 				SetAlign(tview.AlignLeft).
 				SetExpansion(expansions[1]).
 				SetMaxWidth(35)
@@ -302,38 +305,31 @@ func (ctx *AppContext) PopulateAllModsList() {
 			newlyDisplayedModIDsInThisRun = append(newlyDisplayedModIDsInThisRun, modID)
 			tableRowIndex++
 		}
-		// Update the shared list of displayed IDs *after* this run has populated everything
 		ctx.currentlyDisplayedModIDsInAllModsList = newlyDisplayedModIDsInThisRun
 
-		// Restore selection logic more carefully
-		if currentSelectedRow >= 1 { // If there was a selection on a data row
-			if ctx.AllModsList.GetRowCount() > 1 { // And the table has data rows now
+		if currentSelectedRow >= 1 {
+			if ctx.AllModsList.GetRowCount() > 1 {
 				if currentSelectedRow < ctx.AllModsList.GetRowCount() {
-					ctx.AllModsList.Select(currentSelectedRow, 0) // Select column 0 by default
+					ctx.AllModsList.Select(currentSelectedRow, 0)
 				} else {
-					// If previous row index is now out of bounds, select the last data row
 					ctx.AllModsList.Select(ctx.AllModsList.GetRowCount()-1, 0)
 				}
 			}
-		} else if ctx.AllModsList.GetRowCount() > 1 { // No previous selection, but table has data rows
-			ctx.AllModsList.Select(1, 0) // Default to first data row, column 0
+		} else if ctx.AllModsList.GetRowCount() > 1 {
+			ctx.AllModsList.Select(1, 0)
 		}
 	})
 }
 
 // GetSelectedModIDFromAllModsList retrieves the mod ID of the currently selected item in AllModsList.
-// This relies on currentlyDisplayedModIDsInAllModsList being kept in sync.
 func (ctx *AppContext) GetSelectedModIDFromAllModsList() (string, bool) {
-	if ctx.AllModsList == nil || ctx.AllModsList.GetRowCount() <= 1 { // <=1 because row 0 is header
+	if ctx.AllModsList == nil || ctx.AllModsList.GetRowCount() <= 1 {
 		return "", false
 	}
 	selectedRow, _ := ctx.AllModsList.GetSelection()
-
-	// Data rows start at index 1 in the table, corresponding to index 0 in currentlyDisplayedModIDsInAllModsList
 	dataRowIndex := selectedRow - 1
 
 	if dataRowIndex < 0 || dataRowIndex >= len(ctx.currentlyDisplayedModIDsInAllModsList) {
-		// This can happen if header is selected or selection is otherwise invalid
 		log.Printf("%sWarning: Selected table row %d (data index %d) is out of bounds for displayed mods list (len %d). No mod selected.", LogWarningPrefix, selectedRow, dataRowIndex, len(ctx.currentlyDisplayedModIDsInAllModsList))
 		return "", false
 	}
@@ -341,7 +337,6 @@ func (ctx *AppContext) GetSelectedModIDFromAllModsList() (string, bool) {
 }
 
 // AskBisectionQuestion shows the modal for user feedback.
-// The returnPageName and returnFocusPrimitive define where to go after the modal.
 func (ctx *AppContext) AskBisectionQuestion(question string, returnPageName string, returnFocusPrimitive tview.Primitive) {
 	log.Printf("%sAsking bisection question: %s", LogInfoPrefix, strings.ReplaceAll(question, "\n", " "))
 	ctx.modalReturnCtx = ModalReturnContext{
@@ -350,14 +345,12 @@ func (ctx *AppContext) AskBisectionQuestion(question string, returnPageName stri
 	}
 	go ctx.App.QueueUpdateDraw(func() {
 		ctx.QuestionModal.SetText(tview.Escape(question))
-		// The page name "questionModal" is fixed and known by the ui package.
 		ctx.Pages.ShowPage("questionModal")
 		ctx.App.SetFocus(ctx.QuestionModal)
 	})
 }
 
 // PerformAsyncModLoading handles loading mods in a goroutine.
-// Assumes ctx.modsPath is an absolute, existing directory path.
 func (ctx *AppContext) PerformAsyncModLoading(pageNameInitialSetup, pageNameBisection, pageNameLoading string) {
 	absModsDir := ctx.modsPath
 	log.Printf("%sGoroutine: PerformAsyncModLoading started for directory '%s'.", LogInfoPrefix, absModsDir)
@@ -380,8 +373,22 @@ func (ctx *AppContext) PerformAsyncModLoading(pageNameInitialSetup, pageNameBise
 	ctx.enableInitialMods(allMods)
 	ctx.performInitialDependencyChecks(allMods, providesMap)
 
-	log.Printf("%sMods parsed. Initializing bisector logic...", LogInfoPrefix)
-	ctx.Bisector = NewBisector(absModsDir, allMods, sortedModIDs, providesMap)
+	log.Printf("%sMods parsed. Initializing bisector logic with strategy: %s...", LogInfoPrefix, BisectionStrategyTypeStrings[ctx.BisectionStrategy])
+
+	var strategy BisectionStrategy
+	switch ctx.BisectionStrategy {
+	case StrategyFast:
+		strategy = NewFastStrategy()
+	case StrategyPartial:
+		strategy = NewPartialStrategy()
+	case StrategyFull:
+		strategy = NewFullStrategy()
+	default:
+		log.Printf("%sUnknown bisection strategy %d, defaulting to Fast.", LogWarningPrefix, ctx.BisectionStrategy)
+		strategy = NewFastStrategy() // Fallback
+	}
+
+	ctx.Bisector = NewBisector(absModsDir, allMods, sortedModIDs, providesMap, strategy)
 
 	go ctx.App.QueueUpdateDraw(func() {
 		if ctx.Bisector.InitialModCount == 0 {
@@ -411,7 +418,6 @@ func (ctx *AppContext) handleModLoadingError(errMsg string, pageNameInitialSetup
 				ctx.App.SetFocus(item)
 			}
 		}
-		// Provide a summary on the (now active) setup page's info view.
 		ctx.UpdateInfo(fmt.Sprintf("Mod loading failed: %s Check path and logs. Try again.", errMsg), true)
 	})
 }
@@ -420,7 +426,7 @@ func (ctx *AppContext) enableInitialMods(allMods map[string]*Mod) {
 	log.Printf("%sEnabling all detected mods for initial bisection state...", LogInfoPrefix)
 	enabledCount := 0
 	for _, mod := range allMods {
-		if !mod.IsInitiallyActive { // Mod was e.g. .jar.disabled
+		if !mod.IsInitiallyActive {
 			err := mod.Enable(ctx.modsPath)
 			if err != nil {
 				log.Printf("%sFailed to enable mod %s during initial setup: %v", LogWarningPrefix, mod.FriendlyName(), err)
@@ -438,12 +444,11 @@ func (ctx *AppContext) enableInitialMods(allMods map[string]*Mod) {
 }
 
 func (ctx *AppContext) performInitialDependencyChecks(allMods map[string]*Mod, potentialProviders PotentialProvidersMap) {
-	// The CheckAllDependencies function will need to be updated to use PotentialProvidersMap
-	initialMissingDeps := CheckAllDependencies(allMods, potentialProviders) // Pass the new map
+	initialMissingDeps := CheckAllDependencies(allMods, potentialProviders)
 	if len(initialMissingDeps) > 0 {
 		log.Printf("%s--- Initial Dependency Check ---", LogWarningPrefix)
 		for modID, missing := range initialMissingDeps {
-			modName := modID // Fallback if mod not in allMods (should not happen)
+			modName := modID
 			if mod, ok := allMods[modID]; ok {
 				modName = mod.FriendlyName()
 			}
@@ -457,9 +462,8 @@ func (ctx *AppContext) performInitialDependencyChecks(allMods map[string]*Mod, p
 
 // ReinitializeAppContextForSetup clears bisection-related state for a new session.
 func (ctx *AppContext) ReinitializeAppContextForSetup() {
-	ctx.Bisector = nil // This will be recreated on new "Load Mods & Start"
+	ctx.Bisector = nil
 
-	// Clear TUI lists associated with bisection
 	if ctx.SearchSpaceList != nil {
 		ctx.SearchSpaceList.Clear()
 	}
@@ -487,6 +491,7 @@ func (ctx *AppContext) ReinitializeAppContextForSetup() {
 
 	ctx.ClearUILogs()
 	ctx.modalReturnCtx = ModalReturnContext{}
+	// ctx.BisectionStrategy is preserved from last setup or remains default
 }
 
 func (ctx *AppContext) SetModsPath(path string)                   { ctx.modsPath = path }

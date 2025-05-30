@@ -24,8 +24,8 @@ type BisectionStep struct {
 // Bisector manages the bisection process.
 type Bisector struct {
 	ModsDir         string
-	AllMods         map[string]*Mod // All manageable top-level mods
-	AllModIDsSorted []string        // Sorted IDs of mods in AllMods
+	AllMods         map[string]*Mod
+	AllModIDsSorted []string
 	ForceEnabled    map[string]bool
 	ForceDisabled   map[string]bool
 
@@ -39,13 +39,14 @@ type Bisector struct {
 
 	testingPhase    int // 0: prepareA, 1: testingA, 2: testingB
 	IterationCount  int
-	MaxIterations   int // Estimated maximum iterations
+	MaxIterations   int
 	InitialModCount int
 
 	LastKnownBadEffectiveSet map[string]bool
-	lastTestCausedIssue      bool // True if the most recent test failed
+	lastTestCausedIssue      bool // True if the most recent user-reported test failed
 
 	resolver *DependencyResolver
+	strategy BisectionStrategy // The bisection strategy to use
 }
 
 // Constants for testing phases.
@@ -56,7 +57,8 @@ const (
 )
 
 // NewBisector initializes a new Bisector instance.
-func NewBisector(modsDir string, allMods map[string]*Mod, allModIDsSorted []string, potentialProviders PotentialProvidersMap) *Bisector {
+func NewBisector(modsDir string, allMods map[string]*Mod, allModIDsSorted []string,
+	potentialProviders PotentialProvidersMap, strategy BisectionStrategy) *Bisector {
 	b := &Bisector{
 		ModsDir:                  modsDir,
 		AllMods:                  allMods,
@@ -66,6 +68,7 @@ func NewBisector(modsDir string, allMods map[string]*Mod, allModIDsSorted []stri
 		History:                  make([]BisectionStep, 0),
 		LastKnownBadEffectiveSet: make(map[string]bool),
 		testingPhase:             PhasePrepareA,
+		strategy:                 strategy,
 	}
 	b.resolver = NewDependencyResolver(allMods, potentialProviders, b.ForceEnabled, b.ForceDisabled)
 
@@ -88,8 +91,8 @@ func NewBisector(modsDir string, allMods map[string]*Mod, allModIDsSorted []stri
 		}
 	}
 
-	log.Printf("%sBisector initialized. Initial search space: %d mods. Max iterations: ~%d.",
-		LogInfoPrefix, b.InitialModCount, b.MaxIterations)
+	log.Printf("%sBisector initialized with %s. Initial search space: %d mods. Max iterations: ~%d.",
+		LogInfoPrefix, BisectionStrategyTypeStrings[GetStrategyType(strategy)], b.InitialModCount, b.MaxIterations)
 	return b
 }
 
@@ -103,6 +106,16 @@ func (b *Bisector) PrepareNextTestOrConclude() (bool, string, string) {
 
 	if len(b.CurrentSearchSpace) == 0 {
 		return true, "", b.determineConclusionForEmptySearchSpace()
+	}
+
+	if len(b.CurrentSearchSpace) == 1 { // Single mod remaining
+		modID := b.CurrentSearchSpace[0]
+		modName := modID
+		if mod, ok := b.AllMods[modID]; ok {
+			modName = mod.FriendlyName()
+		}
+		conclusion := fmt.Sprintf("Problematic mod identified: %s (%s). It's the only one left in the search space.", modName, modID)
+		return true, "", b.formatConclusionMessage(conclusion)
 	}
 
 	b.IterationCount++
@@ -132,7 +145,7 @@ func (b *Bisector) splitSearchSpaceAndRecordHistory() {
 	historyIdx := len(b.History) - 1
 
 	mid := len(b.CurrentSearchSpace) / 2
-	if len(b.CurrentSearchSpace) == 1 { // If only one mod, it becomes Group A
+	if len(b.CurrentSearchSpace) == 1 {
 		mid = 1
 	}
 	b.CurrentGroupAOriginal = slices.Clone(b.CurrentSearchSpace[:mid])
@@ -150,107 +163,69 @@ func (b *Bisector) determineConclusionForEmptySearchSpace() string {
 	if b.lastTestCausedIssue {
 		msg += " Last test showed the issue. Problem likely in common dependencies, forced-enabled mods, or game core."
 	} else {
-		msg += " Last test was success. Bisection inconclusive."
+		msg += " Last test was success. Bisection inconclusive or issue resolved."
 	}
 	return b.formatConclusionMessage(msg)
 }
 
-// ProcessUserFeedback updates state based on user's answer.
+// ProcessUserFeedback updates state based on user's answer using the chosen strategy.
 // Returns: done (bool), nextQuestion (string), status (string).
 func (b *Bisector) ProcessUserFeedback(issueOccurred bool) (bool, string, string) {
 	if len(b.History) == 0 {
-		log.Printf("%sProcessUserFeedback: No history available.", LogErrorPrefix)
+		log.Printf("%sProcessUserFeedback: No history. Bisection not started or in error state.", LogErrorPrefix)
 		return true, "", "Error: Bisection state error (no history)."
 	}
 	currentIterationHistory := &b.History[len(b.History)-1]
+	b.lastTestCausedIssue = issueOccurred // Tracks the direct outcome of the user's test
 
-	b.lastTestCausedIssue = issueOccurred
+	var outcome NextActionOutcome
+	var done bool
+	var nextQuestion, statusMsg string
 
 	switch b.testingPhase {
 	case PhaseTestingA:
-		return b.processGroupAResult(issueOccurred, currentIterationHistory)
+		currentIterationHistory.IssuePresentInA = issueOccurred
+		b.recordTestOutcomeDetails(issueOccurred, "A", b.CurrentGroupAEffective)
+		outcome = b.strategy.DetermineNextActionAfterA(issueOccurred, b)
+
+		statusMsg = outcome.Message
+		if outcome.Conclude {
+			done = true
+			statusMsg = b.formatConclusionMessage(outcome.Message) // Strategy might provide a base conclusion
+		} else if outcome.TestB {
+			// Ensure Group B exists before attempting to test it. Strategy should factor this.
+			if len(b.CurrentGroupBOriginal) == 0 {
+				log.Printf("%sStrategy indicated testing Group B, but it's empty. Preparing new iteration.", LogWarningPrefix)
+				b.testingPhase = PhasePrepareA
+				done, nextQuestion, statusMsg = b.PrepareNextTestOrConclude()
+			} else {
+				b.applyModSet(b.CurrentGroupBEffective) // Assumes CurrentGroupBEffective is up-to-date
+				b.testingPhase = PhaseTestingB
+				nextQuestion = outcome.NextQuestionForB
+				// statusMsg already set from outcome.Message
+			}
+		} else { // Proceed to next iteration (search space was updated by strategy)
+			b.testingPhase = PhasePrepareA
+			done, nextQuestion, statusMsg = b.PrepareNextTestOrConclude()
+		}
+
 	case PhaseTestingB:
-		return b.processGroupBResult(issueOccurred, currentIterationHistory)
+		b.recordTestOutcomeDetails(issueOccurred, "B", b.CurrentGroupBEffective)
+		// issueWasPresentInA is from currentIterationHistory
+		outcome = b.strategy.DetermineNextActionAfterB(issueOccurred, currentIterationHistory.IssuePresentInA, b)
+
+		if outcome.Conclude {
+			done = true
+			statusMsg = b.formatConclusionMessage(outcome.Message)
+		} else { // Proceed to next iteration
+			b.testingPhase = PhasePrepareA
+			done, nextQuestion, statusMsg = b.PrepareNextTestOrConclude()
+		}
 	default:
 		log.Printf("%sProcessUserFeedback called in unexpected phase: %d", LogErrorPrefix, b.testingPhase)
 		return true, "", "Error: Unexpected bisection phase."
 	}
-}
-
-func (b *Bisector) prepareNewIteration() (bool, string, string) {
-	b.testingPhase = PhasePrepareA
-	return b.PrepareNextTestOrConclude()
-}
-
-func (b *Bisector) concludeBisectionWithSingleMod(modID string, reasonTemplate string) (bool, string, string) {
-	modName := modID
-	if mod, ok := b.AllMods[modID]; ok {
-		modName = mod.FriendlyName()
-	}
-	finalMsg := fmt.Sprintf(reasonTemplate, modName, modID)
-	return true, "", b.formatConclusionMessage(finalMsg)
-}
-
-func (b *Bisector) processGroupAResult(issueOccurredInA bool, currentIterationHistory *BisectionStep) (bool, string, string) {
-	currentIterationHistory.IssuePresentInA = issueOccurredInA
-	b.recordTestOutcomeDetails(issueOccurredInA, "A", b.CurrentGroupAEffective) // Log and store bad set if needed
-
-	if !issueOccurredInA { // Group A SUCCESS (issue GONE)
-		log.Printf("%sGroup A passed. Problem is in Group B original candidates.", LogInfoPrefix)
-		b.markModsAsGood(b.CurrentGroupAOriginal)
-		b.CurrentSearchSpace = b.CurrentGroupBOriginal
-		return b.prepareNewIteration()
-	}
-
-	// Group A FAILED (issue PRESENT)
-	log.Printf("%sGroup A failed.", LogInfoPrefix)
-	if len(b.CurrentGroupBOriginal) == 0 {
-		log.Printf("%sGroup A failed, and Group B is empty. Problem must be in Group A original candidates.", LogInfoPrefix)
-		b.CurrentSearchSpace = b.CurrentGroupAOriginal
-		if len(b.CurrentSearchSpace) == 1 {
-			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). It was in the failing Group A, and Group B was empty.")
-		}
-		return b.prepareNewIteration()
-	}
-
-	// Group A failed, Group B exists, proceed to test B
-	log.Printf("%sProceeding to test Group B.", LogInfoPrefix)
-	b.applyModSet(b.CurrentGroupBEffective) // CurrentGroupBEffective already calculated
-	b.testingPhase = PhaseTestingB
-	status := fmt.Sprintf("Iteration %d. Group A failed. Now testing Group B.", b.IterationCount)
-	question := b.formatQuestion("B", b.CurrentGroupBOriginal, b.CurrentGroupBEffective)
-	return false, question, status
-}
-
-func (b *Bisector) processGroupBResult(issueOccurredInB bool, currentIterationHistory *BisectionStep) (bool, string, string) {
-	b.recordTestOutcomeDetails(issueOccurredInB, "B", b.CurrentGroupBEffective) // Log and store bad set if needed
-
-	if !currentIterationHistory.IssuePresentInA {
-		// This indicates a logical flaw if Group A had passed but we proceeded to test B.
-		log.Printf("%sError: Tested Group B, but Group A was marked as passed for this iteration. State inconsistency.", LogErrorPrefix)
-		return b.prepareNewIteration() // Attempt to recover by preparing a new iteration.
-	}
-
-	// Group A FAILED. Now evaluate Group B result.
-	if !issueOccurredInB { // Group B SUCCESS (issue GONE) -> A failed, B passed
-		log.Printf("%sGroup A failed, Group B passed. Problem is in Group A original candidates.", LogInfoPrefix)
-		b.markModsAsGood(b.CurrentGroupBOriginal)
-		b.CurrentSearchSpace = b.CurrentGroupAOriginal
-		if len(b.CurrentSearchSpace) == 1 {
-			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). Group A (containing it) failed, and Group B passed.")
-		}
-	} else { // Group B FAILED (issue PRESENT) - Both A and B failed
-		log.Printf("%sBoth Groups A and B failed. Problem in shared elements.", LogInfoPrefix)
-		b.CurrentSearchSpace = b.calculateIntersectionSearchSpace(
-			currentIterationHistory.SearchSpace,
-			b.CurrentGroupAEffective,
-			b.CurrentGroupBEffective,
-		)
-		if len(b.CurrentSearchSpace) == 1 {
-			return b.concludeBisectionWithSingleMod(b.CurrentSearchSpace[0], "Problematic mod identified: %s (%s). It was common to both failing Group A and Group B.")
-		}
-	}
-	return b.prepareNewIteration()
+	return done, nextQuestion, statusMsg
 }
 
 func (b *Bisector) formatQuestion(groupDesignator string, originalGroup []string, effectiveGroup map[string]bool) string {
@@ -260,6 +235,10 @@ func (b *Bisector) formatQuestion(groupDesignator string, originalGroup []string
 
 func (b *Bisector) formatConclusionMessage(baseMessage string) string {
 	conclusion := baseMessage
+	if baseMessage == "" { // Default if strategy provides no specific conclusion
+		conclusion = "Bisection finished."
+	}
+
 	if len(b.LastKnownBadEffectiveSet) > 0 {
 		var badModNames []string
 		for modID := range b.LastKnownBadEffectiveSet {
@@ -271,19 +250,17 @@ func (b *Bisector) formatConclusionMessage(baseMessage string) string {
 		}
 		sort.Strings(badModNames)
 		conclusion += fmt.Sprintf("\nLast known failing set included %d mods: %s", len(badModNames), strings.Join(badModNames, ", "))
-	} else if b.lastTestCausedIssue {
+	} else if b.lastTestCausedIssue && !strings.Contains(conclusion, "Last test showed the issue") {
+		// Append if not already part of strategy's message and last test was bad
 		conclusion += "\nThe very last test performed still showed the issue."
 	}
 	log.Printf("%sBisection concluded: %s", LogInfoPrefix, conclusion)
 	return conclusion
 }
 
-// recordTestOutcomeDetails logs the outcome of a specific test group and updates LastKnownBadEffectiveSet if the issue occurred.
-// b.lastTestCausedIssue is assumed to be already set by the caller (ProcessUserFeedback)
-// based on the direct outcome of the user's test.
 func (b *Bisector) recordTestOutcomeDetails(testGroupCausedIssue bool, groupTested string, effectiveSetTested map[string]bool) {
 	if testGroupCausedIssue {
-		b.LastKnownBadEffectiveSet = cloneMap(effectiveSetTested)
+		b.LastKnownBadEffectiveSet = cloneMap(effectiveSetTested) // Clone to prevent modification
 		log.Printf("%sIssue PRESENT with Group %s. Effective set (%d mods): %v",
 			LogInfoPrefix, groupTested, len(effectiveSetTested), mapKeys(effectiveSetTested))
 	} else {
@@ -292,11 +269,7 @@ func (b *Bisector) recordTestOutcomeDetails(testGroupCausedIssue bool, groupTest
 }
 
 func (b *Bisector) calculateEffectiveGroup(originalGroup []string, name string) map[string]bool {
-	// The resolver was initialized with references to b.ForceEnabled and b.ForceDisabled,
-	// so it will use their current values.
 	effectiveSet, resolutionDetails := b.resolver.ResolveEffectiveSet(originalGroup)
-
-	// Log the resolution path for debugging/visualization prep
 	if len(resolutionDetails) > 0 {
 		log.Printf("%sDependency Resolution Path for group %s %v:", LogInfoPrefix, name, originalGroup)
 		for _, detail := range resolutionDetails {
@@ -312,25 +285,24 @@ func (b *Bisector) calculateEffectiveGroup(originalGroup []string, name string) 
 			}
 			log.Printf("%s  - %s", LogInfoPrefix, reasonStr)
 		}
-		// Store resolutionDetails on AppContext or Bisector if it needs to be accessed by UI later
-		// For now, just logging it.
 	}
 	return effectiveSet
 }
 
 func (b *Bisector) calculateIntersectionSearchSpace(iterationInitialSearchSpace []string, groupAEffective, groupBEffective map[string]bool) []string {
 	candidatePool := make(map[string]bool)
-	for _, modID := range iterationInitialSearchSpace {
+	for _, modID := range iterationInitialSearchSpace { // Only consider mods from the original search space for this step
 		candidatePool[modID] = true
 	}
+	// Also consider force-enabled mods, as they might be the cause if they are dependencies
 	for modID := range b.ForceEnabled {
 		candidatePool[modID] = true
 	}
 
 	var intersectedAndFiltered []string
-	if groupAEffective != nil && groupBEffective != nil { // Ensure maps are not nil
+	if groupAEffective != nil && groupBEffective != nil {
 		for modID := range groupAEffective {
-			if groupBEffective[modID] && candidatePool[modID] {
+			if groupBEffective[modID] && candidatePool[modID] { // Mod is in both effective sets AND in the allowed pool
 				intersectedAndFiltered = append(intersectedAndFiltered, modID)
 			}
 		}
@@ -340,9 +312,11 @@ func (b *Bisector) calculateIntersectionSearchSpace(iterationInitialSearchSpace 
 	return intersectedAndFiltered
 }
 
+// In app/bisector.go
+
 func (b *Bisector) applyModSet(effectiveModsToEnable map[string]bool) {
-	log.Printf("%sApplying mod set. Effective mods to enable (%d): %v", LogInfoPrefix, len(effectiveModsToEnable), mapKeys(effectiveModsToEnable))
-	var appliedChanges, renameErrors []string
+	log.Printf("%sApplying mod set. Target effective mods (%d): %v", LogInfoPrefix, len(effectiveModsToEnable), mapKeys(effectiveModsToEnable))
+	var enabledMods, disabledMods, renameErrors []string
 
 	for _, modID := range b.AllModIDsSorted {
 		mod, ok := b.AllMods[modID]
@@ -355,32 +329,41 @@ func (b *Bisector) applyModSet(effectiveModsToEnable map[string]bool) {
 		}
 
 		var err error
-		actionTaken := false
+
 		if shouldBeActive && !mod.IsCurrentlyActive {
 			err = mod.Enable(b.ModsDir)
 			if err == nil {
-				appliedChanges = append(appliedChanges, mod.FriendlyName()+" (Enabled)")
+				enabledMods = append(enabledMods, mod.ModID())
 			}
-			actionTaken = true
 		} else if !shouldBeActive && mod.IsCurrentlyActive {
 			err = mod.Disable(b.ModsDir)
 			if err == nil {
-				appliedChanges = append(appliedChanges, mod.FriendlyName()+" (Disabled)")
+				disabledMods = append(disabledMods, mod.ModID())
 			}
-			actionTaken = true
 		}
+
 		if err != nil {
-			log.Printf("%sError applying state for %s (active: %t): %v", LogErrorPrefix, mod.ModID(), shouldBeActive, err)
-			renameErrors = append(renameErrors, fmt.Sprintf("%s: %v", mod.FriendlyName(), err))
-		} else if actionTaken {
-			// Action successful
+			log.Printf("%sError applying state for %s (target active: %t): %v", LogErrorPrefix, mod.ModID(), shouldBeActive, err)
+			renameErrors = append(renameErrors, fmt.Sprintf("%s: %v", mod.ModID(), err))
 		}
 	}
-	if len(appliedChanges) > 0 {
-		log.Printf("%sMod state changes applied: %d actions.", LogInfoPrefix, len(appliedChanges))
+
+	if len(enabledMods) > 0 {
+		sort.Strings(enabledMods)
+		log.Printf("%sEnabled %d mods: %v", LogInfoPrefix, len(enabledMods), enabledMods)
 	}
+	if len(disabledMods) > 0 {
+		sort.Strings(disabledMods)
+		log.Printf("%sDisabled %d mods: %v", LogInfoPrefix, len(disabledMods), disabledMods)
+	}
+
+	if len(enabledMods) == 0 && len(disabledMods) == 0 && len(renameErrors) == 0 {
+		log.Printf("%sNo mod state changes needed for the current effective set.", LogInfoPrefix)
+	}
+
 	if len(renameErrors) > 0 {
-		log.Printf("%sWARNING: Renaming errors encountered: %s.", LogWarningPrefix, strings.Join(renameErrors, "; "))
+		log.Printf("%sWARNING: Renaming errors encountered for %d mods: %s.", LogWarningPrefix, len(renameErrors), strings.Join(renameErrors, "; "))
+		// Consider if UI should be more forcefully updated with this error status
 	}
 }
 
@@ -389,24 +372,25 @@ func (b *Bisector) UndoLastStep() (possible bool, message string) {
 		return false, "Cannot undo: No history available."
 	}
 
-	b.History = b.History[:len(b.History)-1]
+	b.History = b.History[:len(b.History)-1] // Pop last step
 	if b.IterationCount > 0 {
 		b.IterationCount--
 	}
-	b.testingPhase = PhasePrepareA
+	b.testingPhase = PhasePrepareA // Always go back to preparing for a test
 
-	if len(b.History) > 0 {
+	if len(b.History) > 0 { // If there are previous steps, restore to the end state of that step
 		lastValidStep := b.History[len(b.History)-1]
 		b.CurrentSearchSpace = slices.Clone(lastValidStep.SearchSpace)
 		b.ForceEnabled = cloneMap(lastValidStep.ForceEnabledSnapshot)
 		b.ForceDisabled = cloneMap(lastValidStep.ForceDisabledSnapshot)
+		// Reset ConfirmedGood status for all mods, as undo might change context
 		for _, mod := range b.AllMods {
 			mod.ConfirmedGood = false
 		}
 		log.Printf("%sUndo: Reverted to state before Iteration %d. Search space: %d.", LogInfoPrefix, b.IterationCount+1, len(b.CurrentSearchSpace))
-	} else {
+	} else { // No history left, revert to initial state
 		b.CurrentSearchSpace = []string{}
-		for _, modID := range b.AllModIDsSorted {
+		for _, modID := range b.AllModIDsSorted { // Rebuild initial search space
 			mod := b.AllMods[modID]
 			if mod.IsCurrentlyActive && !isImplicitMod(modID) {
 				b.CurrentSearchSpace = append(b.CurrentSearchSpace, modID)
@@ -418,6 +402,8 @@ func (b *Bisector) UndoLastStep() (possible bool, message string) {
 		b.IterationCount = 0
 		log.Printf("%sUndo: Reverted to initial state. Search space: %d.", LogInfoPrefix, len(b.CurrentSearchSpace))
 	}
+	// Recalculate and apply a modset appropriate for the current (PrepareA) phase.
+	// This usually means applying what would be GroupA of the *next* step from this reverted state.
 	b.recalculateAndApplyCurrentModset("Undo operation")
 	return true, "Undo successful. Press 'S' to start next test from this state."
 }
@@ -462,42 +448,43 @@ func (b *Bisector) recalculateAndApplyCurrentModset(reason string) {
 	var currentOperationDesc string
 
 	switch b.testingPhase {
-	case PhaseTestingA:
-		effectiveGroupToReapply = b.calculateEffectiveGroup(b.CurrentGroupAOriginal, "A")
-		b.CurrentGroupAEffective = effectiveGroupToReapply
+	case PhaseTestingA: // Re-calculate and apply Group A's effective set
+		b.CurrentGroupAEffective = b.calculateEffectiveGroup(b.CurrentGroupAOriginal, "A")
+		effectiveGroupToReapply = b.CurrentGroupAEffective
 		currentOperationDesc = "current Group A test"
 	case PhaseTestingB:
 		effectiveGroupToReapply = b.calculateEffectiveGroup(b.CurrentGroupBOriginal, "B")
 		b.CurrentGroupBEffective = effectiveGroupToReapply
 		currentOperationDesc = "current Group B test"
 	case PhasePrepareA:
+		// If in PrepareA, we might be before the first iteration or between iterations.
+		// The goal is to set up for the *next* Group A test, or an initial state.
 		if b.IterationCount == 0 && len(b.CurrentSearchSpace) > 0 {
-			// Before first iteration, apply a neutral set (all enabled by default, respecting forces)
-			effectiveGroupToReapply = make(map[string]bool)
-			for id := range b.AllMods {
-				if !b.ForceDisabled[id] {
-					effectiveGroupToReapply[id] = true
-				}
+			// Before first iteration, apply a neutral set based on current search space and forces.
+			// This means enabling all mods in current search space + forced, minus forced-disabled.
+			// This effectively reflects what the first Group A would be if it included everything.
+			// However, it's safer to just calculate what the *next* group A would be.
+			tempMid := len(b.CurrentSearchSpace) / 2
+			if len(b.CurrentSearchSpace) == 1 {
+				tempMid = 1
 			}
-			for id := range b.ForceEnabled {
-				if !b.ForceDisabled[id] {
-					effectiveGroupToReapply[id] = true
-				}
-			}
-			currentOperationDesc = "initial pre-bisection state"
+			tempGroupAOrig := slices.Clone(b.CurrentSearchSpace[:tempMid]) // Tentative next Group A
+			effectiveGroupToReapply = b.calculateEffectiveGroup(tempGroupAOrig, "Prospective A")
+			currentOperationDesc = "prospective Group A for next iteration (or initial state)"
+
 		} else if len(b.CurrentSearchSpace) > 0 {
-			// About to prepare Group A for the *next* iteration, so apply its calculated state.
+			// Between iterations, calculate effective set for the next Group A
 			tempMid := len(b.CurrentSearchSpace) / 2
 			if len(b.CurrentSearchSpace) == 1 {
 				tempMid = 1
 			}
 			tempGroupAOrig := slices.Clone(b.CurrentSearchSpace[:tempMid])
-			effectiveGroupToReapply = b.calculateEffectiveGroup(tempGroupAOrig, "A")
-			currentOperationDesc = "pending Group A of next iteration"
-		} else { // Bisection likely concluded or search space became empty through other means
-			effectiveGroupToReapply = make(map[string]bool) // Default to all forced enabled, nothing else
+			effectiveGroupToReapply = b.calculateEffectiveGroup(tempGroupAOrig, "Prospective A")
+			currentOperationDesc = "prospective Group A for next iteration"
+		} else { // Search space is empty, or bisection concluded. Apply only forced-enabled mods.
+			effectiveGroupToReapply = make(map[string]bool)
 			for id := range b.ForceEnabled {
-				if !b.ForceDisabled[id] {
+				if !b.ForceDisabled[id] { // Respect force-disable even for force-enable
 					effectiveGroupToReapply[id] = true
 				}
 			}
@@ -550,7 +537,7 @@ func (b *Bisector) RestoreInitialModState() {
 				actionTaken = true
 			}
 		}
-		if err != nil && !os.IsNotExist(err) {
+		if err != nil && !os.IsNotExist(err) { // os.IsNotExist can occur if file was deleted externally
 			log.Printf("%sError restoring mod %s: %v", LogErrorPrefix, mod.ModID(), err)
 			errorCount++
 		} else if actionTaken {
@@ -581,6 +568,22 @@ func cloneMap(originalMap map[string]bool) map[string]bool {
 		newMap[k] = v
 	}
 	return newMap
+}
+
+// GetStrategyType is a helper to get the BisectionStrategyType from an instance.
+// This is primarily for logging/display if needed, as the type itself is stored in AppContext.
+func GetStrategyType(s BisectionStrategy) BisectionStrategyType {
+	switch s.(type) {
+	case *fastStrategy:
+		return StrategyFast
+	case *partialStrategy:
+		return StrategyPartial
+	case *fullStrategy:
+		return StrategyFull
+	default:
+		log.Printf("%sUnknown strategy type: %T", LogWarningPrefix, s)
+		return StrategyFast // Fallback for safety
+	}
 }
 
 func (b *Bisector) GetCurrentTestingPhase() int                { return b.testingPhase }
