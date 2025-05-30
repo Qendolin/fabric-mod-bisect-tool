@@ -291,6 +291,20 @@ func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tc
 	// Focus handling is now primarily managed by the page's SetInputCapture in pages.go
 	// This function will handle specific key actions for focused elements.
 	if ctx.AllModsList.HasFocus() && event.Key() == tcell.KeyRune {
+
+		if event.Modifiers()&tcell.ModShift != 0 {
+			switch event.Rune() {
+			case 'e', 'E':
+				ctx.Bisector.ToggleForceEnable(ctx.Bisector.AllModIDsSorted...)
+				ctx.PopulateAllModsList()
+				return nil
+			case 'd', 'D':
+				ctx.Bisector.ToggleForceDisable(ctx.Bisector.AllModIDsSorted...)
+				ctx.PopulateAllModsList()
+				return nil
+			}
+		}
+
 		modID, found := ctx.GetSelectedModIDFromAllModsList()
 		if found {
 			switch event.Rune() {

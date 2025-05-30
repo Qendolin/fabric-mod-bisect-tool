@@ -408,38 +408,35 @@ func (b *Bisector) UndoLastStep() (possible bool, message string) {
 	return true, "Undo successful. Press 'S' to start next test from this state."
 }
 
-func (b *Bisector) ToggleForceEnable(modID string) {
-	mod, ok := b.AllMods[modID]
-	if !ok {
-		return
+func (b *Bisector) ToggleForceEnable(modIDs ...string) {
+	for _, modID := range modIDs {
+		if _, ok := b.AllMods[modID]; !ok {
+			return
+		}
+		if b.ForceEnabled[modID] {
+			delete(b.ForceEnabled, modID)
+		} else {
+			b.ForceEnabled[modID] = true
+			delete(b.ForceDisabled, modID)
+		}
 	}
-	modName := mod.FriendlyName()
-	if b.ForceEnabled[modID] {
-		delete(b.ForceEnabled, modID)
-		log.Printf("%sMod '%s' is NO LONGER force-enabled.", LogInfoPrefix, modName)
-	} else {
-		b.ForceEnabled[modID] = true
-		delete(b.ForceDisabled, modID)
-		log.Printf("%sMod '%s' is NOW force-enabled.", LogInfoPrefix, modName)
-	}
-	b.recalculateAndApplyCurrentModset("ForceEnable toggle for " + modName)
+	b.recalculateAndApplyCurrentModset(fmt.Sprintf("ForceEnable toggle for %v", modIDs))
 }
 
-func (b *Bisector) ToggleForceDisable(modID string) {
-	mod, ok := b.AllMods[modID]
-	if !ok {
-		return
+func (b *Bisector) ToggleForceDisable(modIDs ...string) {
+	for _, modID := range modIDs {
+		if _, ok := b.AllMods[modID]; !ok {
+			return
+		}
+		if b.ForceDisabled[modID] {
+			delete(b.ForceDisabled, modID)
+		} else {
+			b.ForceDisabled[modID] = true
+			delete(b.ForceEnabled, modID)
+		}
 	}
-	modName := mod.FriendlyName()
-	if b.ForceDisabled[modID] {
-		delete(b.ForceDisabled, modID)
-		log.Printf("%sMod '%s' is NO LONGER force-disabled.", LogInfoPrefix, modName)
-	} else {
-		b.ForceDisabled[modID] = true
-		delete(b.ForceEnabled, modID)
-		log.Printf("%sMod '%s' is NOW force-disabled.", LogInfoPrefix, modName)
-	}
-	b.recalculateAndApplyCurrentModset("ForceDisable toggle for " + modName)
+
+	b.recalculateAndApplyCurrentModset(fmt.Sprintf("ForceDisable toggle for %v", modIDs))
 }
 
 func (b *Bisector) recalculateAndApplyCurrentModset(reason string) {
