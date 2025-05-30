@@ -295,9 +295,13 @@ func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tc
 		}
 	}
 	if event.Key() == tcell.KeyEscape {
+		if ctx.ModSearchInput.HasFocus() && ctx.ModSearchInput.GetText() != "" {
+			// defer event handling to search input
+			return event
+		}
 		ctx.Pages.SwitchToPage(PageNameBisection)
 		ctx.App.SetFocus(ctx.SearchSpaceList) // Default focus for bisection page
-		currentStatus := "Returned to bisection page. Press 'S' to continue."
+		currentStatus := "Press 'S' to start or continue bisection."
 		ctx.UpdateInfo(currentStatus, false)
 		return nil // Event handled
 	}
@@ -309,13 +313,7 @@ func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) { // Called on Ente
 		ctx.App.SetFocus(ctx.AllModsList) // Move focus from search to the list
 	} else if key == tcell.KeyEscape {
 		if ctx.ModSearchInput.GetText() != "" {
-			ctx.ModSearchInput.SetText("") // Clear search text, triggers PopulateAllModsList
-		} else {
-			// If search is empty, Esc acts like 'Done with this screen'
-			ctx.Pages.SwitchToPage(PageNameBisection)
-			ctx.App.SetFocus(ctx.SearchSpaceList)
-			currentStatus := "Returned to bisection page. Press 'S' to continue."
-			ctx.UpdateInfo(currentStatus, false)
+			ctx.ModSearchInput.SetText("")
 		}
 	}
 }
