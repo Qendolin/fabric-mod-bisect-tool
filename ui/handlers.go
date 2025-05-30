@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app" // Use your module path
+	"github.com/Qendolin/fabric-mod-bisect-tool/app"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -56,14 +56,14 @@ func HandleLoadModsAndStart(ctx *app.AppContext) {
 	}
 
 	ctx.Pages.SwitchToPage(PageNameLoading)
-	log.Printf("%sSwitched to loading page. Starting async mod processing for: %s", app.LogInfoPrefix, absModsDir)
+	log.Printf("%sSwitched to loading page. Starting async mod processing for: %s with strategy: %s",
+		app.LogInfoPrefix, absModsDir, app.BisectionStrategyTypeStrings[ctx.BisectionStrategy])
 	go ctx.PerformAsyncModLoading(PageNameInitialSetup, PageNameBisection, PageNameLoading)
 }
 
 func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
 	if event.Key() == tcell.KeyRune && (event.Rune() == 'q' || event.Rune() == 'Q') {
 		focusedPrimitive := ctx.App.GetFocus()
-		// Allow 'q' if an input field or modal has focus (they might use 'q' for input)
 		if _, isInput := focusedPrimitive.(*tview.InputField); isInput {
 			return event
 		}
@@ -72,9 +72,7 @@ func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.Event
 		}
 
 		currentPage, _ := ctx.Pages.GetFrontPage()
-		// Only quit if on a main page, not e.g. loading screen where q might be confusing
 		if currentPage == PageNameBisection || currentPage == PageNameModSelection || currentPage == PageNameInitialSetup {
-			// Show Confirm Quit Modal instead of stopping directly
 			ctx.Pages.ShowPage(PageNameConfirmQuitModal)
 			ctx.App.SetFocus(ctx.ConfirmQuitModal)
 			return nil
@@ -87,7 +85,6 @@ func GlobalInputHandler(ctx *app.AppContext, event *tcell.EventKey) *tcell.Event
 		return handleBisectionPageInput(ctx, event)
 	case PageNameModSelection:
 		return handleModSelectionPageInput(ctx, event)
-		// Other pages (InitialSetup, Loading, QuestionModal) primarily handle input via their primitives
 	}
 	return event
 }
@@ -101,13 +98,13 @@ func HandleQuestionModalDone(ctx *app.AppContext, buttonIndex int, buttonLabel s
 	}
 	if targetFocus == nil {
 		targetFocus = ctx.SearchSpaceList
-	} // Default focus
+	}
 
-	ctx.Pages.HidePage(PageNameQuestionModal) // Always hide modal first
-	ctx.Pages.SwitchToPage(targetPage)        // Then switch page
+	ctx.Pages.HidePage(PageNameQuestionModal)
+	ctx.Pages.SwitchToPage(targetPage)
 	if targetFocus != nil {
 		ctx.App.SetFocus(targetFocus)
-	} // Then set focus
+	}
 
 	if ctx.Bisector == nil {
 		log.Printf("%sBisector is nil, cannot process modal response for '%s'.", app.LogWarningPrefix, buttonLabel)
@@ -121,14 +118,16 @@ func HandleQuestionModalDone(ctx *app.AppContext, buttonIndex int, buttonLabel s
 		log.Printf("%sModal response: '%s' (Issue Occurred: %t)", app.LogInfoPrefix, buttonLabel, issueOccurred)
 
 		done, nextQuestion, status := ctx.Bisector.ProcessUserFeedback(issueOccurred)
-		ctx.UpdateBisectionLists()
+		ctx.UpdateBisectionLists() // Update lists after Bisector processes feedback
 
 		if done {
 			ctx.UpdateInfo(status+"\n\nPress 'R' to Reset, or 'Q' to Quit.", false)
 		} else {
-			// ProcessUserFeedback returns the next question and current status.
 			ctx.UpdateInfo(status, false) // Display current iteration status
-			ctx.AskBisectionQuestion(nextQuestion, PageNameBisection, ctx.SearchSpaceList)
+			if nextQuestion != "" {       // If there's a specific next question (e.g., for Group B)
+				ctx.AskBisectionQuestion(nextQuestion, PageNameBisection, ctx.SearchSpaceList)
+			}
+			// If no nextQuestion, it implies a new iteration will be prepared by 'S' key
 		}
 
 	case ModalButtonInterrupt:
@@ -143,7 +142,7 @@ func HandleQuestionModalDone(ctx *app.AppContext, buttonIndex int, buttonLabel s
 }
 
 func HandleConfirmQuitModalDone(ctx *app.AppContext, buttonIndex int, buttonLabel string) {
-	ctx.Pages.HidePage(PageNameConfirmQuitModal) // Always hide the modal first
+	ctx.Pages.HidePage(PageNameConfirmQuitModal)
 
 	currentPage, _ := ctx.Pages.GetFrontPage()
 	var defaultFocus tview.Primitive
@@ -156,45 +155,42 @@ func HandleConfirmQuitModalDone(ctx *app.AppContext, buttonIndex int, buttonLabe
 		defaultFocus = ctx.SearchSpaceList
 	case PageNameModSelection:
 		defaultFocus = ctx.ModSearchInput
-	default: // Fallback if on an unexpected page
+	default:
 		if ctx.SetupForm != nil && ctx.SetupForm.GetFormItemCount() > 0 {
 			defaultFocus = ctx.SetupForm.GetFormItem(0)
 		} else {
 			defaultFocus = ctx.Pages
 		}
-
 	}
-	if defaultFocus != nil { // Check if defaultFocus is not nil before setting
+	if defaultFocus != nil {
 		ctx.App.SetFocus(defaultFocus)
 	}
 
 	if buttonLabel == ModalButtonQuitYes {
 		log.Printf("%sUser confirmed quit.", app.LogInfoPrefix)
-		ctx.App.Stop() // Proceed to quit
+		ctx.App.Stop()
 	} else {
 		log.Printf("%sUser cancelled quit.", app.LogInfoPrefix)
-		// Do nothing, user remains in the application, focus restored above.
 	}
 }
 
 func handleBisectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
 	if event.Key() != tcell.KeyRune {
 		return event
-	} // Handle only rune keys here
+	}
 	switch event.Rune() {
 	case 's', 'S':
 		handleStartBisectionStep(ctx)
 	case 'u', 'U':
 		handleUndo(ctx)
 	case 'm', 'M':
-		handleManageMods(ctx) // 'M' for Manage/Interrupt
+		handleManageMods(ctx)
 	case 'r', 'R':
 		handleReset(ctx)
-	// 'q' for Quit is handled by GlobalInputHandler
 	default:
 		return event
 	}
-	return nil // Event was handled
+	return nil
 }
 
 func handleStartBisectionStep(ctx *app.AppContext) {
@@ -206,8 +202,6 @@ func handleStartBisectionStep(ctx *app.AppContext) {
 	var question, status string
 	done := false
 
-	// If not actively testing A or B, prepare the next iteration.
-	// Otherwise, re-prompt the current question.
 	currentPhase := ctx.Bisector.GetCurrentTestingPhase()
 	if currentPhase == app.PhasePrepareA {
 		done, question, status = ctx.Bisector.PrepareNextTestOrConclude()
@@ -219,17 +213,17 @@ func handleStartBisectionStep(ctx *app.AppContext) {
 		question = ctx.Bisector.FormatQuestion("B", ctx.Bisector.GetCurrentGroupBOriginal(), ctx.Bisector.GetCurrentGroupBEffective())
 	}
 
-	ctx.UpdateBisectionLists() // Update lists before showing status or question
+	ctx.UpdateBisectionLists()
 	ctx.UpdateInfo(status, false)
 
 	if done {
-		// 'status' from PrepareNextTestOrConclude is the final conclusion message.
 		ctx.UpdateInfo(status+"\n\nPress 'R' to Reset, or 'Q' to Quit.", false)
-	} else if question != "" { // If not done, there should be a question
+	} else if question != "" {
 		ctx.AskBisectionQuestion(question, PageNameBisection, ctx.SearchSpaceList)
 	} else {
-		log.Printf("%shandleStartBisectionStep: Not done, but no question generated. Phase: %d", app.LogErrorPrefix, currentPhase)
-		ctx.UpdateInfo("Internal error: Failed to determine next bisection step.", true)
+		log.Printf("%shandleStartBisectionStep: Not done, but no question generated. Phase: %d. Status: %s", app.LogErrorPrefix, currentPhase, status)
+		// This can happen if a strategy decides not to test B and directly prepares for next iteration.
+		// The status message from ProcessUserFeedback (via strategy) should guide the user.
 	}
 }
 
@@ -239,15 +233,14 @@ func handleUndo(ctx *app.AppContext) {
 		return
 	}
 	possible, msg := ctx.Bisector.UndoLastStep()
-	ctx.UpdateInfo(msg, !possible) // Show error if not possible
+	ctx.UpdateInfo(msg, !possible)
 	if possible {
 		ctx.UpdateBisectionLists()
-		ctx.PopulateAllModsList() // Forced lists might have been reverted
-		// Info message from UndoLastStep already guides user.
+		ctx.PopulateAllModsList()
 	}
 }
 
-func handleManageMods(ctx *app.AppContext) { // 'M' key
+func handleManageMods(ctx *app.AppContext) {
 	if ctx.Bisector == nil {
 		ctx.UpdateInfo("Bisector not initialized.", true)
 		return
@@ -262,35 +255,53 @@ func handleReset(ctx *app.AppContext) {
 	if ctx.Bisector != nil {
 		ctx.Bisector.RestoreInitialModState()
 	}
-	ctx.ReinitializeAppContextForSetup() // Resets bisector and UI elements related to bisection
+	// Preserve mods path and selected strategy, but reset everything else.
+	currentModsPath := ctx.GetModsPath()
+	currentStrategy := ctx.BisectionStrategy // Store before reinitialize
+
+	ctx.ReinitializeAppContextForSetup() // Resets bisector and UI elements
+
+	ctx.SetModsPath(currentModsPath)        // Restore mods path
+	ctx.BisectionStrategy = currentStrategy // Restore strategy
 
 	go ctx.App.QueueUpdateDraw(func() {
-		// Ensure form path field is updated if modsPath was kept or reset
 		if setupForm := ctx.SetupForm; setupForm != nil && setupForm.GetFormItemCount() > 0 {
+			// Update path input field
 			if pathInput, ok := setupForm.GetFormItem(0).(*tview.InputField); ok {
-				pathInput.SetText(ctx.GetModsPath()) // Get potentially persisted or default path
+				pathInput.SetText(ctx.GetModsPath())
 			}
-			ctx.App.SetFocus(setupForm.GetFormItem(0)) // Focus first form item
+			// Update strategy dropdown
+			if strategyDropDown, ok := setupForm.GetFormItem(1).(*tview.DropDown); ok {
+				for i := range app.BisectionStrategyTypeStrings {
+					if i == ctx.BisectionStrategy {
+						strategyDropDown.SetCurrentOption(int(i))
+						break
+					}
+				}
+			}
+			ctx.App.SetFocus(setupForm.GetFormItem(0))
 		}
 		ctx.Pages.SwitchToPage(PageNameInitialSetup)
 	})
-	log.Printf("%sBisection reset. Returned to Initial Setup.", app.LogInfoPrefix)
-	ctx.UpdateInfo("Bisection has been reset. Please enter mods folder path.", false)
+	log.Printf("%sBisection reset. Returned to Initial Setup. Strategy: %s", app.LogInfoPrefix, app.BisectionStrategyTypeStrings[currentStrategy])
+	ctx.UpdateInfo("Tool has been reset.", false)
 }
 
 func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tcell.EventKey {
+	// Focus handling is now primarily managed by the page's SetInputCapture in pages.go
+	// This function will handle specific key actions for focused elements.
 	if ctx.AllModsList.HasFocus() && event.Key() == tcell.KeyRune {
 		modID, found := ctx.GetSelectedModIDFromAllModsList()
 		if found {
 			switch event.Rune() {
 			case 'e', 'E':
 				ctx.Bisector.ToggleForceEnable(modID)
-				ctx.PopulateAllModsList() // Refresh lists to show status change
-				return nil                // Event handled
+				ctx.PopulateAllModsList()
+				return nil
 			case 'd', 'D':
 				ctx.Bisector.ToggleForceDisable(modID)
 				ctx.PopulateAllModsList()
-				return nil // Event handled
+				return nil
 			}
 		}
 	}
@@ -308,9 +319,12 @@ func handleModSelectionPageInput(ctx *app.AppContext, event *tcell.EventKey) *tc
 	return event // Event not handled by this specific handler
 }
 
-func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) { // Called on Enter/Esc in ModSearchInput
+func HandleModSearchDone(ctx *app.AppContext, key tcell.Key) {
 	if key == tcell.KeyEnter {
-		ctx.App.SetFocus(ctx.AllModsList) // Move focus from search to the list
+		if ctx.AllModsList.GetRowCount() > 1 { // Check if list has content rows
+			ctx.AllModsList.Select(1, 0) // Select first data row
+		}
+		ctx.App.SetFocus(ctx.AllModsList)
 	} else if key == tcell.KeyEscape {
 		if ctx.ModSearchInput.GetText() != "" {
 			ctx.ModSearchInput.SetText("")

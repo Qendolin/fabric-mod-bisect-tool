@@ -72,7 +72,7 @@ func (ctx *AppContext) StartLogProcessor(logFilePath string) error {
 	go func() {
 		defer ctx.logRelayWg.Done()
 		log.Println(LogInfoPrefix + "TUI Log Relay Goroutine: Started.")
-		ticker := time.NewTicker(250 * time.Millisecond) // Update TUI periodically
+		ticker := time.NewTicker(100 * time.Millisecond) // Update TUI periodically
 		defer ticker.Stop()
 
 		var batch []string

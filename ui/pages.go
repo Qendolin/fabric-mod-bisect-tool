@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"log"
+
 	"github.com/Qendolin/fabric-mod-bisect-tool/app"
 
 	"github.com/gdamore/tcell/v2"
@@ -64,7 +66,6 @@ func InitializeTUIPrimitives(ctx *app.AppContext) {
 		SetText("Are you sure you want to quit?").
 		AddButtons([]string{ModalButtonQuitYes, ModalButtonQuitNo}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			// This DoneFunc will be handled by a new handler in handlers.go
 			HandleConfirmQuitModalDone(ctx, buttonIndex, buttonLabel)
 		})
 }
@@ -79,54 +80,77 @@ func SetupPages(ctx *app.AppContext) {
 	setupConfirmQuitModalPage(ctx)
 
 	ctx.Pages.SwitchToPage(PageNameInitialSetup)
-	if f := ctx.SetupForm; f != nil && f.GetFormItemCount() > 0 {
-		if item := f.GetFormItem(0); item != nil {
-			ctx.App.SetFocus(item)
-		}
-	}
+	ctx.UpdateInfo("Enter mod folder path. Use Tab/Shift+Tab to navigate, Enter to interact.", false)
 }
 
 func setupInitialSetupPage(ctx *app.AppContext) {
+	pathInput := tview.NewInputField().SetLabel("Mods Folder Path:").SetFieldWidth(60).
+		SetChangedFunc(func(text string) { ctx.SetModsPath(text) })
+
+	strategyOptionStrings := []string{
+		app.BisectionStrategyTypeStrings[app.StrategyFast],
+		app.BisectionStrategyTypeStrings[app.StrategyPartial],
+		app.BisectionStrategyTypeStrings[app.StrategyFull],
+	}
+
+	strategyDropDown := tview.NewDropDown().
+		SetLabel("Bisection Strategy:").
+		SetOptions(strategyOptionStrings, func(text string, index int) {
+			ctx.BisectionStrategy = app.BisectionStrategyType(index)
+			log.Printf("%sBisection strategy set to: %s", app.LogInfoPrefix, text)
+		})
+
+	strategyDropDown.SetCurrentOption(int(ctx.BisectionStrategy))
+
 	ctx.SetupForm = tview.NewForm().
-		AddInputField("Mods Folder Path:", "", 60, nil, func(text string) { ctx.SetModsPath(text) }).
+		AddFormItem(pathInput).
 		AddTextView("Hint:", "Use Right-Click or Ctrl+V to paste the path.", 0, 1, true, false).
+		AddFormItem(strategyDropDown).
 		AddButton("Load Mods & Start", func() { HandleLoadModsAndStart(ctx) }).
 		AddButton("Quit", func() { ctx.App.Stop() })
-	ctx.SetupForm.SetBorder(true).SetTitle("Qendolin's Fabric Mod Bisect Tool - Setup")
+	ctx.SetupForm.SetBorder(true).SetTitle(" Qendolin's Fabric Mod Bisect Tool ")
 
 	setupLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ctx.SetupForm, 9, 0, true). // Form takes proportional space, gets initial focus if flex does
-		AddItem(ctx.InfoTextView, 3, 0, false).
-		AddItem(ctx.DebugLogView, 0, 2, false)
+		AddItem(ctx.SetupForm, 11, 0, true).    // Form takes proportional space
+		AddItem(ctx.InfoTextView, 3, 0, false). // Fixed height for info
+		AddItem(ctx.DebugLogView, 0, 2, false)  // Log view takes proportional space
 
 	// Allow tabbing from DebugLogView back to the form.
 	ctx.DebugLogView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
-			ctx.App.SetFocus(ctx.SetupForm)
+			// Try to focus the first interactive element of the form
+			if ctx.SetupForm.GetFormItemCount() > 0 {
+				ctx.App.SetFocus(ctx.SetupForm.GetFormItem(0))
+			} else {
+				ctx.App.SetFocus(ctx.SetupForm) // Fallback to form itself
+			}
 			return nil
 		}
 		return event
 	})
 
 	// Explicit Tab/Backtab handling from Form elements to DebugLogView
-	if quitButton := ctx.SetupForm.GetButton(ctx.SetupForm.GetButtonCount() - 1); quitButton != nil { // Last button
+	// Last button in the form
+	if quitButton := ctx.SetupForm.GetButton(ctx.SetupForm.GetButtonCount() - 1); quitButton != nil {
 		quitButton.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyTab && event.Modifiers() == 0 { // Tab forward
 				ctx.App.SetFocus(ctx.DebugLogView)
 				return nil
 			}
-			return event
+			return event // Pass to default form handling
 		})
 	}
-	if pathInput, ok := ctx.SetupForm.GetFormItem(0).(*tview.InputField); ok { // First item
-		pathInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyBacktab { // Shift+Tab
-				ctx.App.SetFocus(ctx.DebugLogView)
-				return nil
-			}
-			return event
-		})
-	}
+	// First form item (pathInput)
+	pathInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyBacktab { // Shift+Tab
+			ctx.App.SetFocus(ctx.DebugLogView)
+			return nil
+		}
+		// For Enter key, default behavior (move to next field or submit if button) is desired
+		// For other keys, default InputField behavior is desired
+		return event
+	})
+	// Handle tabbing for the DropDown as well if necessary, though Form usually handles items.
 
 	ctx.Pages.AddPage(PageNameInitialSetup, setupLayout, true, true)
 }
@@ -137,7 +161,7 @@ func setupLoadingPage(ctx *app.AppContext) {
 		SetText("[yellow]Loading mods, please wait...\n\nCheck logs below for progress.")
 	loadingLayout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(loadingStatusText, 3, 0, false).
-		AddItem(ctx.DebugLogView, 0, 1, true) // DebugLogView can get initial focus in this flex
+		AddItem(ctx.DebugLogView, 0, 1, true)
 	ctx.Pages.AddPage(PageNameLoading, loadingLayout, true, false)
 }
 
@@ -147,23 +171,19 @@ func setupBisectionPage(ctx *app.AppContext) {
 		AddItem(ctx.GroupAList, 0, 1, false).
 		AddItem(ctx.GroupBList, 0, 1, false)
 
-	// InfoTextView is shared, used here for bisection status
-	// We'll create a new Flex for the main content area to include a key hint footer
 	mainContentFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ctx.InfoTextView, 5, 0, false).   // Bisection status area, fixed height
-		AddItem(searchAndGroupsFlex, 0, 1, false) // Lists take proportional space
+		AddItem(ctx.InfoTextView, 5, 0, false).
+		AddItem(searchAndGroupsFlex, 0, 1, false)
 
-	// Key hint text view
 	keyHintTextView := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
-		SetDynamicColors(true). // Allow color tags if desired
+		SetDynamicColors(true).
 		SetText("[yellow](S)[white]tep | [yellow](U)[white]ndo | [yellow](M)[white]anage Mods | [yellow](R)[white]eset | [yellow](Q)[white]uit")
 
-	// Overall layout for the bisection page
 	bisectionLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(keyHintTextView, 1, 0, false). // Key hint header, fixed height of 1 line
-		AddItem(mainContentFlex, 0, 2, false). // Main content (info + lists) takes most space
-		AddItem(ctx.DebugLogView, 0, 1, false) // Log view takes proportional space
+		AddItem(keyHintTextView, 1, 0, false).
+		AddItem(mainContentFlex, 0, 2, false).
+		AddItem(ctx.DebugLogView, 0, 1, false)
 
 	bisectionFocusElements := []tview.Primitive{
 		ctx.SearchSpaceList, ctx.GroupAList, ctx.GroupBList, ctx.DebugLogView,
@@ -180,11 +200,11 @@ func setupBisectionPage(ctx *app.AppContext) {
 		return event
 	}
 
-	ctx.SearchSpaceList.SetInputCapture(focusCycleHandler)
-	ctx.GroupAList.SetInputCapture(focusCycleHandler)
-	ctx.GroupBList.SetInputCapture(focusCycleHandler)
-	ctx.DebugLogView.SetInputCapture(focusCycleHandler)
-
+	for _, prim := range bisectionFocusElements {
+		if box, ok := prim.(*tview.Box); ok {
+			box.SetInputCapture(focusCycleHandler)
+		}
+	}
 	ctx.Pages.AddPage(PageNameBisection, bisectionLayout, true, false)
 }
 
@@ -193,17 +213,17 @@ func setupModSelectionPage(ctx *app.AppContext) {
 	ctx.ModSearchInput.SetDoneFunc(func(key tcell.Key) { HandleModSearchDone(ctx, key) })
 
 	forcedListsFlex := tview.NewFlex().
-		AddItem(ctx.ForceEnabledList, 0, 1, true).
-		AddItem(ctx.ForceDisabledList, 0, 1, true)
+		AddItem(ctx.ForceEnabledList, 0, 1, false).
+		AddItem(ctx.ForceDisabledList, 0, 1, false)
 
 	ctx.AllModsList.SetTitle("All Mods | [yellow](E)[white]nable | [yellow](D)[white]isable").SetBorder(true)
 
 	modListAndForcedFlex := tview.NewFlex().
 		AddItem(ctx.AllModsList, 0, 2, true).
-		AddItem(forcedListsFlex, 0, 1, false) // This flex's children are focusable
+		AddItem(forcedListsFlex, 0, 1, false)
 
 	modSelectionLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ctx.ModSearchInput, 3, 0, true). // Input can get initial focus
+		AddItem(ctx.ModSearchInput, 3, 0, true).
 		AddItem(modListAndForcedFlex, 0, 1, false)
 
 	modSelectionFrame := tview.NewFrame(modSelectionLayout).
@@ -213,7 +233,6 @@ func setupModSelectionPage(ctx *app.AppContext) {
 	modSelectionFocusElements := []tview.Primitive{
 		ctx.ModSearchInput, ctx.AllModsList, ctx.ForceEnabledList, ctx.ForceDisabledList,
 	}
-	// Layout's input capture handles tabbing between major components on this page.
 	modSelectionLayout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		currentFocus := ctx.App.GetFocus()
 		isOneOfOurElements := false
@@ -223,7 +242,7 @@ func setupModSelectionPage(ctx *app.AppContext) {
 				break
 			}
 		}
-		if isOneOfOurElements { // Only cycle if one of our designated elements has focus
+		if isOneOfOurElements {
 			if event.Key() == tcell.KeyTab {
 				cycleFocus(ctx.App, modSelectionFocusElements, false)
 				return nil
@@ -241,34 +260,31 @@ func setupQuestionModalPage(ctx *app.AppContext) {
 	ctx.QuestionModal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 		HandleQuestionModalDone(ctx, buttonIndex, buttonLabel)
 	})
-	// Modal is wrapped to be added as a page and centered.
 	modalWrapper := tview.NewFlex().
-		AddItem(nil, 0, 1, false). // Vertical spacer
+		AddItem(nil, 0, 1, false).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).               // Horizontal spacer
-			AddItem(ctx.QuestionModal, 15, 1, true). // Modal, fixed height, can get initial focus
-			AddItem(nil, 0, 1, false),               // Horizontal spacer
-						0, 3, true). // Centered group, proportional width
-		AddItem(nil, 0, 1, false) // Vertical spacer
+			AddItem(nil, 0, 1, false).
+			AddItem(ctx.QuestionModal, 15, 1, true).
+			AddItem(nil, 0, 1, false),
+			0, 3, true).
+		AddItem(nil, 0, 1, false)
 
 	ctx.Pages.AddPage(PageNameQuestionModal, modalWrapper, true, false)
-	ctx.Pages.HidePage(PageNameQuestionModal) // Initially hidden
+	ctx.Pages.HidePage(PageNameQuestionModal)
 }
 
 func setupConfirmQuitModalPage(ctx *app.AppContext) {
-	// Modal is wrapped to be added as a page and centered.
-	// We can reuse the same centering logic as the question modal.
 	modalWrapper := tview.NewFlex().
-		AddItem(nil, 0, 1, false). // Vertical spacer
+		AddItem(nil, 0, 1, false).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).                  // Horizontal spacer
-			AddItem(ctx.ConfirmQuitModal, 10, 1, true). // Modal, fixed height, can get initial focus
-			AddItem(nil, 0, 1, false),                  // Horizontal spacer
-						0, 3, true). // Centered group, proportional width
-		AddItem(nil, 0, 1, false) // Vertical spacer
+			AddItem(nil, 0, 1, false).
+			AddItem(ctx.ConfirmQuitModal, 10, 1, true).
+			AddItem(nil, 0, 1, false),
+			0, 3, true).
+		AddItem(nil, 0, 1, false)
 
 	ctx.Pages.AddPage(PageNameConfirmQuitModal, modalWrapper, true, false)
-	ctx.Pages.HidePage(PageNameConfirmQuitModal) // Initially hidden
+	ctx.Pages.HidePage(PageNameConfirmQuitModal)
 }
 
 func cycleFocus(appObj *tview.Application, elements []tview.Primitive, reverse bool) {
@@ -283,8 +299,7 @@ func cycleFocus(appObj *tview.Application, elements []tview.Primitive, reverse b
 		}
 	}
 
-	if currentFocusIdx == -1 { // No element in the list currently has focus
-		// Attempt to focus the first non-nil element in the specified direction
+	if currentFocusIdx == -1 {
 		startIndex := 0
 		if reverse {
 			startIndex = len(elements) - 1
@@ -301,11 +316,11 @@ func cycleFocus(appObj *tview.Application, elements []tview.Primitive, reverse b
 				return
 			}
 		}
-		return // No focusable non-nil element found
+		return
 	}
 
 	numElements := len(elements)
-	for i := 1; i <= numElements; i++ { // Try each element once to find next non-nil
+	for i := 1; i <= numElements; i++ {
 		var nextIdx int
 		if reverse {
 			nextIdx = (currentFocusIdx - i + numElements) % numElements
