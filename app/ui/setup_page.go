@@ -13,14 +13,16 @@ const PageSetupID = "setup_page"
 // SetupPage represents the initial setup screen.
 type SetupPage struct {
 	*tview.Flex
-	app AppInterface
+	app        AppInterface
+	statusText *tview.TextView
 }
 
 // NewSetupPage creates a new SetupPage instance.
 func NewSetupPage(app AppInterface) Page {
 	page := &SetupPage{
-		Flex: tview.NewFlex().SetDirection(tview.FlexRow),
-		app:  app,
+		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
+		app:        app,
+		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
 
 	form := tview.NewForm().
@@ -32,22 +34,20 @@ func NewSetupPage(app AppInterface) Page {
 		modsPath := form.GetFormItemByLabel("Mods Path").(*tview.InputField).GetText()
 		modsPath = filepath.Clean(modsPath)
 		if modsPath == "" {
-			app.ShowErrorDialog("Error", "Mods path cannot be empty.", nil)
+			app.Dialogs().ShowErrorDialog("Error", "Mods path cannot be empty.", nil)
 			return
 		}
-		// Delegate the loading process to the App, which will show the loading page
 		app.StartModLoad(modsPath)
 	})
 
 	form.AddButton("Load Saved State", func() {
-		app.SetPageStatus("Loading saved state (not implemented yet)...")
+		page.statusText.SetText("Loading saved state (not implemented yet)...")
 	}).AddButton("Quit", func() {
-		go app.QueueUpdateDraw(app.ShowQuitDialog)
+		go app.Navigation().QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
 	})
 
 	formWrapper := NewTitleFrame(form, "Setup")
 
-	// Instructions and info section
 	instructions := tview.NewTextView().
 		SetDynamicColors(true).
 		SetText(`
@@ -63,16 +63,15 @@ func NewSetupPage(app AppInterface) Page {
 
 	infoWrapper := NewTitleFrame(instructions, "Info")
 
-	page.AddItem(formWrapper, 0, 1, true).
+	page.AddItem(formWrapper, 6, 0, true).
 		AddItem(infoWrapper, 0, 1, false)
 
-	app.SetPageStatus("Enter mods path and load, or load a saved state.")
 	return page
 }
 
 // Primitive returns the underlying tview.Primitive for this page.
 func (p *SetupPage) Primitive() tview.Primitive {
-	return p.Flex
+	return p
 }
 
 // GetActionPrompts returns the key actions for the setup page.
@@ -81,4 +80,9 @@ func (p *SetupPage) GetActionPrompts() map[string]string {
 		"Tab":   "Next Field",
 		"Enter": "Activate Button",
 	}
+}
+
+// GetStatusPrimitive returns the tview.Primitive that displays the page's status
+func (p *SetupPage) GetStatusPrimitive() *tview.TextView {
+	return p.statusText
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
 )
 
 const (
@@ -25,8 +24,8 @@ func main() {
 	}
 	logging.Info("Pre-UI logging captured.")
 
-	// 2. Create the App structure
-	a := app.NewApp(ui.NewUIPageManager())
+	// 2. Create the App structure, which no longer needs a factory
+	a := app.NewApp()
 
 	// 3. Initialize logging again, now passing the UI writer and initial logs
 	if err := a.InitLogging(logDir, logFileName, initialLogBuffer); err != nil {

@@ -19,6 +19,7 @@ type LoadingPage struct {
 	progressText *tview.TextView
 	modsPath     string
 	progress     float32
+	statusText   *tview.TextView
 }
 
 // NewLoadingPage creates a new LoadingPage instance.
@@ -29,6 +30,7 @@ func NewLoadingPage(app AppInterface, modsPath string) Page {
 		progressBar:  tview.NewTextView().SetDynamicColors(true),
 		progressText: tview.NewTextView().SetDynamicColors(true),
 		modsPath:     modsPath,
+		statusText:   tview.NewTextView().SetDynamicColors(true),
 	}
 
 	lp.progressBar.SetTextAlign(tview.AlignCenter).SetBorder(true)
@@ -46,7 +48,7 @@ func NewLoadingPage(app AppInterface, modsPath string) Page {
 		AddItem(tview.NewBox(), 0, 1, false)
 
 	lp.AddItem(NewTitleFrame(centeredFlex, "Loading Mods"), 0, 1, true)
-	app.SetPageStatus("Loading mod files from disk...")
+	lp.statusText.SetText("Loading mod files from disk...")
 	return lp
 }
 
@@ -58,8 +60,8 @@ func (lp *LoadingPage) StartLoading() {
 		files, err := os.ReadDir(lp.modsPath)
 		if err != nil {
 			go lp.app.QueueUpdateDraw(func() {
-				lp.app.ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to read mods directory: %v", err), func() {
-					lp.app.ShowPage(PageSetupID, lp.app.GetPageManager().NewSetupPage(lp.app), true)
+				lp.app.Dialogs().ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to read mods directory: %v", err), func() {
+					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
 				})
 			})
 			return
@@ -82,30 +84,35 @@ func (lp *LoadingPage) StartLoading() {
 		// After loading, update UI on the main thread
 		go lp.app.QueueUpdateDraw(func() {
 			if err != nil {
-				lp.app.ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to load mods: %v", err), func() {
-					lp.app.ShowPage(PageSetupID, lp.app.GetPageManager().NewSetupPage(lp.app), true)
+				lp.app.Dialogs().ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to load mods: %v", err), func() {
+					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
 				})
 				return
 			}
 			if len(allMods) == 0 {
-				lp.app.ShowErrorDialog("Information", "No mods were found in the specified directory.", func() {
-					lp.app.ShowPage(PageSetupID, lp.app.GetPageManager().NewSetupPage(lp.app), true)
+				lp.app.Dialogs().ShowErrorDialog("Information", "No mods were found in the specified directory.", func() {
+					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
 				})
 				return
 			}
-			lp.app.OnModsLoaded(allMods, potentialProviders, sortedModIDs)
+			lp.app.OnModsLoaded(lp.modsPath, allMods, potentialProviders, sortedModIDs)
 		})
 	}()
 }
 
 // Primitive returns the underlying tview.Primitive for this page.
 func (lp *LoadingPage) Primitive() tview.Primitive {
-	return lp.Flex
+	return lp
 }
 
 // GetActionPrompts returns the key actions for the loading page.
 func (lp *LoadingPage) GetActionPrompts() map[string]string {
 	return map[string]string{}
+}
+
+// GetStatusPrimitive returns the tview.Primitive that displays the page's status
+func (lp *LoadingPage) GetStatusPrimitive() *tview.TextView {
+	return lp.statusText
 }
 
 // UpdateProgress updates the progress bar and text.

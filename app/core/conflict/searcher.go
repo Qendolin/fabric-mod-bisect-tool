@@ -13,34 +13,27 @@ import (
 // Searcher implements the Iterative Minimal Conflict Search (IMCS) algorithm.
 type Searcher struct {
 	// Dependencies
-	modState   *mods.StateManager
-	testRunner *systemrunner.Runner
+	modState *mods.StateManager
 
 	// Static data
 	initialCandidatesCount int
 	allModIDs              []string
 
 	// State
-	history        *HistoryManager
-	current        SearchSnapshot
-	isComplete     bool
-	lastFoundError error
-	testsExecuted  int
-	problemsFound  int
-
-	// Control
-	stateChangeChan chan struct{}
+	history          *HistoryManager
+	current          SearchSnapshot
+	isComplete       bool
+	lastFoundError   error
+	testsExecuted    int
+	problemsFound    int
+	lastFoundElement string
 }
 
 // NewSearcher creates a new conflict searcher.
-func NewSearcher(modState *mods.StateManager, testRunner *systemrunner.Runner) *Searcher {
-	stateChangeChan := make(chan struct{}, 1)
-	modState.AddChangeListener(stateChangeChan)
+func NewSearcher(modState *mods.StateManager) *Searcher {
 	return &Searcher{
-		modState:        modState,
-		testRunner:      testRunner,
-		history:         NewHistoryManager(),
-		stateChangeChan: stateChangeChan,
+		modState: modState,
+		history:  NewHistoryManager(),
 	}
 }
 
@@ -107,6 +100,17 @@ func (s *Searcher) GetEstimatedMaxTests() int {
 	return problems * (int(math.Ceil(math.Log2(float64(numCandidates)))) + 1)
 }
 
+// GetAllModIDs returns all mod IDs that were initially considered for the search.
+func (s *Searcher) GetAllModIDs() []string { return s.allModIDs }
+
+func (s *Searcher) LastFoundElement() string {
+	return s.lastFoundElement
+}
+
+func (s *Searcher) IsVerificationStep() bool {
+	return s.current.IsCheckingDone
+}
+
 // PrepareNextTest calculates the set of mods for the next test run.
 func (s *Searcher) PrepareNextTest() (map[string]struct{}, map[string]mods.ModStatus, bool) {
 	if s.isComplete || s.lastFoundError != nil {
@@ -141,11 +145,6 @@ func (s *Searcher) ResumeWithResult(ctx context.Context, result systemrunner.Res
 	}
 	s.history.Push(s.current)
 
-	if s.checkForStateChanges() {
-		logging.Warn("IMCS: Mod configuration changed. Adapting current search state.")
-		s.adaptStateToChanges()
-	}
-
 	if s.current.IsCheckingDone {
 		s.handleDoneCheck(result)
 		return
@@ -153,7 +152,7 @@ func (s *Searcher) ResumeWithResult(ctx context.Context, result systemrunner.Res
 	s.handleFindNextResult(result)
 }
 
-func (s *Searcher) adaptStateToChanges() {
+func (s *Searcher) HandleExternalStateChange() {
 	modStatuses := s.modState.GetModStatusesSnapshot()
 	newBackground := make(map[string]struct{})
 	for id := range s.current.Background {
@@ -268,6 +267,7 @@ func (s *Searcher) processFoundElement(elementID string) {
 	s.current.ConflictSet[elementID] = struct{}{}
 	s.current.Candidates = removeFromStringSlice(s.current.Candidates, elementID)
 	s.current.IsCheckingDone = true
+	s.lastFoundElement = elementID
 }
 
 // handleDoneCheck processes the result of the `test(ConflictSet)` optimization.
@@ -279,16 +279,6 @@ func (s *Searcher) handleDoneCheck(result systemrunner.Result) {
 	} else {
 		logging.Info("IMCS: Current ConflictSet causes GOOD. Continuing search.")
 		s.startNextElementSearch()
-	}
-}
-
-// checkForStateChanges consumes any pending notification from the StateManager.
-func (s *Searcher) checkForStateChanges() bool {
-	select {
-	case <-s.stateChangeChan:
-		return true
-	default:
-		return false
 	}
 }
 

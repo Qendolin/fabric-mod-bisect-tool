@@ -60,35 +60,15 @@ func (r *Runner) RunTest(
 	targetModIDsForTest map[string]struct{}, // Mods to be actively included in the test's dependency resolution.
 	modStatuses map[string]mods.ModStatus, // Comprehensive snapshot of all mod states.
 ) (Result, error) {
-	// Convert the consolidated modStatuses snapshot into separate forceEnabled/Disabled maps
-	// expected by the DependencyResolver.
-	forceEnabled := make(map[string]bool, len(modStatuses))
-	forceDisabled := make(map[string]bool, len(modStatuses))
-	for id, status := range modStatuses {
-		if status.ForceEnabled {
-			forceEnabled[id] = true
-		}
-		if status.ForceDisabled {
-			forceDisabled[id] = true
-		}
-	}
 
 	// 1. Resolve dependencies to get the full effective set of mods that should be active.
-	effectiveSetMap, _ := r.resolver.ResolveEffectiveSet(
-		setToSlice(targetModIDsForTest), // Convert target set to slice for resolver
+	effectiveModsToActivate, _ := r.resolver.ResolveEffectiveSet(
+		SetToSlice(targetModIDsForTest), // Convert target set to slice for resolver
 		r.allMods,
 		r.potentialProviders,
-		forceEnabled,
-		forceDisabled,
+		modStatuses,
 	)
 
-	// Convert the boolean map to a struct-based set for activator and executor.
-	effectiveModsToActivate := make(map[string]struct{}, len(effectiveSetMap))
-	for k, v := range effectiveSetMap {
-		if v {
-			effectiveModsToActivate[k] = struct{}{}
-		}
-	}
 	logging.Infof("Runner: Resolved test set includes: %v", mapKeysFromStruct(effectiveModsToActivate))
 
 	// 2. Apply file system changes.
@@ -110,7 +90,7 @@ func (r *Runner) RunTest(
 }
 
 // setToSlice converts a map[string]struct{} (acting as a set) to a slice of strings.
-func setToSlice(s map[string]struct{}) []string {
+func SetToSlice(s map[string]struct{}) []string {
 	keys := make([]string, 0, len(s))
 	for k := range s {
 		keys = append(keys, k)
