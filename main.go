@@ -1,72 +1,46 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
-	"log"
-	"os" // For potential early exit logging
-	"os/signal"
-	"syscall"
+	"os"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app"
-	"github.com/Qendolin/fabric-mod-bisect-tool/ui"
-	"github.com/gdamore/tcell/v2"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+)
+
+const (
+	logDir      = "_logs"
+	logFileName = "imcs_app.log"
 )
 
 func main() {
-
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-	log.Println("Application starting...")
-
-	appCtx := app.NewAppContext()
-
-	// clear screen
-	fmt.Print("\033[H\033[2J")
-
-	if err := appCtx.StartLogProcessor("bisect-tool.log"); err != nil {
-		log.SetOutput(os.Stderr)
-		log.Fatalf("Failed to start log processor: %v", err)
+	// 1. Capture initial logs before UI is set up
+	initialLogBuffer := &bytes.Buffer{}
+	captureWriter := &logging.CaptureWriter{Buffer: initialLogBuffer}
+	if err := logging.Init(logDir, logFileName, captureWriter); err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: Failed to initialize pre-UI logging: %v\n", err)
+		os.Exit(1)
 	}
-	defer appCtx.StopLogProcessor()
+	logging.Info("Pre-UI logging captured.")
 
-	// Setup signal handling for graceful shutdown on Ctrl+C
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// 2. Create the App structure
+	a := app.NewApp(ui.NewUIPageManager())
 
-	go func() {
-		sig := <-sigChan
-		log.Printf("Received signal: %s. Shutting down...", sig)
-		appCtx.Bisector.RestoreInitialModState()
-		// It's important that app.Stop() is called to allow tview to clean up the screen.
-		if appCtx.App != nil {
-			appCtx.App.Stop()
-		}
-	}()
-
-	ui.InitializeTUIPrimitives(appCtx)
-	ui.SetupPages(appCtx)
-
-	appCtx.App.SetRoot(appCtx.Pages, true).EnablePaste(true)
-	appCtx.App.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		return ui.GlobalInputHandler(appCtx, event)
-	})
-
-	log.Println("Starting tview application run loop. Press Ctrl+C to exit.")
-	err := appCtx.App.Run()
-
-	// Perform cleanup actions AFTER tview app has stopped.
-	// tview's Fini() (called by app.Stop()) should restore the terminal.
-	if appCtx.Bisector != nil {
-		// This logging might happen after StopLogProcessor if Stop() was from signal
-		log.Println("Attempting to restore initial mod states on exit...")
-		appCtx.Bisector.RestoreInitialModState()
-		log.Println("Initial mod states restoration attempt finished.")
+	// 3. Initialize logging again, now passing the UI writer and initial logs
+	if err := a.InitLogging(logDir, logFileName, initialLogBuffer); err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: Failed to initialize UI logging: %v\n", err)
+		os.Exit(1)
 	}
+	defer logging.Close()
 
-	if err != nil {
-		// Log critical error that caused app.Run() to exit abnormally
-		log.SetOutput(os.Stderr) // Ensure this error is visible
-		log.Fatalf("Application run error: %v", err)
+	logging.Info("Application started.")
+
+	// 4. Run the application
+	if err := a.Run(); err != nil {
+		logging.Errorf("Application exited with error: %v", err)
+		os.Exit(1)
 	}
-
-	log.Println("Application ended.")
+	logging.Info("Application exited gracefully.")
 }
