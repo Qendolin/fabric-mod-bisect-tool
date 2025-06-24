@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -32,16 +34,24 @@ func (f *TitleFrame) Draw(screen tcell.Screen) {
 
 	x, y, width, height := f.GetRect() // Get our own drawing area
 
+	lineRune := tview.BoxDrawingsLightHorizontal
+	if f.HasFocus() {
+		lineRune = tview.BoxDrawingsHeavyHorizontal
+	}
+
 	// Draw the horizontal line at the top
 	lineY := y
 	style := tcell.StyleDefault.Foreground(f.color) // White color for the line
 	for i := 0; i < width; i++ {
-		screen.SetContent(x+i, lineY, tview.BoxDrawingsLightHorizontal, nil, style)
+		screen.SetContent(x+i, lineY, lineRune, nil, style)
 	}
 
 	// Draw the title on top of the line
 	if f.title != "" {
-		titleText := " " + f.title + " " // Add spaces around title for visual padding
+		titleText := " " + tview.Escape(f.title) + " "
+		if f.HasFocus() {
+			titleText = fmt.Sprintf("%s[::ur]%s[-:-:-]%s", string(tview.BlockRightHalfBlock), tview.Escape(f.title), string(tview.BlockLeftHalfBlock))
+		}
 		tview.Print(screen, titleText, x+1, lineY, width-2, tview.AlignLeft, f.color)
 	}
 
@@ -60,6 +70,11 @@ func (f *TitleFrame) Draw(screen tcell.Screen) {
 	// Set the content's rectangle and draw it
 	f.content.SetRect(contentX, contentY, contentWidth, contentHeight)
 	f.content.Draw(screen)
+}
+
+// Focus is called when this primitive receives focus.
+func (f *TitleFrame) SetTitle(title string) {
+	f.title = title
 }
 
 // Focus is called when this primitive receives focus.

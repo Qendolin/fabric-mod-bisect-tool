@@ -12,8 +12,7 @@ import (
 type DependencyResolver struct {
 	allMods            map[string]*Mod
 	potentialProviders PotentialProvidersMap
-	forceEnabled       map[string]bool
-	forceDisabled      map[string]bool
+	modStatuses        map[string]ModStatus
 
 	// Internal state for a single ResolveEffectiveSet call
 	currentEffectiveSet map[string]bool           // Top-level ModIDs successfully activated.
@@ -33,14 +32,13 @@ func (dr *DependencyResolver) ResolveEffectiveSet(
 	targetModIDs []string,
 	allMods map[string]*Mod,
 	potentialProviders PotentialProvidersMap,
-	forceEnabled map[string]bool,
-	forceDisabled map[string]bool,
-) (map[string]bool, []ResolutionInfo) {
+	modStatuses map[string]ModStatus,
+) (map[string]struct{}, []ResolutionInfo) {
 	dr.allMods = allMods
 	dr.potentialProviders = potentialProviders
-	dr.forceEnabled = forceEnabled
-	dr.forceDisabled = forceDisabled
+	dr.modStatuses = modStatuses
 
+	// Internal state initialization
 	dr.currentEffectiveSet = make(map[string]bool)
 	dr.resolutionPath = make(map[string]ResolutionInfo)
 	dr.processing = make(map[string]bool)
@@ -50,58 +48,49 @@ func (dr *DependencyResolver) ResolveEffectiveSet(
 
 	// Process initial targets
 	for _, modID := range targetModIDs {
-		if _, ok := dr.forceDisabled[modID]; ok {
-			logging.Infof("Resolver: Target mod '%s' is force-disabled, skipping.", modID)
+		if status, ok := modStatuses[modID]; ok && status.ForceDisabled {
 			continue
 		}
 		if _, isDirectMod := dr.allMods[modID]; isDirectMod {
-			if dr.ensureModActive(modID, "System (Initial Set)", "Target", modID) {
-				initialSetMods = append(initialSetMods, modID)
-			}
+			dr.ensureModActive(modID, "System (Initial Set)", "Target", modID)
 		} else if !IsImplicitMod(modID) {
-			if dr.resolveDependency(modID, "System (Initial Target)", modID) {
-				if providerModID, ok := dr.dependencySatisfied[modID]; ok {
-					initialSetMods = append(initialSetMods, providerModID)
-				}
-			}
+			dr.resolveDependency(modID, "System (Initial Target)", modID)
 		}
 	}
 
 	// Process force-enabled mods
-	for modID := range dr.forceEnabled {
-		if _, ok := dr.forceDisabled[modID]; ok {
-			logging.Infof("Resolver: Force-enabled mod '%s' is also force-disabled, skipping (force-disabled takes precedence).", modID)
-			continue
-		}
-		if _, isDirectMod := dr.allMods[modID]; isDirectMod {
-			if dr.ensureModActive(modID, "System (Initial Set)", "Forced", modID) {
-				initialSetMods = append(initialSetMods, modID)
+	for modID, status := range modStatuses {
+		if status.ForceEnabled {
+			if status.ForceDisabled { // Should not happen with StateManager logic, but good practice
+				continue
 			}
-		} else if !IsImplicitMod(modID) {
-			if dr.resolveDependency(modID, "System (Forced)", modID) {
-				if providerModID, ok := dr.dependencySatisfied[modID]; ok {
-					initialSetMods = append(initialSetMods, providerModID)
-				}
+			if _, isDirectMod := dr.allMods[modID]; isDirectMod {
+				dr.ensureModActive(modID, "System (Initial Set)", "Forced", modID)
+			} else if !IsImplicitMod(modID) {
+				dr.resolveDependency(modID, "System (Forced)", modID)
 			}
 		}
 	}
 
-	if len(initialSetMods) > 0 {
-		sort.Strings(initialSetMods) // For consistent logging
-		logging.Infof("Resolver: Activated initial set (targets and force-enabled): %v", initialSetMods)
-	} else {
-		logging.Info("Resolver: No mods activated in initial target/force-enabled set.")
+	// Create the final set to return
+	finalEffectiveSet := make(map[string]struct{})
+	for modID, isActive := range dr.currentEffectiveSet {
+		if isActive {
+			finalEffectiveSet[modID] = struct{}{}
+			initialSetMods = append(initialSetMods, modID)
+		}
 	}
+	sort.Strings(initialSetMods)
+	logging.Infof("Resolver: Dependency resolution complete. Effective mods: %v", initialSetMods)
 
-	logging.Infof("Resolver: Dependency resolution complete. Effective mods: %v", mapKeys(dr.currentEffectiveSet))
-	return dr.currentEffectiveSet, dr.collectResolutionPath()
+	return finalEffectiveSet, dr.collectResolutionPath()
 }
 
 // ensureModActive attempts to activate a mod and its dependencies.
 // Returns true if modToActivateID and all its hard (non-optional, non-implicit)
 // dependencies were successfully activated and added to currentEffectiveSet.
 func (dr *DependencyResolver) ensureModActive(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied string) bool {
-	if _, ok := dr.forceDisabled[modToActivateID]; ok {
+	if status, ok := dr.modStatuses[modToActivateID]; ok && status.ForceDisabled {
 		logging.Warnf("Resolver: Mod '%s' is force-disabled, cannot activate (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
 		return false
 	}
@@ -257,7 +246,7 @@ func (dr *DependencyResolver) findBestProvider(depID string) *ProviderInfo {
 
 	for i := range providerCandidates {
 		candidate := providerCandidates[i]
-		if _, ok := dr.forceDisabled[candidate.TopLevelModID]; ok {
+		if status, ok := dr.modStatuses[candidate.TopLevelModID]; ok && status.ForceDisabled {
 			continue
 		}
 		if _, modExists := dr.allMods[candidate.TopLevelModID]; !modExists {
@@ -279,7 +268,7 @@ func (dr *DependencyResolver) getSelectedProviderForDep(dependencyIDSatisfied, m
 
 	for i := range candidates {
 		if candidates[i].TopLevelModID == modToActivateID {
-			if _, ok := dr.forceDisabled[modToActivateID]; !ok {
+			if status, ok := dr.modStatuses[modToActivateID]; ok && !status.ForceDisabled {
 				return &candidates[i], true
 			}
 		}

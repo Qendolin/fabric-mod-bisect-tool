@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
@@ -18,23 +17,16 @@ import (
 	"github.com/rivo/tview"
 )
 
-// App orchestrates the TUI application, managing pages, global state, and core services.
+// App orchestrates the TUI application, managing the lifecycle and core services.
 type App struct {
 	*tview.Application
-	pages  *tview.Pages // Main container for all application pages/views
-	root   *tview.Flex  // Top-level flex for consistent layout
-	header *tview.Flex  // Contains tool name and status/error counts
-	footer *tview.Flex  // Contains action hints
+	layoutManager *ui.LayoutManager
+	navManager    *ui.NavigationManager
+	dialogManager *ui.DialogManager
+	logHandler    *ui.LogHandler
+	focusManager  *ui.FocusManager
 
-	// Global UI elements
-	statusTextView *tview.TextView // Page-specific status/instructions
-	errorCounters  *tview.TextView // Warnings and errors counter
-
-	// UI log viewer
-	logTextView *tview.TextView
-	logChannel  chan []byte
-
-	// Core services (models)
+	// Core services
 	ModLoader mods.ModLoaderService
 	ModState  *mods.StateManager
 	Resolver  *mods.DependencyResolver
@@ -42,82 +34,60 @@ type App struct {
 	Runner    *systemrunner.Runner
 	Searcher  *conflict.Searcher
 
-	// Internal state
-	warnCount     int
-	errorCount    int
-	logCountMutex sync.Mutex
-	logBatch      [][]byte
-	logBatchMutex sync.Mutex
-	logUpdate     *time.Ticker
-
-	activePageID   string
-	pageStack      []tview.Primitive
-	pageIDs        map[tview.Primitive]string
-	pagePrimitives map[string]tview.Primitive
-
 	testResultChan chan systemrunner.Result
 	testErrorChan  chan error
 
 	appCtx    context.Context
 	cancelApp context.CancelFunc
 
-	uiPageManager ui.PageManager
+	shutdownWg sync.WaitGroup
 }
 
 // NewApp creates and initializes the TUI application.
-func NewApp(pageManager ui.PageManager) *App {
+func NewApp() *App {
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
 	a := &App{
 		Application:    tview.NewApplication(),
-		pages:          tview.NewPages(),
-		root:           tview.NewFlex().SetDirection(tview.FlexRow),
-		header:         tview.NewFlex(),
-		footer:         tview.NewFlex(),
-		statusTextView: tview.NewTextView().SetDynamicColors(true),
-		errorCounters:  tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignRight),
-		pageIDs:        make(map[tview.Primitive]string),
-		pagePrimitives: make(map[string]tview.Primitive),
 		testResultChan: make(chan systemrunner.Result),
 		testErrorChan:  make(chan error),
 		appCtx:         appCtx,
 		cancelApp:      cancelApp,
-		uiPageManager:  pageManager,
-		logChannel:     make(chan []byte, 100),
 	}
 
-	a.setupLayout()
+	a.layoutManager = ui.NewLayoutManager()
+	a.navManager = ui.NewNavigationManager(a, a.layoutManager.Pages())
+	a.dialogManager = ui.NewDialogManager(a)
+	a.focusManager = ui.NewFocusManager(a)
+	a.SetRoot(a.layoutManager.RootPrimitive(), true).EnableMouse(true)
+
 	a.setupGlobalInputCapture()
 	a.setupCoreServices()
 
 	return a
 }
 
-// setupLayout configures the consistent header and footer layout.
-func (a *App) setupLayout() {
-	a.header.AddItem(a.statusTextView, 0, 1, false).
-		AddItem(a.errorCounters, 0, 1, false)
-
-	a.root.SetBorder(true).
-		SetTitle(" Fabric Mod Bisect Tool ").
-		SetTitleAlign(tview.AlignLeft)
-
-	a.root.AddItem(a.header, 1, 0, false).
-		AddItem(a.pages, 0, 1, true).
-		AddItem(a.footer, 1, 0, false)
-
-	a.SetRoot(a.root, true).EnableMouse(true)
-}
-
 // setupGlobalInputCapture defines application-wide keybindings.
 func (a *App) setupGlobalInputCapture() {
 	a.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		focusManager := a.GetFocusManager()
+
+		if event.Key() == tcell.KeyTab {
+			if focusManager.Cycle(a.navManager.GetCurrentPage().Primitive(), true) {
+				return nil
+			}
+		}
+		if event.Key() == tcell.KeyBacktab {
+			if focusManager.Cycle(a.navManager.GetCurrentPage().Primitive(), false) {
+				return nil
+			}
+		}
 		if event.Key() == tcell.KeyCtrlL {
-			go a.QueueUpdateDraw(a.ToggleLogPage)
+			go a.QueueUpdateDraw(a.navManager.ToggleLogPage)
 			return nil
 		}
 		if event.Key() == tcell.KeyCtrlC {
-			go a.QueueUpdateDraw(a.ShowQuitDialog)
+			go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
 			return nil
 		}
 		return event
@@ -126,107 +96,15 @@ func (a *App) setupGlobalInputCapture() {
 
 // InitLogging re-initializes the logging system to include the UI channel writer.
 func (a *App) InitLogging(logDir, logFileName string, initialLogs *bytes.Buffer) error {
-	a.logTextView = tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWrap(true)
+	logChannel := make(chan []byte, 100)
+	a.logHandler = ui.NewLogHandler(a, logChannel, &a.shutdownWg)
 
 	if initialLogs != nil {
-		fmt.Fprint(a.logTextView, initialLogs.String())
+		fmt.Fprint(a.logHandler.TextView(), initialLogs.String())
 	}
 
-	channelWriter := logging.NewChannelWriter(a.appCtx, a.logChannel)
+	channelWriter := logging.NewChannelWriter(a.appCtx, logChannel)
 	return logging.Init(logDir, logFileName, channelWriter)
-}
-
-// startLogProcessor starts the goroutine that consumes logs from the channel
-// and batches them for efficient UI updates.
-func (a *App) startLogProcessor() {
-	a.logUpdate = time.NewTicker(100 * time.Millisecond) // Tick every 100ms to trigger a batch write
-
-	go func() {
-		for {
-			select {
-			case <-a.appCtx.Done():
-				a.logUpdate.Stop()
-				return
-			case logMsg, ok := <-a.logChannel:
-				if !ok {
-					return
-				}
-				a.processLogMessage(logMsg)
-			case <-a.logUpdate.C:
-				a.flushLogBatch()
-			}
-		}
-	}()
-}
-
-// processLogMessage adds a log message to the current batch.
-func (a *App) processLogMessage(msg []byte) {
-	a.logBatchMutex.Lock()
-	defer a.logBatchMutex.Unlock()
-
-	// Add message to the batch for later writing.
-	a.logBatch = append(a.logBatch, msg)
-
-	// Pre-calculate counts here, but do not trigger a UI update.
-	content := string(msg)
-	newWarnings := strings.Count(content, "WARN:")
-	newErrors := strings.Count(content, "ERROR:")
-
-	if newWarnings > 0 || newErrors > 0 {
-		a.logCountMutex.Lock()
-		a.warnCount += newWarnings
-		a.errorCount += newErrors
-		a.logCountMutex.Unlock()
-	}
-}
-
-// flushLogBatch writes the entire accumulated batch of logs and updates counters in one UI call.
-func (a *App) flushLogBatch() {
-	a.logBatchMutex.Lock()
-	defer a.logBatchMutex.Unlock()
-
-	if len(a.logBatch) == 0 {
-		return
-	}
-
-	// Create a single string from the batch.
-	var batchContent strings.Builder
-	for _, msg := range a.logBatch {
-		batchContent.Write(msg)
-	}
-
-	// Important: Reset the batch inside the lock.
-	a.logBatch = nil
-
-	// Queue a single draw to update both the log text and the error counters.
-	go a.QueueUpdateDraw(func() {
-		// Write the batched log text.
-		fmt.Fprint(a.logTextView, batchContent.String())
-		a.logTextView.ScrollToEnd()
-
-		// Update the error counters in the same UI update cycle.
-		a.updateErrorCounters()
-	})
-}
-
-// updateErrorCounters updates the display for warning and error counts.
-func (a *App) updateErrorCounters() {
-	a.logCountMutex.Lock()
-	defer a.logCountMutex.Unlock()
-	warnColor := tcell.ColorYellow
-	errorColor := tcell.ColorRed
-	if a.warnCount == 0 {
-		warnColor = tcell.ColorGray
-	}
-	if a.errorCount == 0 {
-		errorColor = tcell.ColorGray
-	}
-
-	a.errorCounters.SetText(fmt.Sprintf("[yellow]Warnings: [white:%s]%d[-:-:-] [red]Errors: [white:%s]%d[-:-:-]",
-		warnColor.Name(), a.warnCount, errorColor.Name(), a.errorCount))
 }
 
 // setupCoreServices initializes the backend logic components.
@@ -237,224 +115,236 @@ func (a *App) setupCoreServices() {
 
 // Run starts the tview application event loop.
 func (a *App) Run() error {
-	a.startLogProcessor()
-	a.ShowPage(ui.PageSetupID, a.uiPageManager.NewSetupPage(a), true)
+	go a.logHandler.Start(a.appCtx)
 	go a.handleTestResults()
+
+	a.navManager.ShowPage(ui.PageSetupID, ui.NewSetupPage(a), true)
+
 	return a.Application.Run()
 }
 
 // Stop gracefully stops the application.
 func (a *App) Stop() {
-	logging.Close()
 	a.cancelApp()
-	close(a.logChannel)
+	a.shutdownWg.Wait()
+	logging.Close()
 	a.Application.Stop()
 }
 
-// ShowPage adds a page to the main Pages container and sets it as the current page.
-func (a *App) ShowPage(pageID string, page ui.Page, resize bool) {
-	a.pages.AddAndSwitchToPage(pageID, page.Primitive(), resize)
-	a.activePageID = pageID
-	a.pagePrimitives[pageID] = page.Primitive()
-	a.SetFocus(page.Primitive())
-	a.updateErrorCounters()
-	a.SetFooter(page.GetActionPrompts())
+// AppInterface methods to be called by UI components
+func (a *App) GetApplicationContext() context.Context { return a.appCtx }
+func (a *App) GetLogTextView() *tview.TextView        { return a.logHandler.TextView() }
+func (a *App) GetModLoader() mods.ModLoaderService    { return a.ModLoader }
+func (a *App) Navigation() *ui.NavigationManager      { return a.navManager }
+func (a *App) Dialogs() *ui.DialogManager             { return a.dialogManager }
+func (a *App) Layout() *ui.LayoutManager              { return a.layoutManager }
+func (a *App) GetFocusManager() *ui.FocusManager      { return a.focusManager }
+func (a *App) GetSearcher() *conflict.Searcher        { return a.Searcher }
+
+func (a *App) OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string) {
+	logging.Infof("App: Mods loaded. Initializing services and transitioning to Main Page.")
+	a.ModState = mods.NewStateManager(allMods, potentialProviders)
+	a.Activator = systemrunner.NewModActivator(modsPath, allMods)
+	a.Searcher = conflict.NewSearcher(a.ModState)
+	a.Searcher.Start(sortedModIDs)
+
+	mainPage := ui.NewMainPage(a)
+	a.navManager.ShowPage(ui.PageMainID, mainPage, true)
 }
 
-// PushPage adds an overlay page to the stack.
-func (a *App) PushPage(pageID string, page ui.Page) {
-	a.pages.AddPage(pageID, page.Primitive(), true, true)
-	a.pageStack = append(a.pageStack, page.Primitive())
-	a.pageIDs[page.Primitive()] = pageID
-	a.pagePrimitives[pageID] = page.Primitive()
-	a.SetFocus(page.Primitive())
-	a.SetFooter(page.GetActionPrompts())
-}
-
-// PopPage removes the top-most page from the stack.
-func (a *App) PopPage() {
-	if len(a.pageStack) > 0 {
-		topPage := a.pageStack[len(a.pageStack)-1]
-		a.pageStack = a.pageStack[:len(a.pageStack)-1]
-
-		if pageID, exists := a.pageIDs[topPage]; exists {
-			a.pages.RemovePage(pageID)
-			delete(a.pageIDs, topPage)
-			delete(a.pagePrimitives, pageID)
-		}
-	}
-
-	var focusTarget tview.Primitive
-	var newFooter map[string]string
-	if len(a.pageStack) > 0 {
-		focusTarget = a.pageStack[len(a.pageStack)-1]
-		if page, ok := focusTarget.(ui.Page); ok {
-			newFooter = page.GetActionPrompts()
-		}
-	} else {
-		focusTarget = a.pagePrimitives[a.activePageID]
-		if page, ok := focusTarget.(ui.Page); ok {
-			newFooter = page.GetActionPrompts()
-		}
-	}
-	if focusTarget != nil {
-		a.SetFocus(focusTarget)
-	}
-	a.SetFooter(newFooter)
-}
-
-// ToggleLogPage shows/hides the log page overlay.
-func (a *App) ToggleLogPage() {
-	if frontID, _ := a.pages.GetFrontPage(); frontID == ui.PageLogID {
-		a.PopPage()
-	} else {
-		logPage := a.uiPageManager.NewLogPage(a)
-		a.PushPage(ui.PageLogID, logPage)
-	}
-}
-
-// ShowErrorDialog displays a modal dialog with an error message.
-func (a *App) ShowErrorDialog(title, message string, onDismiss func()) {
-	modal := tview.NewModal().
-		SetText(message).
-		AddButtons([]string{"Dismiss"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go a.QueueUpdateDraw(func() {
-				a.PopPage()
-				if onDismiss != nil {
-					onDismiss()
-				}
-			})
-		})
-	modal.SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
-	a.PushPage("error_dialog", ui.NewModalPage(modal))
-	a.SetFocus(modal)
-}
-
-// ShowQuitDialog displays a confirmation dialog before quitting.
-func (a *App) ShowQuitDialog() {
-	modal := tview.NewModal().
-		SetText("Are you sure you want to quit?").
-		AddButtons([]string{"Cancel", "Quit without Saving", "Quit and Save"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go a.QueueUpdateDraw(func() {
-				a.PopPage()
-				switch buttonLabel {
-				case "Quit and Save":
-					logging.Info("App: Quitting and saving state (not implemented yet).")
-					a.Stop()
-				case "Quit without Saving":
-					logging.Info("App: Quitting without saving state.")
-					a.Stop()
-				case "Cancel":
-				}
-			})
-		})
-	a.PushPage("quit_dialog", ui.NewModalPage(modal))
-	a.SetFocus(modal)
-}
-
-// SetPageStatus updates the status message in the header.
-func (a *App) SetPageStatus(message string) {
-	go a.QueueUpdateDraw(func() {
-		a.statusTextView.SetText(message)
-	})
-}
-
-// SetFooter updates the action hints grid.
-func (a *App) SetFooter(prompts map[string]string) {
-	go a.QueueUpdateDraw(func() {
-		a.footer.Clear()
-
-		if prompts == nil {
-			return
-		}
-
-		globalPrompts := map[string]string{
-			"Ctrl+L": "Logs",
-			"Ctrl+C": "Quit",
-		}
-
-		var allPrompts []string
-		for key, desc := range globalPrompts {
-			allPrompts = append(allPrompts, fmt.Sprintf("[darkcyan::b]%s[-:-:-]: %s", key, desc))
-		}
-
-		var pageKeys []string
-		for key := range prompts {
-			pageKeys = append(pageKeys, key)
-		}
-		sort.Strings(pageKeys)
-
-		for _, key := range pageKeys {
-			desc := prompts[key]
-			allPrompts = append(allPrompts, fmt.Sprintf("[darkcyan::b]%s[-:-:-]: %s", key, desc))
-		}
-
-		fullText := " " + strings.Join(allPrompts, " | ")
-		a.footer.AddItem(tview.NewTextView().SetDynamicColors(true).SetText(fullText), 0, 1, false)
-	})
-}
-
-// GetApplicationContext returns the application's root context.
-func (a *App) GetApplicationContext() context.Context {
-	return a.appCtx
-}
-
-// GetLogTextView returns the application's shared log text view.
-func (a *App) GetLogTextView() *tview.TextView {
-	return a.logTextView
-}
-
-// GetModLoader returns the application's mod loader service.
-func (a *App) GetModLoader() mods.ModLoaderService {
-	return a.ModLoader
-}
-
-// GetModLoader returns the application's ui page manager
-func (a *App) GetPageManager() ui.PageManager {
-	return a.uiPageManager
-}
-
-// OnModsLoaded is the callback for when mod loading is complete.
-func (a *App) OnModsLoaded(allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string) {
-	// TODO: Transition to the Main Page here
-	logging.Infof("App: Mods loaded successfully. %d mods found. Transitioning to main page (not implemented).", len(allMods))
-	a.SetPageStatus("Mods loaded. Ready to start bisect.")
-}
-
-// StartModLoad orchestrates showing the loading page and starting the async load.
 func (a *App) StartModLoad(modsPath string) {
-	loadingPage := a.uiPageManager.NewLoadingPage(a, modsPath)
-	a.ShowPage(ui.PageLoadingID, loadingPage, true)
+	loadingPage := ui.NewLoadingPage(a, modsPath)
+	a.navManager.ShowPage(ui.PageLoadingID, loadingPage, true)
 
-	// StartLoading is a method on the LoadingPage itself.
 	if lp, ok := loadingPage.(*ui.LoadingPage); ok {
 		lp.StartLoading()
 	}
 }
 
+// Step initiates the next bisection test.
+func (a *App) Step() {
+	if a.Searcher == nil || a.Searcher.IsComplete() {
+		a.layoutManager.SetStatusText("Search is not active or is already complete.")
+		return
+	}
+
+	testSet, _, needsTest := a.Searcher.PrepareNextTest()
+	if !needsTest {
+		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+			page.RefreshSearchState()
+		}
+		return
+	}
+
+	// The call to the resolver is now much cleaner
+	effectiveSet, _ := a.Resolver.ResolveEffectiveSet(
+		systemrunner.SetToSlice(testSet),
+		a.ModState.GetAllMods(),
+		a.ModState.GetPotentialProviders(),
+		a.ModState.GetModStatusesSnapshot(),
+	)
+
+	changes, err := a.Activator.Apply(effectiveSet)
+	if err != nil {
+		a.dialogManager.ShowErrorDialog("File Error", fmt.Sprintf("Failed to apply mod file changes: %v", err), nil)
+		return
+	}
+
+	testPage := ui.NewTestPage(a, changes, a.Searcher.IsVerificationStep())
+	a.navManager.PushPage(ui.PageTestID, testPage)
+}
+
+func (a *App) CancelTest(changes []systemrunner.BatchStateChange) {
+	if a.Activator != nil {
+		a.Activator.Revert(changes)
+	}
+	// Do not call StepBack here, as no search step was actually taken.
+	// Simply pop the page to return to the previous state.
+	a.navManager.PopPage()
+}
+
+func (a *App) SubmitTestResult(result systemrunner.Result, changes []systemrunner.BatchStateChange) {
+	// Revert file changes before processing the result.
+	if a.Activator != nil {
+		a.Activator.Revert(changes)
+	}
+
+	a.navManager.PopPage() // Close the TestPage
+	if a.Searcher != nil {
+		if page, ok := a.navManager.GetCurrentPage().(*ui.MainPage); ok {
+			page.SetLastResult(result)
+		}
+		a.Searcher.ResumeWithResult(a.appCtx, result)
+		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+			page.RefreshSearchState()
+		}
+	}
+}
+
+// Undo steps back the searcher state.
+func (a *App) Undo() {
+	if a.Searcher != nil {
+		if a.Searcher.StepBack() {
+			if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+				page.RefreshSearchState()
+			}
+		}
+	}
+}
+
+// ResetSearch resets the current search.
+func (a *App) ResetSearch() {
+	if a.Searcher != nil {
+		a.Searcher.Start(a.Searcher.GetAllModIDs())
+		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+			page.RefreshSearchState()
+		}
+	}
+}
+
 // handleTestResults listens for test outcomes from the Runner and updates the searcher.
 func (a *App) handleTestResults() {
+	a.shutdownWg.Add(1)
+	defer a.shutdownWg.Done()
 	for {
 		select {
 		case <-a.appCtx.Done():
 			return
-		case result := <-a.testResultChan:
+		case result, ok := <-a.testResultChan:
+			if !ok {
+				return
+			}
 			go a.QueueUpdateDraw(func() {
-				a.PopPage()
-				if a.Searcher != nil {
-					a.Searcher.ResumeWithResult(a.appCtx, result)
-				}
+				a.processTestResult(result)
 			})
-		case err := <-a.testErrorChan:
+		case err, ok := <-a.testErrorChan:
+			if !ok {
+				return
+			}
 			go a.QueueUpdateDraw(func() {
-				a.PopPage()
-				a.ShowErrorDialog("Test Error", fmt.Sprintf("An error occurred during test: %v", err), nil)
+				a.navManager.PopPage()
+				a.dialogManager.ShowErrorDialog("Test Error", fmt.Sprintf("An error occurred during test: %v", err), nil)
 				if a.Searcher != nil {
 					a.Searcher.ResumeWithResult(a.appCtx, systemrunner.Result(""))
 				}
 			})
 		}
 	}
+}
+
+func (a *App) processTestResult(result systemrunner.Result) {
+	if a.Searcher == nil {
+		return
+	}
+
+	a.navManager.PopPage() // Pop the TestPage
+
+	// Pass the result to the main page for display before updating the searcher
+	if page, ok := a.navManager.GetCurrentPage().(*ui.MainPage); ok {
+		page.SetLastResult(result)
+	}
+
+	a.Searcher.ResumeWithResult(a.appCtx, result)
+
+	// Refresh the main page with the new state
+	if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+		page.RefreshSearchState()
+	}
+
+	// Now, check the new state to see if a result page should be shown
+	a.displayResults()
+}
+
+func (a *App) displayResults() {
+	if a.Searcher == nil {
+		return
+	}
+
+	if a.Searcher.IsComplete() {
+		a.handleSearchCompletion(a.Searcher.GetCurrentState())
+	} else if a.Searcher.LastFoundElement() != "" {
+		// An intermediate culprit was just found, and the search isn't over yet
+		a.handleIntermediateResult(a.Searcher.GetCurrentState())
+	}
+}
+
+func (a *App) ShowResultPage(title, message, explanation string) {
+	resultPage := ui.NewResultPage(a, title, message, explanation)
+	a.navManager.PushPage(ui.PageResultID, resultPage)
+}
+
+// Add a new helper function for handling search completion
+func (a *App) handleSearchCompletion(finalState conflict.SearchSnapshot) {
+	title := "Search Complete"
+	var message, explanation string
+
+	if len(finalState.ConflictSet) > 0 {
+		conflictMods := mapKeysFromStruct(finalState.ConflictSet)
+		message = fmt.Sprintf("Found [yellow]%d[-:-:-] problematic mod(s):\n\n[::b]%s", len(conflictMods), strings.Join(conflictMods, "\n"))
+		explanation = "\nWhat to do next:\n  - Try disabling these mods and launching the game.\n  - Report the incompatibility to the mod authors."
+	} else {
+		message = "No conflict was found."
+		explanation = "The bisection process completed without isolating a specific cause for failure.\nThis could mean the issue is not related to a specific mod or combination of mods."
+	}
+
+	a.ShowResultPage(title, message, explanation)
+}
+
+// Add a new helper function for handling intermediate results
+func (a *App) handleIntermediateResult(currentState conflict.SearchSnapshot) {
+	title := "Intermediate Result Found"
+	conflictMods := mapKeysFromStruct(currentState.ConflictSet)
+	message := fmt.Sprintf("Found [yellow]%d[-:-:-] problematic mod(s) so far:\n\n[::b]%s", len(conflictMods), strings.Join(conflictMods, "\n"))
+	explanation := "\nThe last test failed, indicating more mods are required for the conflict.\nPress 'Step' to continue searching for the next problematic mod."
+
+	a.ShowResultPage(title, message, explanation)
+}
+
+func mapKeysFromStruct(m map[string]struct{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
