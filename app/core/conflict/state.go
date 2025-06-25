@@ -1,6 +1,10 @@
 package conflict
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
+)
 
 // SearchStep represents one logical step in the IMCS algorithm's binary search.
 // It's used to manage the non-recursive, stateful search process.
@@ -17,6 +21,7 @@ type SearchSnapshot struct {
 	Background     map[string]struct{} // Mods currently assumed to be active during the main loop's search.
 	SearchStack    []SearchStep        // Stack representing the current binary search for a single element.
 	IsCheckingDone bool                // True if the next test is the final `test(ConflictSet)` optimization.
+	LastTestResult systemrunner.Result // Stores the result of the last test performed for this state.
 }
 
 // newSearchStep creates a search step with sorted candidates for determinism.

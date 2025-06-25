@@ -3,7 +3,6 @@ package ui
 import (
 	"time"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -13,22 +12,28 @@ const PageTestID = "test_page"
 // TestPage instructs the user to perform a manual test.
 type TestPage struct {
 	*tview.Flex
-	app     AppInterface
-	changes []systemrunner.BatchStateChange
+	app AppInterface
 
 	successBtn *tview.Button
 	failBtn    *tview.Button
 	backBtn    *tview.Button
 	statusText *tview.TextView
+
+	// callbacks
+	onSuccess func()
+	onFailure func()
+	onCancel  func()
 }
 
 // NewTestPage creates a new TestPage.
-func NewTestPage(app AppInterface, changes []systemrunner.BatchStateChange, isVerification bool) Page {
+func NewTestPage(app AppInterface, isVerification bool, onSuccess, onFailure, onCancel func()) Page {
 	p := &TestPage{
 		Flex:       tview.NewFlex(),
 		app:        app,
-		changes:    changes,
 		statusText: tview.NewTextView().SetDynamicColors(true),
+		onSuccess:  onSuccess,
+		onFailure:  onFailure,
+		onCancel:   onCancel,
 	}
 
 	p.statusText.SetText("Report Manual Test Outcome")
@@ -57,27 +62,21 @@ Please launch Minecraft and confirm the failure persists.`
 		SetText(message)
 
 	p.successBtn = tview.NewButton("Success (No Crash)").
-		SetSelectedFunc(func() {
-			p.app.SubmitTestResult(systemrunner.GOOD, p.changes)
-		})
+		SetSelectedFunc(p.onSuccess)
 	p.successBtn.SetDisabled(true)
 	p.successBtn.SetDisabledStyle(tcell.StyleDefault.Foreground(tcell.ColorLightGray).Background(tcell.ColorDarkGray))
 	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorWhite))
 	p.successBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
 
 	p.failBtn = tview.NewButton("Failure (Crash)").
-		SetSelectedFunc(func() {
-			p.app.SubmitTestResult(systemrunner.FAIL, p.changes)
-		})
+		SetSelectedFunc(p.onFailure)
 	p.failBtn.SetDisabled(true)
 	p.failBtn.SetDisabledStyle(tcell.StyleDefault.Foreground(tcell.ColorLightGray).Background(tcell.ColorDarkGray))
 	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorWhite))
 	p.failBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorRed))
 
 	p.backBtn = tview.NewButton("Back (Cancel Step)").
-		SetSelectedFunc(func() {
-			p.app.CancelTest(p.changes)
-		})
+		SetSelectedFunc(p.onCancel)
 	p.backBtn.SetDisabled(true)
 	p.backBtn.SetDisabledStyle(tcell.StyleDefault.Foreground(tcell.ColorLightGray).Background(tcell.ColorDarkGray))
 	p.backBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorBlue).Background(tcell.ColorWhite))
@@ -112,7 +111,7 @@ Please launch Minecraft and confirm the failure persists.`
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape {
-			p.app.CancelTest(p.changes)
+			p.onCancel()
 			return nil
 		}
 		return event

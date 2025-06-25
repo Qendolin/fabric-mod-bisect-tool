@@ -12,18 +12,19 @@ import (
 var (
 	logFile *os.File
 	logger  *log.Logger
+	debug   bool
 )
 
 // Init initializes the logging system. It sets up a log file and a
 // multi-writer to output to both the file and any provided extra writers.
-func Init(logDir, logFileName string, extraWriters ...io.Writer) error {
+func Init(logFilePath string, extraWriters ...io.Writer) error {
 	var err error
+	logDir := filepath.Dir(logFilePath)
 	if err = os.MkdirAll(logDir, 0755); err != nil {
 		return err
 	}
 
-	logPath := filepath.Join(logDir, logFileName)
-	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
@@ -35,6 +36,10 @@ func Init(logDir, logFileName string, extraWriters ...io.Writer) error {
 	logger = log.New(multiWriter, "", log.LstdFlags)
 	logger.Println("Logging initialized.")
 	return nil
+}
+
+func SetDebug(enable bool) {
+	debug = enable
 }
 
 // ChannelWriter is an io.Writer that sends log messages to a channel.
@@ -132,6 +137,22 @@ func Errorf(format string, v ...interface{}) {
 		return
 	}
 	logger.Printf("ERROR: "+format, v...)
+}
+
+// Warn logs a warning message.
+func Debug(v ...interface{}) {
+	if logger == nil || !debug {
+		return
+	}
+	logger.Println(append([]interface{}{"WARN:"}, v...)...)
+}
+
+// Warnf logs a formatted warning message.
+func Debugf(format string, v ...interface{}) {
+	if logger == nil || !debug {
+		return
+	}
+	logger.Printf("DEBUG: "+format, v...)
 }
 
 // Close gracefully closes the log file handle.

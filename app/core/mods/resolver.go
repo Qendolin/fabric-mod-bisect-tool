@@ -44,8 +44,6 @@ func (dr *DependencyResolver) ResolveEffectiveSet(
 	dr.processing = make(map[string]bool)
 	dr.dependencySatisfied = make(map[string]string)
 
-	var initialSetMods []string
-
 	// Process initial targets
 	for _, modID := range targetModIDs {
 		if status, ok := modStatuses[modID]; ok && status.ForceDisabled {
@@ -72,16 +70,16 @@ func (dr *DependencyResolver) ResolveEffectiveSet(
 		}
 	}
 
-	// Create the final set to return
 	finalEffectiveSet := make(map[string]struct{})
+	var effectiveModIDs []string // For logging the final set
 	for modID, isActive := range dr.currentEffectiveSet {
 		if isActive {
 			finalEffectiveSet[modID] = struct{}{}
-			initialSetMods = append(initialSetMods, modID)
+			effectiveModIDs = append(effectiveModIDs, modID)
 		}
 	}
-	sort.Strings(initialSetMods)
-	logging.Infof("Resolver: Dependency resolution complete. Effective mods: %v", initialSetMods)
+	sort.Strings(effectiveModIDs)
+	logging.Infof("Resolver: Resolution complete. Effective set (%d mods): %v", len(effectiveModIDs), effectiveModIDs)
 
 	return finalEffectiveSet, dr.collectResolutionPath()
 }
@@ -91,7 +89,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(
 // dependencies were successfully activated and added to currentEffectiveSet.
 func (dr *DependencyResolver) ensureModActive(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied string) bool {
 	if status, ok := dr.modStatuses[modToActivateID]; ok && status.ForceDisabled {
-		logging.Warnf("Resolver: Mod '%s' is force-disabled, cannot activate (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
+		logging.Debugf("Resolver: Mod '%s' is force-disabled, cannot activate (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
 		return false
 	}
 
@@ -101,13 +99,13 @@ func (dr *DependencyResolver) ensureModActive(modToActivateID, neededByModID, re
 	}
 
 	if _, ok := dr.processing[modToActivateID]; ok {
-		logging.Warnf("Resolver: Cycle detected involving '%s' (needed by '%s', dependency: '%s'). Activation path failed.", modToActivateID, neededByModID, dependencyIDSatisfied)
+		logging.Warnf("Resolver: Cycle detected involving '%s' (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
 		return false
 	}
 
 	mod, exists := dr.allMods[modToActivateID]
 	if !exists {
-		logging.Errorf("Resolver: Cannot activate '%s': Mod metadata not found (dependency '%s' for '%s' unfulfilled).", modToActivateID, dependencyIDSatisfied, neededByModID)
+		logging.Errorf("Resolver: Cannot activate '%s': Mod not found (dependency '%s' for '%s' unfulfilled).", modToActivateID, dependencyIDSatisfied, neededByModID)
 		return false
 	}
 
@@ -206,12 +204,12 @@ func (dr *DependencyResolver) updateResolutionPath(modID, neededBy, reason, sati
 // Returns true if the dependency was successfully resolved (i.e., a provider was found and activated).
 func (dr *DependencyResolver) resolveDependency(dependencyToSatisfy, requiringModID, originalDeclaration string) bool {
 	if providerModID, isSatisfied := dr.dependencySatisfied[dependencyToSatisfy]; isSatisfied {
-		logging.Infof("Resolver: Dependency '%s' (for '%s') already satisfied by '%s'.", dependencyToSatisfy, requiringModID, providerModID)
+		logging.Debugf("Resolver: Dependency '%s' (for '%s') already satisfied by '%s'.", dependencyToSatisfy, requiringModID, providerModID)
 		dr.updateNeededForList(providerModID, requiringModID)
 		if _, ok := dr.currentEffectiveSet[providerModID]; ok {
 			return true
 		}
-		logging.Errorf("Resolver: Dependency '%s' marked satisfied by '%s', but '%s' is not in effective set (logic error).", dependencyToSatisfy, providerModID, providerModID)
+		logging.Errorf("Resolver: Dependency '%s' satisfied by '%s' but not active.", dependencyToSatisfy, providerModID, providerModID)
 		return false
 	}
 
@@ -229,7 +227,7 @@ func (dr *DependencyResolver) resolveDependency(dependencyToSatisfy, requiringMo
 		info.SatisfiedDep = dependencyToSatisfy
 		info.SelectedProvider = chosenProvider
 		dr.resolutionPath[providerTopLevelID] = info
-		logging.Infof("Resolver: Dependency '%s' (for '%s') satisfied by activating '%s'.", dependencyToSatisfy, requiringModID, providerTopLevelID)
+		logging.Debugf("Resolver: Dependency '%s' (for '%s') satisfied by activating '%s'.", dependencyToSatisfy, requiringModID, providerTopLevelID)
 		return true
 	}
 
@@ -250,7 +248,7 @@ func (dr *DependencyResolver) findBestProvider(depID string) *ProviderInfo {
 			continue
 		}
 		if _, modExists := dr.allMods[candidate.TopLevelModID]; !modExists {
-			logging.Errorf("Resolver: Provider '%s' for dependency '%s' not found in allMods map. Skipping.", candidate.TopLevelModID, depID)
+			logging.Errorf("Resolver: Provider '%s' for dependency '%s' not found.", candidate.TopLevelModID, depID)
 			continue
 		}
 		return &candidate
@@ -310,13 +308,16 @@ func (dr *DependencyResolver) collectResolutionPath() []ResolutionInfo {
 	if len(pathSlice) > 0 {
 		depLogMessages = append(depLogMessages, "Resolver: Dependency activation paths:")
 		for _, info := range pathSlice {
+			if info.Reason != "Dependency" {
+				continue
+			}
 			neededForStr := strings.Join(info.NeededFor, ", ")
 			providerStr := ""
 			if info.SelectedProvider != nil {
 				providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.TopLevelModVersion)
 			}
-			depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Reason: '%s', Satisfies: '%s'%s, Needed for: [%s]",
-				info.ModID, info.Reason, info.SatisfiedDep, providerStr, neededForStr))
+			depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
+				info.ModID, info.SatisfiedDep, providerStr, neededForStr))
 		}
 		logging.Info(strings.Join(depLogMessages, "\n"))
 	}

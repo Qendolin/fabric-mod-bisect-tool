@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -34,9 +33,6 @@ type App struct {
 	Runner    *systemrunner.Runner
 	Searcher  *conflict.Searcher
 
-	testResultChan chan systemrunner.Result
-	testErrorChan  chan error
-
 	appCtx    context.Context
 	cancelApp context.CancelFunc
 
@@ -48,11 +44,9 @@ func NewApp() *App {
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
 	a := &App{
-		Application:    tview.NewApplication(),
-		testResultChan: make(chan systemrunner.Result),
-		testErrorChan:  make(chan error),
-		appCtx:         appCtx,
-		cancelApp:      cancelApp,
+		Application: tview.NewApplication(),
+		appCtx:      appCtx,
+		cancelApp:   cancelApp,
 	}
 
 	a.layoutManager = ui.NewLayoutManager()
@@ -95,16 +89,12 @@ func (a *App) setupGlobalInputCapture() {
 }
 
 // InitLogging re-initializes the logging system to include the UI channel writer.
-func (a *App) InitLogging(logDir, logFileName string, initialLogs *bytes.Buffer) error {
+func (a *App) InitLogging(logPath string) error {
 	logChannel := make(chan []byte, 100)
 	a.logHandler = ui.NewLogHandler(a, logChannel, &a.shutdownWg)
 
-	if initialLogs != nil {
-		fmt.Fprint(a.logHandler.TextView(), initialLogs.String())
-	}
-
 	channelWriter := logging.NewChannelWriter(a.appCtx, logChannel)
-	return logging.Init(logDir, logFileName, channelWriter)
+	return logging.Init(logPath, channelWriter)
 }
 
 // setupCoreServices initializes the backend logic components.
@@ -116,7 +106,6 @@ func (a *App) setupCoreServices() {
 // Run starts the tview application event loop.
 func (a *App) Run() error {
 	go a.logHandler.Start(a.appCtx)
-	go a.handleTestResults()
 
 	a.navManager.ShowPage(ui.PageSetupID, ui.NewSetupPage(a), true)
 
@@ -144,12 +133,26 @@ func (a *App) GetSearcher() *conflict.Searcher        { return a.Searcher }
 func (a *App) OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string) {
 	logging.Infof("App: Mods loaded. Initializing services and transitioning to Main Page.")
 	a.ModState = mods.NewStateManager(allMods, potentialProviders)
+	a.ModState.OnStateChanged = a.handleModStateChange
 	a.Activator = systemrunner.NewModActivator(modsPath, allMods)
 	a.Searcher = conflict.NewSearcher(a.ModState)
 	a.Searcher.Start(sortedModIDs)
 
 	mainPage := ui.NewMainPage(a)
 	a.navManager.ShowPage(ui.PageMainID, mainPage, true)
+}
+
+// Add the new handler for mod state changes
+func (a *App) handleModStateChange() {
+	if a.Searcher != nil {
+		a.Searcher.HandleExternalStateChange()
+	}
+	// Queue a refresh for the currently visible page if it's an observer
+	go a.QueueUpdateDraw(func() {
+		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+			page.RefreshSearchState()
+		}
+	})
 }
 
 func (a *App) StartModLoad(modsPath string) {
@@ -190,7 +193,20 @@ func (a *App) Step() {
 		return
 	}
 
-	testPage := ui.NewTestPage(a, changes, a.Searcher.IsVerificationStep())
+	onSuccess := func() {
+		a.navManager.PopPage() // Pop the TestPage
+		a.processTestResult(systemrunner.GOOD, changes)
+	}
+	onFailure := func() {
+		a.navManager.PopPage()
+		a.processTestResult(systemrunner.FAIL, changes)
+	}
+	onCancel := func() {
+		a.navManager.PopPage()
+		a.cancelTest(changes)
+	}
+
+	testPage := ui.NewTestPage(a, a.Searcher.IsVerificationStep(), onSuccess, onFailure, onCancel)
 	a.navManager.PushPage(ui.PageTestID, testPage)
 }
 
@@ -211,9 +227,6 @@ func (a *App) SubmitTestResult(result systemrunner.Result, changes []systemrunne
 
 	a.navManager.PopPage() // Close the TestPage
 	if a.Searcher != nil {
-		if page, ok := a.navManager.GetCurrentPage().(*ui.MainPage); ok {
-			page.SetLastResult(result)
-		}
 		a.Searcher.ResumeWithResult(a.appCtx, result)
 		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
 			page.RefreshSearchState()
@@ -242,57 +255,22 @@ func (a *App) ResetSearch() {
 	}
 }
 
-// handleTestResults listens for test outcomes from the Runner and updates the searcher.
-func (a *App) handleTestResults() {
-	a.shutdownWg.Add(1)
-	defer a.shutdownWg.Done()
-	for {
-		select {
-		case <-a.appCtx.Done():
-			return
-		case result, ok := <-a.testResultChan:
-			if !ok {
-				return
-			}
-			go a.QueueUpdateDraw(func() {
-				a.processTestResult(result)
-			})
-		case err, ok := <-a.testErrorChan:
-			if !ok {
-				return
-			}
-			go a.QueueUpdateDraw(func() {
-				a.navManager.PopPage()
-				a.dialogManager.ShowErrorDialog("Test Error", fmt.Sprintf("An error occurred during test: %v", err), nil)
-				if a.Searcher != nil {
-					a.Searcher.ResumeWithResult(a.appCtx, systemrunner.Result(""))
-				}
-			})
+func (a *App) processTestResult(result systemrunner.Result, changes []systemrunner.BatchStateChange) {
+	if a.Activator != nil {
+		a.Activator.Revert(changes)
+	}
+	if a.Searcher != nil {
+		a.Searcher.ResumeWithResult(a.appCtx, result)
+		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+			page.RefreshSearchState()
 		}
+		a.displayResults()
 	}
 }
-
-func (a *App) processTestResult(result systemrunner.Result) {
-	if a.Searcher == nil {
-		return
+func (a *App) cancelTest(changes []systemrunner.BatchStateChange) {
+	if a.Activator != nil {
+		a.Activator.Revert(changes)
 	}
-
-	a.navManager.PopPage() // Pop the TestPage
-
-	// Pass the result to the main page for display before updating the searcher
-	if page, ok := a.navManager.GetCurrentPage().(*ui.MainPage); ok {
-		page.SetLastResult(result)
-	}
-
-	a.Searcher.ResumeWithResult(a.appCtx, result)
-
-	// Refresh the main page with the new state
-	if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
-		page.RefreshSearchState()
-	}
-
-	// Now, check the new state to see if a result page should be shown
-	a.displayResults()
 }
 
 func (a *App) displayResults() {

@@ -5,7 +5,6 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
 	"github.com/rivo/tview"
 )
 
@@ -29,8 +28,6 @@ type AppInterface interface {
 	Step()
 	Undo()
 	ResetSearch()
-	SubmitTestResult(result systemrunner.Result, changes []systemrunner.BatchStateChange)
-	CancelTest(changes []systemrunner.BatchStateChange)
 	ShowResultPage(title, message, explanation string)
 }
 
