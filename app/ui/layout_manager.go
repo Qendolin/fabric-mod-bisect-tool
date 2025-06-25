@@ -46,6 +46,7 @@ func (lm *LayoutManager) Pages() *tview.Pages {
 
 func (lm *LayoutManager) setupLayout() {
 	lm.status = tview.NewFlex().SetDirection(tview.FlexRow)
+	lm.SetHeader(nil)
 
 	lm.header.AddItem(lm.status, 0, 1, false).
 		AddItem(lm.errorCounters, 0, 1, false)
@@ -62,16 +63,20 @@ func (lm *LayoutManager) setupLayout() {
 
 // SetErrorCounters updates the error and warning counters.
 func (lm *LayoutManager) SetErrorCounters(warnCount, errorCount int) {
-	warnColor := tcell.ColorYellow
-	errorColor := tcell.ColorRed
+	warnBgColor := tcell.ColorYellow
+	warnFgColor := tcell.ColorBlack
+	errorBgColor := tcell.ColorRed
+	errorFgColor := tcell.ColorBlack
 	if warnCount == 0 {
-		warnColor = tcell.ColorBlack
+		warnBgColor = tcell.ColorBlack
+		warnFgColor = tcell.ColorWhite
 	}
 	if errorCount == 0 {
-		errorColor = tcell.ColorBlack
+		errorBgColor = tcell.ColorBlack
+		errorFgColor = tcell.ColorWhite
 	}
-	lm.errorCounters.SetText(fmt.Sprintf("[yellow]Warnings: [white:%s]%d[-:-:-] [red]Errors: [white:%s]%d[-:-:-]",
-		warnColor.Name(), warnCount, errorColor.Name(), errorCount))
+	lm.errorCounters.SetText(fmt.Sprintf("[yellow]Warnings: [%s:%s]%d[-:-:-] [red]Errors: [%s:%s]%d[-:-:-]",
+		warnFgColor.Name(), warnBgColor.Name(), warnCount, errorFgColor.Name(), errorBgColor.Name(), errorCount))
 }
 
 // SetFooter updates the action hints flexbox.
@@ -100,14 +105,14 @@ func (lm *LayoutManager) SetFooter(prompts map[string]string) {
 
 // SetHeader updates the status bar
 func (lm *LayoutManager) SetHeader(p *tview.TextView) {
+	if p == nil {
+		p = tview.NewTextView().SetDynamicColors(true)
+	}
 	lm.statusText = p
 	lm.status.Clear()
 	lm.status.AddItem(p, 0, 1, false)
 }
 
 func (lm *LayoutManager) SetStatusText(text string) {
-	if lm.statusText == nil {
-		return
-	}
 	lm.statusText.SetText(text)
 }

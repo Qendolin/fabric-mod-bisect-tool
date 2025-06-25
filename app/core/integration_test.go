@@ -86,7 +86,6 @@ func mapKeys(m map[string]struct{}) []string {
 // TestIMCS_Integration runs a full integration test of the core IMCS logic.
 func TestIMCS_Integration(t *testing.T) {
 	// Suppress logging to console during tests by default.
-	// Uncomment the following line to see detailed log output during tests.
 	if err := logging.Init("test.log"); err != nil {
 		t.Fatalf("Failed to init logging: %v", err)
 	}
@@ -147,6 +146,28 @@ func TestIMCS_Integration(t *testing.T) {
 			problematicSet:      map[string]struct{}{"mod_d": {}, "mod_e": {}, "mod_f": {}},
 			expectedConflictSet: map[string]struct{}{"mod_d": {}, "mod_e": {}, "mod_f": {}},
 		},
+		{
+			name:                "No Conflict",
+			modSpecsOverride:    baseModSpecs,
+			initialModIDs:       allBaseModIDs,
+			problematicSet:      map[string]struct{}{},
+			expectedConflictSet: map[string]struct{}{},
+		},
+		{
+			name: "No Conflict - Unmet Dependency",
+			modSpecsOverride: func() map[string]string {
+				specs := make(map[string]string)
+				for k, v := range baseModSpecs {
+					specs[k] = v
+				}
+				// Define mod_x with an unresolvable dependency
+				specs["mod-x-1.0.jar"] = `{"id": "mod_x", "version": "1.0", "name": "Mod X", "depends": {"non_existent_dep": "*"}}`
+				return specs
+			}(),
+			initialModIDs:       allBaseModIDs,
+			problematicSet:      map[string]struct{}{"mod_x": {}}, // If mod_x were active, it would cause a problem
+			expectedConflictSet: map[string]struct{}{},            // But it can never be active, so no conflict is found
+		},
 	}
 
 	for _, tc := range testCases {
@@ -183,11 +204,12 @@ func TestIMCS_Integration(t *testing.T) {
 				t.Logf("  Current ConflictSet: %v", mapKeys(s.ConflictSet))
 				t.Logf("  Remaining Candidates: %v", s.Candidates)
 
-				testSet, statuses, needsTest := searcher.PrepareNextTest() // Use statuses here, but don't re-get snapshot
-				if !needsTest {
+				if !searcher.NeedsTest() {
 					t.Log("  No more tests needed. Searcher concluded.")
 					break
 				}
+				testSet := searcher.CalculateNextTestSet()
+				statuses := modState.GetModStatusesSnapshot()
 
 				t.Logf("  Preparing test with targets: %v", mapKeys(testSet))
 
@@ -196,13 +218,16 @@ func TestIMCS_Integration(t *testing.T) {
 					systemrunner.SetToSlice(testSet),
 					modState.GetAllMods(),
 					modState.GetPotentialProviders(),
-					statuses, // Pass the statuses map from PrepareNextTest
+					statuses,
 				)
 
 				t.Logf("  > Effective mod set for test: %v", mapKeys(effectiveSet))
 
 				// Simulate the test run
 				isConflict := true
+				if len(tc.problematicSet) == 0 {
+					isConflict = false
+				}
 				for pMod := range tc.problematicSet {
 					if _, ok := effectiveSet[pMod]; !ok {
 						isConflict = false

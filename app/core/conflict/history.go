@@ -49,11 +49,11 @@ func (h *HistoryManager) Push(snapshot SearchSnapshot) {
 	}
 
 	h.states = append(h.states, SearchSnapshot{
-		ConflictSet:    copiedConflictSet,
-		Candidates:     copiedCandidates,
-		Background:     copiedBackground,
-		SearchStack:    copiedSearchStack,
-		IsCheckingDone: snapshot.IsCheckingDone,
+		ConflictSet:            copiedConflictSet,
+		Candidates:             copiedCandidates,
+		Background:             copiedBackground,
+		SearchStack:            copiedSearchStack,
+		IsVerifyingConflictSet: snapshot.IsVerifyingConflictSet,
 	})
 }
 

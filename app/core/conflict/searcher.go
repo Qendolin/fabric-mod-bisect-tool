@@ -2,6 +2,7 @@ package conflict
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 
@@ -74,6 +75,7 @@ func (s *Searcher) Start(allModIDs []string) {
 		LastTestResult: "",
 	}
 	s.startNextElementSearch()
+	s.logNextStep()
 }
 
 // GetCurrentState returns the current search snapshot.
@@ -104,39 +106,45 @@ func (s *Searcher) GetEstimatedMaxTests() int {
 // GetAllModIDs returns all mod IDs that were initially considered for the search.
 func (s *Searcher) GetAllModIDs() []string { return s.allModIDs }
 
+// LastFoundElement returns the problematic element of the current iteration. It is reset at the start of each iteration, and set when a single element is found, before verification.
 func (s *Searcher) LastFoundElement() string {
 	return s.lastFoundElement
 }
 
 func (s *Searcher) IsVerificationStep() bool {
-	return s.current.IsCheckingDone
+	return s.current.IsVerifyingConflictSet
 }
 
-// PrepareNextTest calculates the set of mods for the next test run.
-func (s *Searcher) PrepareNextTest() (map[string]struct{}, map[string]mods.ModStatus, bool) {
-	if s.isComplete || s.lastFoundError != nil {
-		return nil, nil, false
+// CalculateNextTestSet calculates the set of mods for the next test run.
+func (s *Searcher) CalculateNextTestSet() map[string]struct{} {
+	if s.isComplete {
+		return nil
 	}
-	modStatuses := s.modState.GetModStatusesSnapshot()
-	var testSet map[string]struct{}
 
-	if s.current.IsCheckingDone {
-		testSet = union(s.current.Background, s.current.ConflictSet)
-	} else if len(s.current.SearchStack) > 0 {
+	if s.current.IsVerifyingConflictSet {
+		// If verifying, the next test set is the current ConflictSet (plus background)
+		return union(s.current.Background, s.current.ConflictSet)
+	}
+
+	if len(s.current.SearchStack) > 0 {
 		step := s.current.SearchStack[len(s.current.SearchStack)-1]
 		if len(step.Candidates) == 1 {
 			// Base case of binary search
-			testSet = union(step.Background, sliceToSet(step.Candidates))
+			return union(step.Background, sliceToSet(step.Candidates))
 		} else {
-			// Divide and conquer step
+			// Divide and conquer step: test the first half
 			c1 := step.Candidates[:len(step.Candidates)/2]
-			testSet = union(step.Background, sliceToSet(c1))
+			return union(step.Background, sliceToSet(c1))
 		}
-	} else {
-		s.isComplete = true
-		return nil, nil, false
 	}
-	return testSet, modStatuses, true
+	return nil
+}
+
+func (s *Searcher) NeedsTest() bool {
+	if s.isComplete || s.lastFoundError != nil {
+		return false
+	}
+	return s.current.IsVerifyingConflictSet || len(s.current.SearchStack) > 0
 }
 
 // ResumeWithResult provides the outcome of the last test and advances the search.
@@ -147,11 +155,15 @@ func (s *Searcher) ResumeWithResult(ctx context.Context, result systemrunner.Res
 	s.current.LastTestResult = result
 	s.history.Push(s.current)
 
-	if s.current.IsCheckingDone {
-		s.handleDoneCheck(result)
+	if s.current.IsVerifyingConflictSet {
+		s.handleVerificationResult(result)
 		return
 	}
 	s.handleFindNextResult(result)
+
+	if !s.isComplete {
+		s.logNextStep()
+	}
 }
 
 func (s *Searcher) HandleExternalStateChange() {
@@ -197,7 +209,7 @@ func (s *Searcher) HandleExternalStateChange() {
 	}
 	s.current.SearchStack = newStack
 
-	if len(s.current.SearchStack) == 0 && !s.current.IsCheckingDone {
+	if len(s.current.SearchStack) == 0 && !s.current.IsVerifyingConflictSet {
 		s.startNextElementSearch()
 	}
 }
@@ -222,6 +234,32 @@ func (s *Searcher) StepBack() bool {
 	return true
 }
 
+func (s *Searcher) logNextStep() {
+	if s.isComplete || s.lastFoundError != nil {
+		return
+	}
+
+	testSet := s.CalculateNextTestSet()
+	if testSet == nil {
+		return // No next test to log
+	}
+
+	currentPhase := "Unknown"
+	if s.IsVerificationStep() {
+		currentPhase = "ConflictSet Verification"
+	} else if len(s.current.SearchStack) > 0 {
+		step := s.current.SearchStack[len(s.current.SearchStack)-1]
+		currentPhase = fmt.Sprintf("Binary Search (Candidates: %d)", len(step.Candidates))
+	}
+
+	logging.Infof("IMCS: Next Test (%d/%d): Phase: %s, Set: %v",
+		s.testsExecuted+1,
+		s.GetEstimatedMaxTests(),
+		currentPhase,
+		mapKeysFromStruct(testSet),
+	)
+}
+
 // startNextElementSearch corresponds to the top of the main `FindConflictSet` loop.
 func (s *Searcher) startNextElementSearch() {
 	if len(s.current.Candidates) == 0 {
@@ -229,6 +267,8 @@ func (s *Searcher) startNextElementSearch() {
 		logging.Infof("IMCS: Search complete. No more candidates to search.")
 		return
 	}
+
+	s.lastFoundElement = ""
 	searchContext := union(s.current.Background, s.current.ConflictSet)
 	s.current.SearchStack = []SearchStep{newSearchStep(searchContext, s.current.Candidates)}
 	logging.Infof("IMCS: Starting new element search (Iteration %d). Background: %v, Candidates: %v",
@@ -243,30 +283,22 @@ func (s *Searcher) handleFindNextResult(result systemrunner.Result) {
 		return
 	}
 	step := s.current.SearchStack[len(s.current.SearchStack)-1]
-	s.current.SearchStack = s.current.SearchStack[:len(s.current.SearchStack)-1]
 
-	logging.Infof("IMCS: Processing binary search step: Background=%v, Candidates=%v, Result=%s",
-		mapKeysFromStruct(step.Background), step.Candidates, result)
+	logging.Infof("IMCS: Processing binary search step #%d: Background=%v, Candidates=%v, Result=%s",
+		s.testsExecuted, mapKeysFromStruct(step.Background), step.Candidates, result)
 
 	if len(step.Candidates) == 1 {
 		if result == systemrunner.FAIL {
 			s.processFoundElement(step.Candidates[0])
 		} else {
-			// TODO: Which is correct?
-			/*
-				// The entire binary search completed without finding a single new culprit.
-				s.isComplete = true
-				/*/
-			// This single candidate was tested and passed. It's safe in this context.
-			// It should be pruned from the main candidates list, and a new search for *another* element should start.
-			logging.Infof("IMCS: Candidate '%s' is good in this context. Pruning and restarting element search.", step.Candidates[0])
-			s.current.Candidates = removeFromStringSlice(s.current.Candidates, step.Candidates[0])
-			s.startNextElementSearch() // Re-initiate the search for the *next* conflict element
-			//*/
+			// The entire binary search completed without finding a single new culprit.
+			s.isComplete = true
+			logging.Info("IMCS: Binary search concluded without finding a new conflict element. Search is complete.")
 		}
 		return
 	}
 
+	s.current.SearchStack = s.current.SearchStack[:len(s.current.SearchStack)-1]
 	mid := len(step.Candidates) / 2
 	c1, c2 := step.Candidates[:mid], step.Candidates[mid:]
 
@@ -285,15 +317,15 @@ func (s *Searcher) processFoundElement(elementID string) {
 	s.problemsFound++
 	s.current.ConflictSet[elementID] = struct{}{}
 	s.current.Candidates = removeFromStringSlice(s.current.Candidates, elementID)
-	s.current.IsCheckingDone = true
+	s.current.IsVerifyingConflictSet = true
 	s.lastFoundElement = elementID
 	logging.Infof("IMCS: ConflictSet updated to %v. Remaining Candidates: %v",
 		mapKeysFromStruct(s.current.ConflictSet), s.current.Candidates)
 }
 
-// handleDoneCheck processes the result of the `test(ConflictSet)` optimization.
-func (s *Searcher) handleDoneCheck(result systemrunner.Result) {
-	s.current.IsCheckingDone = false
+// handleVerificationResult processes the result of the `test(ConflictSet)` optimization.
+func (s *Searcher) handleVerificationResult(result systemrunner.Result) {
+	s.current.IsVerifyingConflictSet = false
 	if result == systemrunner.FAIL {
 		logging.Info("IMCS: Current ConflictSet is sufficient to cause failure. Search complete.")
 		s.isComplete = true

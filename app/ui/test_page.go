@@ -114,6 +114,18 @@ Please launch Minecraft and confirm the failure persists.`
 			p.onCancel()
 			return nil
 		}
+
+		if event.Key() == tcell.KeyRune {
+			switch event.Rune() {
+			case 'a', 'A':
+				p.onSuccess()
+				return nil
+			case 'd', 'D':
+				p.onFailure()
+				return nil
+			}
+		}
+
 		return event
 	})
 
@@ -128,7 +140,7 @@ func (p *TestPage) Primitive() tview.Primitive {
 // GetActionPrompts returns the key actions for the test page.
 func (p *TestPage) GetActionPrompts() map[string]string {
 	return map[string]string{
-		"ESC": "Back (Cancel Step)",
+		"ESC": "Back (Cancel Step)", "A": "Success", "D": "Failure",
 	}
 }
 

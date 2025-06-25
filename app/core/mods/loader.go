@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/titanous/json5"
-	sv "golang.org/x/mod/semver"
 )
 
 var (
@@ -48,14 +48,19 @@ type processFileTask struct {
 }
 
 type processFileResult struct {
-	modData    *parsedModFile
-	parseError error
-	fileName   string
+	modData      *parsedModFile
+	parseError   error
+	baseFileName string
+}
+
+type nestedModInfo struct {
+	fmj       FabricModJson
+	pathInJar string
 }
 
 type parsedModFile struct {
-	mod        *Mod
-	nestedFmjs []FabricModJson
+	mod    *Mod
+	nested []nestedModInfo
 }
 
 // LoadMods discovers mods, parses metadata, resolves basic conflicts, and builds provider maps.
@@ -143,10 +148,26 @@ func (s *defaultModLoaderService) parseJarFilesConcurrently(filesToProcess []os.
 	var collectedModFileResults []*parsedModFile
 	for res := range results {
 		if res.parseError != nil {
-			logging.Warnf("Loader: Skipping JAR %s: %v", res.fileName, res.parseError)
+			logging.Warnf("Loader: Failed to load mod metadata from file '%s.jar': %v", res.baseFileName, res.parseError)
 			continue
 		}
 		if res.modData != nil {
+			currentMod := res.modData.mod
+			nestedMods := res.modData.nested
+
+			logging.Infof("Loader: ├─ Mod %s (%s v%s) from file '%s.jar'",
+				currentMod.FabricInfo.ID, currentMod.FriendlyName(), currentMod.FabricInfo.Version,
+				res.baseFileName)
+
+			for i, nested := range nestedMods {
+				treeSymbol := "├"
+				if i == len(nestedMods)-1 {
+					treeSymbol = "└"
+				}
+				logging.Infof("Loader: │   %s─ Mod %s (%s v%s) provided by %s from '%s'.",
+					treeSymbol, nested.fmj.ID, nested.fmj.Name, nested.fmj.Version, currentMod.FabricInfo.ID, nested.pathInJar)
+			}
+
 			collectedModFileResults = append(collectedModFileResults, res.modData)
 		}
 	}
@@ -170,9 +191,9 @@ func jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan processFileTask, resul
 		// Base filename should be just the name without any .jar/.disabled suffix for consistent renaming.
 		baseFilename = strings.TrimSuffix(baseFilename, ".jar")
 
-		topLevelFmj, nestedFmjs, err := extractModMetadata(fullPath) // Call package-level function
+		topLevelFmj, nestedMods, err := extractModMetadata(fullPath) // Call package-level function
 		if err != nil {
-			results <- processFileResult{fileName: task.fileEntry.Name(), parseError: fmt.Errorf("extracting metadata from %s: %w", task.fileEntry.Name(), err)}
+			results <- processFileResult{baseFileName: baseFilename, parseError: fmt.Errorf("extracting metadata from %s: %w", task.fileEntry.Name(), err)}
 			continue
 		}
 		currentMod := &Mod{
@@ -183,11 +204,9 @@ func jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan processFileTask, resul
 			ConfirmedGood:     false, // Initial state, user can change this.
 		}
 		results <- processFileResult{
-			modData:  &parsedModFile{mod: currentMod, nestedFmjs: nestedFmjs},
-			fileName: task.fileEntry.Name(),
+			modData:      &parsedModFile{mod: currentMod, nested: nestedMods},
+			baseFileName: baseFilename,
 		}
-		logging.Infof("Loader: Parsed mod '%s' (ID: %s, v%s) from file '%s'. Initially active: %t. Nested jars: %d.",
-			currentMod.FriendlyName(), currentMod.FabricInfo.ID, currentMod.FabricInfo.Version, task.fileEntry.Name(), currentMod.IsInitiallyActive, len(nestedFmjs))
 	}
 }
 
@@ -206,7 +225,10 @@ func resolveModConflicts(parsedFileResults []*parsedModFile, allMods map[string]
 	for modID, candidatesData := range parsedCandidates {
 		winnerData := determineWinner(modID, candidatesData) // Call package-level function
 		allMods[modID] = winnerData.mod
-		allMods[modID].NestedModules = winnerData.nestedFmjs
+		allMods[modID].NestedModules = make([]FabricModJson, len(winnerData.nested))
+		for i, nested := range winnerData.nested {
+			allMods[modID].NestedModules[i] = nested.fmj
+		}
 
 		for _, cData := range candidatesData {
 			if cData.mod.Path == winnerData.mod.Path {
@@ -214,8 +236,8 @@ func resolveModConflicts(parsedFileResults []*parsedModFile, allMods map[string]
 			}
 			if cData.mod.IsInitiallyActive { // Only disable active non-winning duplicates
 				if err := disableDuplicateFile(modsDir, cData.mod.BaseFilename); err != nil { // Call package-level function
-					errMsg := fmt.Sprintf("error disabling non-winning duplicate '%s' (for mod ID '%s'): %v", filepath.Base(cData.mod.Path), modID, err)
-					logging.Errorf("%s", errMsg)
+					errMsg := fmt.Sprintf("error disabling non-winning duplicate '%s' (for mod %s): %v", filepath.Base(cData.mod.Path), modID, err)
+					logging.Error(errMsg)
 					multiError = append(multiError, errMsg)
 				} else {
 					disabledDuplicates = append(disabledDuplicates, filepath.Base(cData.mod.Path))
@@ -239,7 +261,7 @@ func determineWinner(modID string, candidates []*parsedModFile) *parsedModFile {
 		return candidates[0]
 	}
 
-	logging.Infof("Loader: Found %d conflicting files for mod ID '%s'. Determining winner by version...", len(candidates), modID)
+	logging.Warnf("Loader: Found %d conflicting files for mod %s. Determining winner by version...", len(candidates), modID)
 	winnerIdx := 0
 	for i := 1; i < len(candidates); i++ {
 		// Compare versions using the semantic versioning helper.
@@ -247,9 +269,8 @@ func determineWinner(modID string, candidates []*parsedModFile) *parsedModFile {
 			winnerIdx = i
 		}
 	}
-	logging.Infof("Loader: Winner for mod ID '%s' is '%s' (v%s) from file '%s'.",
-		modID, candidates[winnerIdx].mod.FriendlyName(),
-		candidates[winnerIdx].mod.FabricInfo.Version, filepath.Base(candidates[winnerIdx].mod.Path))
+	logging.Infof("Loader: Winner for mod %s is v%s from file '%s'.",
+		modID, candidates[winnerIdx].mod.FabricInfo.Version, filepath.Base(candidates[winnerIdx].mod.Path))
 	return candidates[winnerIdx]
 }
 
@@ -316,34 +337,77 @@ func populateProviderMaps(allMods map[string]*Mod, potentialProviders PotentialP
 	}
 
 	var providerLogMessages []string
-	for depID, infos := range potentialProviders {
-		// Only sort if there's more than one provider.
+	var unmetDependencies []string
+	var sortedDepIDs []string
+	for depID := range potentialProviders {
+		sortedDepIDs = append(sortedDepIDs, depID)
+	}
+	sort.Strings(sortedDepIDs) // Sort top-level depIDs for deterministic output
+
+	for _, depID := range sortedDepIDs {
+		infos := potentialProviders[depID]
+
+		// Ensure the providers are sorted for consistent best-provider selection and logging order
 		if len(infos) > 1 {
 			sort.Slice(infos, func(i, j int) bool {
 				// Direct provides are preferred (true comes before false).
 				if infos[i].IsDirectProvide != infos[j].IsDirectProvide {
-					return infos[i].IsDirectProvide // True comes before false
+					return infos[i].IsDirectProvide
 				}
 				// Higher version of the provided item is preferred.
 				compItemVer := compareVersions(infos[i].VersionOfProvidedItem, infos[j].VersionOfProvidedItem)
 				if compItemVer != 0 {
-					return compItemVer > 0 // Greater than 0 means i's version is higher
+					return compItemVer > 0
 				}
 				// Fallback: Higher version of the top-level mod is preferred.
 				return compareVersions(infos[i].TopLevelModVersion, infos[j].TopLevelModVersion) > 0
 			})
-			potentialProviders[depID] = infos // Update the slice in the map.
-			providerLogMessages = append(providerLogMessages, fmt.Sprintf("  - '%s' provided by '%s' (v%s) [top-level mod: '%s' v%s, direct: %t]",
-				depID, infos[0].TopLevelModID, infos[0].VersionOfProvidedItem, infos[0].TopLevelModID, infos[0].TopLevelModVersion, infos[0].IsDirectProvide))
+			potentialProviders[depID] = infos
+		}
+
+		if len(infos) == 0 {
+			unmetDependencies = append(unmetDependencies, depID) // Collect unmet dependencies
 		} else if len(infos) == 1 {
-			providerLogMessages = append(providerLogMessages, fmt.Sprintf("  - '%s' provided by '%s' (v%s) [top-level mod: '%s' v%s, direct: %t]",
-				depID, infos[0].TopLevelModID, infos[0].VersionOfProvidedItem, infos[0].TopLevelModID, infos[0].TopLevelModVersion, infos[0].IsDirectProvide))
-		} else {
-			providerLogMessages = append(providerLogMessages, fmt.Sprintf("  - No providers found for '%s'", depID))
+			info := infos[0]
+			// Skip if it's a direct self-provision (e.g., 'balm' provides 'balm')
+			isSelfProvision := info.IsDirectProvide && info.TopLevelModID == depID
+			if isSelfProvision {
+				continue
+			}
+
+			providingMod, ok := allMods[info.TopLevelModID]
+			providingFileName := "unknown"
+			if ok {
+				providingFileName = providingMod.BaseFilename + ".jar"
+			}
+
+			providerLogMessages = append(providerLogMessages,
+				fmt.Sprintf("  - Dependency %s provided by %s (at v%s) from '%s'.",
+					depID, info.TopLevelModID, info.VersionOfProvidedItem, providingFileName))
+
+		} else { // Multiple providers
+			providerLogMessages = append(providerLogMessages, fmt.Sprintf("  - Dependency %s provided by:", depID))
+			for _, info := range infos {
+				providingMod, ok := allMods[info.TopLevelModID]
+				providingFileName := "unknown"
+				if ok {
+					providingFileName = providingMod.BaseFilename + ".jar"
+				}
+				providerLogMessages = append(providerLogMessages,
+					fmt.Sprintf("      - %s (at v%s) from '%s'.",
+						info.TopLevelModID, info.VersionOfProvidedItem, providingFileName))
+			}
 		}
 	}
-	sort.Strings(providerLogMessages) // Sort messages for deterministic output.
-	logging.Infof("Loader: Populated dependency providers for %d unique capabilities:\n%s", len(potentialProviders), strings.Join(providerLogMessages, "\n"))
+
+	// Final logging summary
+	logging.Infof("Loader: Populated dependency providers for %d unique dependencies:\n%s", len(potentialProviders), strings.Join(providerLogMessages, "\n"))
+
+	// Log unmet dependencies as an error message
+	if len(unmetDependencies) > 0 {
+		sort.Strings(unmetDependencies)
+		logging.Errorf("Loader: Found %d dependencies with no known providers: %s", len(unmetDependencies), strings.Join(unmetDependencies, ", "))
+	}
 }
 
 // updateEffectiveProvides updates the effective provides map for a mod, prioritizing higher versions.
@@ -381,134 +445,143 @@ func addSingleProviderInfo(potentialProviders PotentialProvidersMap, providedID 
 }
 
 // extractModMetadata opens a JAR, extracts its top-level fabric.mod.json, and recursively parses nested JARs.
-func extractModMetadata(jarPath string) (FabricModJson, []FabricModJson, error) {
-	file, err := os.OpenFile(jarPath, os.O_RDONLY, 0)
+func extractModMetadata(jarPath string) (FabricModJson, []nestedModInfo, error) {
+	zr, err := zip.OpenReader(jarPath) // Use zip.OpenReader for simplicity
 	if err != nil {
-		return FabricModJson{}, nil, fmt.Errorf("opening JAR %s: %w", jarPath, err)
+		return FabricModJson{}, nil, fmt.Errorf("opening JAR %s as zip: %w", jarPath, err)
 	}
-	defer file.Close()
+	defer zr.Close()
 
-	stat, err := file.Stat()
-	if err != nil {
-		return FabricModJson{}, nil, fmt.Errorf("statting JAR %s: %w", jarPath, err)
-	}
-
-	zr, err := zip.NewReader(file, stat.Size())
-	if err != nil {
-		return FabricModJson{}, nil, fmt.Errorf("reading JAR %s as zip: %w", jarPath, err)
-	}
-
-	topLevelFmj, err := parseFabricModJsonFromReader(zr, jarPath)
+	topLevelFmj, err := parseFabricModJsonFromReader(&zr.Reader, jarPath)
 	if err != nil {
 		return FabricModJson{}, nil, fmt.Errorf("parsing top-level fabric.mod.json for %s: %w", jarPath, err)
 	}
 
-	var nestedFmjs []FabricModJson
-	// Iterate through `topLevelFmj.Jars` to find paths for nested JARs, then parse them.
+	var allNestedMods []nestedModInfo
+	// Iterate through the top-level JAR's nested jar entries to start the recursion.
 	for _, nestedJarEntry := range topLevelFmj.Jars {
 		if nestedJarEntry.File == "" {
 			logging.Warnf("Loader: Top-level mod '%s' has a nested JAR entry with an empty 'file' path. Skipping.", topLevelFmj.ID)
 			continue
 		}
-		fmj, err := parseNestedJar(zr, nestedJarEntry.File, jarPath) // Call package-level function
+
+		foundMods, err := recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, "")
 		if err != nil {
-			logging.Warnf("Loader: Skipping nested JAR '%s' in '%s': %v", nestedJarEntry.File, jarPath, err)
+			logging.Warnf("Loader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry.File, filepath.Base(jarPath), err)
 			continue
 		}
-		nestedFmjs = append(nestedFmjs, fmj)
-		logging.Infof("Loader: Parsed nested mod '%s' (ID: %s, v%s) from '%s' within '%s'.",
-			fmj.Name, fmj.ID, fmj.Version, nestedJarEntry.File, filepath.Base(jarPath))
+
+		// Append the entire slice of found mods (from all depths) to the final list.
+		allNestedMods = append(allNestedMods, foundMods...)
 	}
-	return topLevelFmj, nestedFmjs, nil
+	return topLevelFmj, allNestedMods, nil
 }
 
-// parseNestedJar extracts FabricModJson from a nested JAR file within a parent ZIP.
-func parseNestedJar(parentZipReader *zip.Reader, nestedJarPathInZip, outerJarPath string) (FabricModJson, error) {
-	if nestedJarPathInZip == "" {
-		return FabricModJson{}, fmt.Errorf("empty file path for nested JAR in %s", outerJarPath)
-	}
-	normalizedNestedPath := filepath.ToSlash(nestedJarPathInZip)
-
+// recursivelyParseNestedJar is a helper that parses a nested JAR and any of its own nested JARs.
+// It returns a flattened slice of all nested mods found at and below the current level.
+func recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent string, currentPathPrefix string) ([]nestedModInfo, error) {
+	// Find the nested JAR file within the parent zip reader
 	var nestedZipFile *zip.File
 	for _, f := range parentZipReader.File {
-		if filepath.ToSlash(f.Name) == normalizedNestedPath {
+		// ZIP paths always use forward slashes, so we don't need filepath
+		if f.Name == pathInParent {
 			nestedZipFile = f
 			break
 		}
 	}
 	if nestedZipFile == nil {
-		return FabricModJson{}, fmt.Errorf("nested JAR '%s' not found in %s", normalizedNestedPath, outerJarPath)
+		return nil, fmt.Errorf("nested JAR '%s' not found in archive", pathInParent)
 	}
 
-	return parseNestedJarZipEntry(nestedZipFile, fmt.Sprintf("%s in %s", normalizedNestedPath, outerJarPath)) // Call package-level function
-}
-
-// parseNestedJarZipEntry reads a nested JAR's content and parses its fabric.mod.json.
-func parseNestedJarZipEntry(nestedJarFile *zip.File, identifier string) (FabricModJson, error) {
-	rc, err := nestedJarFile.Open()
+	// Read the nested JAR into memory to create a new zip reader from its bytes
+	rc, err := nestedZipFile.Open()
 	if err != nil {
-		return FabricModJson{}, fmt.Errorf("opening nested JAR %s: %w", identifier, err)
+		return nil, fmt.Errorf("opening nested JAR '%s': %w", pathInParent, err)
 	}
 	defer rc.Close()
 
 	jarBytes, err := io.ReadAll(rc)
 	if err != nil {
-		return FabricModJson{}, fmt.Errorf("reading nested JAR %s: %w", identifier, err)
+		return nil, fmt.Errorf("reading nested JAR '%s': %w", pathInParent, err)
 	}
 
 	bytesReader := bytes.NewReader(jarBytes)
-	zipReader, err := zip.NewReader(bytesReader, int64(len(jarBytes)))
+	innerZipReader, err := zip.NewReader(bytesReader, int64(len(jarBytes)))
 	if err != nil {
-		return FabricModJson{}, fmt.Errorf("treating nested JAR %s as zip: %w", identifier, err)
+		return nil, fmt.Errorf("treating nested content '%s' as zip: %w", pathInParent, err)
 	}
-	return parseFabricModJsonFromReader(zipReader, identifier) // Call package-level function
+
+	// --- Core Recursive Logic ---
+
+	// 1. Parse the fabric.mod.json of the *current* nested JAR
+	currentFmj, err := parseFabricModJsonFromReader(innerZipReader, pathInParent)
+	if err != nil {
+		return nil, fmt.Errorf("parsing metadata from '%s': %w", pathInParent, err)
+	}
+
+	// 2. The full path is the prefix (path to get here) plus the current file's path
+	//    The "path" package is used here to ensure forward slashes.
+	fullPathInJar := path.Join(currentPathPrefix, pathInParent)
+
+	// 3. This is our list of discovered mods, starting with the current one.
+	allFoundMods := []nestedModInfo{
+		{fmj: currentFmj, pathInJar: fullPathInJar},
+	}
+
+	// 4. If this JAR contains its own nested JARs, recurse.
+	for _, deeperJarEntry := range currentFmj.Jars {
+		if deeperJarEntry.File == "" {
+			continue // Skip empty entries
+		}
+
+		// The new prefix for the deeper call is the full path to the current JAR
+		deeperNestedMods, err := recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, fullPathInJar)
+		if err != nil {
+			logging.Warnf("Loader: Skipping deeper nested JAR '%s' within '%s': %v", deeperJarEntry.File, fullPathInJar, err)
+			continue
+		}
+
+		// Add all the mods found in the deeper recursion to our flattened list
+		allFoundMods = append(allFoundMods, deeperNestedMods...)
+	}
+
+	return allFoundMods, nil
 }
 
-// compareVersions compares two version strings using semantic versioning.
-// It prepends 'v' if missing for sv.IsValid compatibility.
-// Returns >0 if v1Str is greater, <0 if v2Str is greater, 0 if equal.
-// Handles invalid semver strings by preferring valid over invalid, and
-// then string comparison for two invalid.
+// compareVersions compares two version strings using the relaxed Fabric versioning rules.
+// It falls back to a simple string comparison if either version fails to parse.
 func compareVersions(v1Str, v2Str string) int {
 	if v1Str == v2Str {
 		return 0
 	}
-	if v1Str == "" { // Empty string is always considered "less"
-		return -1
+
+	v1, err1 := ParseExtendedSemVer(v1Str)
+	v2, err2 := ParseExtendedSemVer(v2Str)
+
+	// If both parse successfully, use the proper comparison logic.
+	if err1 == nil && err2 == nil {
+		return v1.Compare(v2)
 	}
-	if v2Str == "" { // Empty string is always considered "less"
+
+	// Fallback logic for invalid versions:
+	logging.Warnf("Loader: Could not parse one or both versions ('%s', '%s') with Fabric rules. Falling back to string comparison.", v1Str, v2Str)
+
+	// A successfully parsed version is considered "greater" than one that failed.
+	if err1 == nil && err2 != nil {
 		return 1
 	}
-
-	canonV1Str := v1Str
-	if !strings.HasPrefix(v1Str, "v") {
-		canonV1Str = "v" + v1Str
-	}
-	canonV2Str := v2Str
-	if !strings.HasPrefix(v2Str, "v") {
-		canonV2Str = "v" + v2Str
+	if err1 != nil && err2 == nil {
+		return -1
 	}
 
-	v1Valid := sv.IsValid(canonV1Str)
-	v2Valid := sv.IsValid(canonV2Str)
-
-	if v1Valid && v2Valid {
-		return sv.Compare(canonV1Str, canonV2Str)
-	}
-	if v1Valid {
-		return 1 // v1 is valid, v2 is not -> v1 is greater
-	}
-	if v2Valid {
-		return -1 // v2 is valid, v1 is not -> v2 is greater
-	}
-	// Both are invalid semver, fall back to string comparison for stability.
+	// If both failed, just compare them as plain strings.
 	if v1Str > v2Str {
 		return 1
 	}
 	if v1Str < v2Str {
 		return -1
 	}
-	return 0 // Should not be reached if v1Str == v2Str is handled earlier.
+	return 0
 }
 
 // parseFabricModJsonFromReader searches for and unmarshals fabric.mod.json from a zip reader.
@@ -523,7 +596,11 @@ func parseFabricModJsonFromReader(zipReader *zip.Reader, jarIdentifier string) (
 			fmjData = sanitizeJsonStringContent(fmjData) // Call package-level function
 
 			if err := json5.Unmarshal(fmjData, &fmj); err != nil {
-				return FabricModJson{}, fmt.Errorf("unmarshaling fabric.mod.json from %s: %w", jarIdentifier, err)
+				dataSnippet := string(fmjData)
+				if len(dataSnippet) > 200 {
+					dataSnippet = dataSnippet[:200] + "..."
+				}
+				return FabricModJson{}, fmt.Errorf("unmarshaling fabric.mod.json from %s (data snippet: %s): %w", jarIdentifier, dataSnippet, err)
 			}
 			if fmj.ID == "" {
 				return FabricModJson{}, fmt.Errorf("fabric.mod.json from %s has empty mod ID", jarIdentifier)

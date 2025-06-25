@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,18 +19,27 @@ type ResultPage struct {
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app AppInterface, title, message, explanation string) Page {
+func NewResultPage(app AppInterface, state conflict.SearchSnapshot) Page {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
 
+	title, message, explanation := p.formatContent(state)
+
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(message + "\n\n" + explanation)
+		SetText(message)
+	textView.SetBorderPadding(0, 0, 1, 1)
 
-	frame := NewTitleFrame(textView, title)
+	explanationView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText(explanation)
+	explanationView.SetBorderPadding(0, 0, 1, 1)
+
+	messageFrame := NewTitleFrame(textView, "Result")
+	explanationFrame := NewTitleFrame(explanationView, "What to do next")
 
 	form := tview.NewForm().
 		AddButton("Close", func() {
@@ -34,7 +47,8 @@ func NewResultPage(app AppInterface, title, message, explanation string) Page {
 		}).
 		SetButtonsAlign(tview.AlignCenter)
 
-	p.AddItem(frame, 0, 1, false).
+	p.AddItem(messageFrame, 0, 1, false).
+		AddItem(explanationFrame, 0, 1, false).
 		AddItem(form, 3, 0, true)
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -45,9 +59,43 @@ func NewResultPage(app AppInterface, title, message, explanation string) Page {
 		return event
 	})
 
-	p.statusText.SetText("Showing Bisection result information")
+	p.statusText.SetText(title)
 
 	return p
+}
+
+// formatContent generates the appropriate text based on the search state.
+func (p *ResultPage) formatContent(state conflict.SearchSnapshot) (title, message, explanation string) {
+	searcher := p.app.GetSearcher()
+	modState := p.app.GetModState()
+	mods := modState.GetAllMods()
+
+	conflictMods := mapKeysFromStruct(state.ConflictSet)
+	var conflictModsList []string
+	for _, id := range conflictMods {
+		modInfo := ""
+		if mod, ok := mods[id]; ok {
+			modInfo = fmt.Sprintf("(%s %s) in '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
+		}
+		conflictModsList = append(conflictModsList, fmt.Sprintf(" - [red::b]%s[-:-:-] %s", id, modInfo))
+	}
+
+	if searcher.IsComplete() {
+		title = "Search Complete"
+		if len(state.ConflictSet) > 0 {
+			conflictMods := mapKeysFromStruct(state.ConflictSet)
+			message = fmt.Sprintf("\nFound [yellow::b]%d[-:-:-] problematic mod(s):\n\n%s", len(conflictMods), strings.Join(conflictModsList, "\n"))
+			explanation = "\n- Try disabling just these mods and launching the game to confirm.\n- Report the incompatibility to the mod authors."
+		} else {
+			message = "\nNo conflict was found."
+			explanation = "\nThe bisection process completed without isolating a specific cause for failure."
+		}
+	} else if searcher.LastFoundElement() != "" {
+		title = "Intermediate Result"
+		message = fmt.Sprintf("\nFound [yellow::b]%d[-:-:-] problematic mod(s) so far:\n\n%s", len(conflictMods), strings.Join(conflictModsList, "\n"))
+		explanation = "\nThe last test indicated that more mods are required to trigger the conflict.\n\nPress '[::b]S[-:-:-]' on the main page to continue searching for the next one."
+	}
+	return
 }
 
 // Primitive returns the underlying tview.Primitive.

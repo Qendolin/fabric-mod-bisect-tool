@@ -25,10 +25,10 @@ type AppInterface interface {
 	Stop()
 	GetLogTextView() *tview.TextView
 	GetSearcher() *conflict.Searcher
+	GetModState() *mods.StateManager
 	Step()
 	Undo()
 	ResetSearch()
-	ShowResultPage(title, message, explanation string)
 }
 
 // Page is an interface that all UI pages must implement.

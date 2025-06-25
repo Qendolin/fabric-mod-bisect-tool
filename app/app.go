@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
@@ -108,7 +107,17 @@ func (a *App) Run() error {
 	go a.logHandler.Start(a.appCtx)
 
 	a.navManager.ShowPage(ui.PageSetupID, ui.NewSetupPage(a), true)
-
+	screen, err := tcell.NewScreen()
+	if err != nil {
+		return err
+	}
+	if err = screen.Init(); err != nil {
+		return err
+	}
+	screen.EnableMouse()
+	screen.EnablePaste()
+	screen.SetTitle("Fabric Mod Bisect Tool") // tivew doesn't expose this
+	a.SetScreen(screen)
 	return a.Application.Run()
 }
 
@@ -129,6 +138,7 @@ func (a *App) Dialogs() *ui.DialogManager             { return a.dialogManager }
 func (a *App) Layout() *ui.LayoutManager              { return a.layoutManager }
 func (a *App) GetFocusManager() *ui.FocusManager      { return a.focusManager }
 func (a *App) GetSearcher() *conflict.Searcher        { return a.Searcher }
+func (a *App) GetModState() *mods.StateManager        { return a.ModState }
 
 func (a *App) OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string) {
 	logging.Infof("App: Mods loaded. Initializing services and transitioning to Main Page.")
@@ -171,13 +181,14 @@ func (a *App) Step() {
 		return
 	}
 
-	testSet, _, needsTest := a.Searcher.PrepareNextTest()
-	if !needsTest {
+	if !a.Searcher.NeedsTest() {
 		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
 			page.RefreshSearchState()
 		}
 		return
 	}
+
+	testSet := a.Searcher.CalculateNextTestSet()
 
 	// The call to the resolver is now much cleaner
 	effectiveSet, _ := a.Resolver.ResolveEffectiveSet(
@@ -278,44 +289,10 @@ func (a *App) displayResults() {
 		return
 	}
 
-	if a.Searcher.IsComplete() {
-		a.handleSearchCompletion(a.Searcher.GetCurrentState())
-	} else if a.Searcher.LastFoundElement() != "" {
-		// An intermediate culprit was just found, and the search isn't over yet
-		a.handleIntermediateResult(a.Searcher.GetCurrentState())
+	if a.Searcher.IsComplete() || (a.Searcher.LastFoundElement() != "" && !a.Searcher.IsVerificationStep()) {
+		resultPage := ui.NewResultPage(a, a.Searcher.GetCurrentState())
+		a.navManager.PushPage(ui.PageResultID, resultPage)
 	}
-}
-
-func (a *App) ShowResultPage(title, message, explanation string) {
-	resultPage := ui.NewResultPage(a, title, message, explanation)
-	a.navManager.PushPage(ui.PageResultID, resultPage)
-}
-
-// Add a new helper function for handling search completion
-func (a *App) handleSearchCompletion(finalState conflict.SearchSnapshot) {
-	title := "Search Complete"
-	var message, explanation string
-
-	if len(finalState.ConflictSet) > 0 {
-		conflictMods := mapKeysFromStruct(finalState.ConflictSet)
-		message = fmt.Sprintf("Found [yellow]%d[-:-:-] problematic mod(s):\n\n[::b]%s", len(conflictMods), strings.Join(conflictMods, "\n"))
-		explanation = "\nWhat to do next:\n  - Try disabling these mods and launching the game.\n  - Report the incompatibility to the mod authors."
-	} else {
-		message = "No conflict was found."
-		explanation = "The bisection process completed without isolating a specific cause for failure.\nThis could mean the issue is not related to a specific mod or combination of mods."
-	}
-
-	a.ShowResultPage(title, message, explanation)
-}
-
-// Add a new helper function for handling intermediate results
-func (a *App) handleIntermediateResult(currentState conflict.SearchSnapshot) {
-	title := "Intermediate Result Found"
-	conflictMods := mapKeysFromStruct(currentState.ConflictSet)
-	message := fmt.Sprintf("Found [yellow]%d[-:-:-] problematic mod(s) so far:\n\n[::b]%s", len(conflictMods), strings.Join(conflictMods, "\n"))
-	explanation := "\nThe last test failed, indicating more mods are required for the conflict.\nPress 'Step' to continue searching for the next problematic mod."
-
-	a.ShowResultPage(title, message, explanation)
 }
 
 func mapKeysFromStruct(m map[string]struct{}) []string {
