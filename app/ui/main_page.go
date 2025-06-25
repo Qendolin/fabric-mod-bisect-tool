@@ -15,8 +15,7 @@ const PageMainID = "main_page"
 // MainPage is the primary view for the bisection process.
 type MainPage struct {
 	*tview.Flex
-	app          AppInterface
-	focusManager *FocusManager
+	app AppInterface
 
 	// UI Components
 	overviewText *tview.TextView
@@ -33,9 +32,6 @@ type MainPage struct {
 	testGroupTitle       *TitleFrame
 	problematicModsList  *SearchableList
 	problematicModsTitle *TitleFrame
-
-	// State
-	lastResult systemrunner.Result
 }
 
 // NewMainPage creates a new MainPage instance.
@@ -45,7 +41,6 @@ func NewMainPage(app AppInterface) Page {
 		app:        app,
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
-	p.focusManager = NewFocusManager(app)
 	p.setupLayout()
 	p.SetInputCapture(p.inputHandler())
 	p.RefreshSearchState()
@@ -124,14 +119,6 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 			}
 		}
 
-		// If no page-wide handler consumed the event, delegate it to the currently focused primitive.
-		if currentFocus := p.app.GetFocus(); currentFocus != nil {
-			if handler := currentFocus.InputHandler(); handler != nil {
-				handler(event, func(pr tview.Primitive) { p.app.SetFocus(pr) })
-				return nil // Assume event is handled by the child
-			}
-		}
-
 		return event // Return event if no one handled it
 	}
 }
@@ -139,8 +126,8 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 // GetFocusablePrimitives implements the Focusable interface for the MainPage.
 func (p *MainPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
-		p.tabs,
 		p.stepButton,
+		p.tabs,
 	}
 }
 
@@ -153,18 +140,25 @@ func (p *MainPage) RefreshSearchState() {
 	state := searcher.GetCurrentState()
 
 	lastResultStr := "N/A"
-	if p.lastResult != "" {
+	if state.LastTestResult != "" { // Check LastTestResult from the state
 		color := "green"
-		if p.lastResult == systemrunner.FAIL {
+		if state.LastTestResult == systemrunner.FAIL {
 			color = "red"
 		}
-		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, p.lastResult)
+		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, state.LastTestResult)
+	}
+	currentStatus := "Ready to start Bisection"
+	if searcher.IsVerificationStep() {
+		currentStatus = "Verifying set of problematic mods"
+	} else if searcher.GetTestsExecuted() > 0 && !searcher.IsComplete() {
+		currentStatus = "Searching for next problematic mod"
 	}
 	overview := fmt.Sprintf(
-		"Status: Awaiting user action\nProgress: Test %d / %d (estimated)\nLast Result: %s\nFound Problems: %d",
-		searcher.GetTestsExecuted(), searcher.GetEstimatedMaxTests(), lastResultStr, len(state.ConflictSet),
+		"Status: %s\nProgress: Test %d / %d (estimated)\nLast Result: %s\nFound Problems: %d",
+		currentStatus, searcher.GetTestsExecuted(), searcher.GetEstimatedMaxTests(), lastResultStr, len(state.ConflictSet),
 	)
 	p.overviewText.SetText(overview)
+	p.statusText.SetText(currentStatus)
 
 	modCount := len(searcher.GetAllModIDs())
 
@@ -188,11 +182,6 @@ func (p *MainPage) RefreshSearchState() {
 		p.testGroupList.SetItems([]string{"Search Complete"})
 	}
 	p.testGroupTitle.SetTitle(fmt.Sprintf("Mods in Next Test Group: %d / %d", len(nextTestSet), modCount))
-}
-
-// SetLastResult allows the app to update the last test result for display.
-func (p *MainPage) SetLastResult(result systemrunner.Result) {
-	p.lastResult = result
 }
 
 func (p *MainPage) Primitive() tview.Primitive { return p }
