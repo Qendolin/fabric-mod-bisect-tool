@@ -16,12 +16,12 @@ type SearchStep struct {
 // SearchSnapshot represents a complete, saveable state of the conflict searcher.
 // This is used for history and rollbacks.
 type SearchSnapshot struct {
-	ConflictSet    map[string]struct{} // Mods already identified as part of the minimal conflict set.
-	Candidates     []string            // Remaining mods yet to be searched for conflict elements.
-	Background     map[string]struct{} // Mods currently assumed to be active during the main loop's search.
-	SearchStack    []SearchStep        // Stack representing the current binary search for a single element.
-	IsCheckingDone bool                // True if the next test is the final `test(ConflictSet)` optimization.
-	LastTestResult systemrunner.Result // Stores the result of the last test performed for this state.
+	ConflictSet            map[string]struct{} // Mods already identified as part of the minimal conflict set.
+	Candidates             []string            // Remaining mods yet to be searched for conflict elements.
+	Background             map[string]struct{} // Mods currently assumed to be active during the main loop's search.
+	SearchStack            []SearchStep        // Stack representing the current binary search for a single element.
+	IsVerifyingConflictSet bool                // True if the next test is the final `test(ConflictSet)` optimization.
+	LastTestResult         systemrunner.Result // Stores the result of the last test performed for this state.
 }
 
 // newSearchStep creates a search step with sorted candidates for determinism.

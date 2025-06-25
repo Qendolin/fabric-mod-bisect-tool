@@ -63,8 +63,10 @@ func (p *MainPage) setupLayout() {
 
 	// -- Tab 1: Search Pool --
 	p.candidatesList = NewSearchableList()
+	p.candidatesList.SetItems([]string{"---"})
 	p.candidatesTitle = NewTitleFrame(p.candidatesList, "Candidates (Being Searched)")
 	p.knownGoodList = NewSearchableList()
+	p.knownGoodList.SetItems([]string{"---"})
 	p.knownGoodTitle = NewTitleFrame(p.knownGoodList, "Known Good (For This Search)")
 	searchPoolFlex := tview.NewFlex().
 		AddItem(p.candidatesTitle, 0, 1, true).
@@ -79,6 +81,7 @@ func (p *MainPage) setupLayout() {
 
 	// -- Tab 2: Test Group --
 	p.testGroupList = NewSearchableList()
+	p.testGroupList.SetItems([]string{"---"})
 	p.testGroupTitle = NewTitleFrame(p.testGroupList, "Mods in Next Test Group")
 	testGroupPage := NewFocusWrapper(p.testGroupTitle, func() []tview.Primitive {
 		return []tview.Primitive{p.testGroupList}
@@ -87,6 +90,7 @@ func (p *MainPage) setupLayout() {
 
 	// -- Tab 3: Problematic Mods --
 	p.problematicModsList = NewSearchableList()
+	p.problematicModsList.SetItems([]string{"---"})
 	p.problematicModsTitle = NewTitleFrame(p.problematicModsList, "Problematic Mods")
 	problematicPage := NewFocusWrapper(p.problematicModsTitle, func() []tview.Primitive {
 		return []tview.Primitive{p.problematicModsList}
@@ -162,9 +166,17 @@ func (p *MainPage) RefreshSearchState() {
 
 	modCount := len(searcher.GetAllModIDs())
 
-	p.candidatesList.SetItems(state.Candidates)
+	if len(state.Candidates) > 0 {
+		p.candidatesList.SetItems(state.Candidates)
+	} else {
+		p.candidatesList.SetItems([]string{"---"})
+	}
 	p.candidatesTitle.SetTitle(fmt.Sprintf("Candidates (Being Searched): %d / %d", len(state.Candidates), modCount))
-	p.problematicModsList.SetItems(mapKeysFromStruct(state.ConflictSet))
+	if len(state.ConflictSet) > 0 {
+		p.problematicModsList.SetItems(mapKeysFromStruct(state.ConflictSet))
+	} else {
+		p.problematicModsList.SetItems([]string{"---"})
+	}
 	p.problematicModsTitle.SetTitle(fmt.Sprintf("Problematic Mods: %d", len(state.ConflictSet)))
 
 	knownGoodInStep := difference(state.Background, state.ConflictSet)
@@ -172,14 +184,18 @@ func (p *MainPage) RefreshSearchState() {
 		step := state.SearchStack[len(state.SearchStack)-1]
 		knownGoodInStep = difference(step.Background, state.ConflictSet)
 	}
-	p.knownGoodList.SetItems(mapKeysFromStruct(knownGoodInStep))
+	if len(knownGoodInStep) > 0 {
+		p.knownGoodList.SetItems(mapKeysFromStruct(knownGoodInStep))
+	} else {
+		p.knownGoodList.SetItems([]string{"---"})
+	}
 	p.knownGoodTitle.SetTitle(fmt.Sprintf("Known Good (For This Search): %d / %d", len(knownGoodInStep), modCount))
 
-	nextTestSet, _, hasTest := searcher.PrepareNextTest()
-	if hasTest {
+	nextTestSet := searcher.CalculateNextTestSet()
+	if len(nextTestSet) > 0 {
 		p.testGroupList.SetItems(mapKeysFromStruct(nextTestSet))
 	} else {
-		p.testGroupList.SetItems([]string{"Search Complete"})
+		p.testGroupList.SetItems([]string{"---"})
 	}
 	p.testGroupTitle.SetTitle(fmt.Sprintf("Mods in Next Test Group: %d / %d", len(nextTestSet), modCount))
 }

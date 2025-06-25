@@ -221,6 +221,13 @@ func (dr *DependencyResolver) resolveDependency(dependencyToSatisfy, requiringMo
 
 	providerTopLevelID := chosenProvider.TopLevelModID
 
+	// If a mod provides its own dependency, we don't need to recursively activate it. This is not a cycle.
+	if providerTopLevelID == requiringModID {
+		logging.Debugf("Resolver: Dependency '%s' is self-provided by '%s'.", dependencyToSatisfy, requiringModID)
+		// The dependency is considered satisfied contingent on the requiring mod's successful activation.
+		return true
+	}
+
 	if dr.ensureModActive(providerTopLevelID, requiringModID, "Dependency", dependencyToSatisfy) {
 		dr.dependencySatisfied[dependencyToSatisfy] = providerTopLevelID
 		info := dr.resolutionPath[providerTopLevelID]
@@ -235,24 +242,55 @@ func (dr *DependencyResolver) resolveDependency(dependencyToSatisfy, requiringMo
 	return false
 }
 
-// findBestProvider selects the best available (non-disabled) provider for a given dependencyID.
+// findBestProvider selects the best available provider for a given dependencyID.
+// It prioritizes any valid, already-active mod over any inactive mod.
+// If no active mod can provide the dependency, it falls back to the highest-ranked inactive mod.
 func (dr *DependencyResolver) findBestProvider(depID string) *ProviderInfo {
 	providerCandidates, ok := dr.potentialProviders[depID]
 	if !ok || len(providerCandidates) == 0 {
 		return nil
 	}
 
+	// The providerCandidates list is already pre-sorted by the loader from best to worst version.
+	var firstValidOverallCandidate *ProviderInfo
+	var firstValidActiveCandidate *ProviderInfo
+
 	for i := range providerCandidates {
-		candidate := providerCandidates[i]
+		candidate := &providerCandidates[i]
+
 		if status, ok := dr.modStatuses[candidate.TopLevelModID]; ok && status.ForceDisabled {
 			continue
 		}
+		// A sanity check that should ideally never fail.
 		if _, modExists := dr.allMods[candidate.TopLevelModID]; !modExists {
-			logging.Errorf("Resolver: Provider '%s' for dependency '%s' not found.", candidate.TopLevelModID, depID)
+			logging.Errorf("Resolver: Provider '%s' for dependency '%s' not found. This should be possible.", candidate.TopLevelModID, depID)
 			continue
 		}
-		return &candidate
+
+		// This is the first valid (non-disabled) provider we've encountered in the sorted list.
+		if firstValidOverallCandidate == nil {
+			firstValidOverallCandidate = candidate
+		}
+
+		// Check if this provider is already part of the active set.
+		if _, isActive := dr.currentEffectiveSet[candidate.TopLevelModID]; isActive {
+			firstValidActiveCandidate = candidate
+			break
+		}
 	}
+
+	// Prioritize the active candidate if one was found.
+	if firstValidActiveCandidate != nil {
+		logging.Debugf("Resolver: Dependency %s will be satisfied by already-active mod %s.", depID, firstValidActiveCandidate.TopLevelModID)
+		return firstValidActiveCandidate
+	}
+
+	// Otherwise, use the best overall (inactive) candidate.
+	if firstValidOverallCandidate != nil {
+		logging.Debugf("Resolver: Dependency %s will be satisfied by activating external mod %s.", depID, firstValidOverallCandidate.TopLevelModID)
+		return firstValidOverallCandidate
+	}
+
 	return nil
 }
 
