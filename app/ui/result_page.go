@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
 	"github.com/gdamore/tcell/v2"
@@ -19,7 +20,7 @@ type ResultPage struct {
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app AppInterface, state conflict.SearchSnapshot) Page {
+func NewResultPage(app AppInterface, state conflict.SearchSnapshot) *ResultPage {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -41,19 +42,34 @@ func NewResultPage(app AppInterface, state conflict.SearchSnapshot) Page {
 	messageFrame := NewTitleFrame(textView, "Result")
 	explanationFrame := NewTitleFrame(explanationView, "What to do next")
 
-	form := tview.NewForm().
-		AddButton("Close", func() {
-			app.Navigation().PopPage()
-		}).
-		SetButtonsAlign(tview.AlignCenter)
+	closeButton := tview.NewButton("Close").
+		SetSelectedFunc(func() {
+			p.app.Navigation().CloseModal()
+		})
+	closeButton.SetDisabled(true)
+	DefaultStyleButton(closeButton)
+
+	// prevent accidental input
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		p.app.QueueUpdateDraw(func() {
+			closeButton.SetDisabled(false)
+		})
+	}()
+
+	buttonLayout := tview.NewFlex().
+		AddItem(tview.NewBox(), 0, 1, false).
+		AddItem(closeButton, 15, 1, true).
+		AddItem(tview.NewBox(), 0, 1, false)
 
 	p.AddItem(messageFrame, 0, 1, false).
 		AddItem(explanationFrame, 0, 1, false).
-		AddItem(form, 3, 0, true)
+		AddItem(tview.NewBox(), 0, 1, false).
+		AddItem(buttonLayout, 3, 0, true)
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyEnter {
-			app.Navigation().PopPage()
+			app.Navigation().CloseModal()
 			return nil
 		}
 		return event
@@ -96,11 +112,6 @@ func (p *ResultPage) formatContent(state conflict.SearchSnapshot) (title, messag
 		explanation = "\nThe last test indicated that more mods are required to trigger the conflict.\n\nPress '[::b]S[-:-:-]' on the main page to continue searching for the next one."
 	}
 	return
-}
-
-// Primitive returns the underlying tview.Primitive.
-func (p *ResultPage) Primitive() tview.Primitive {
-	return p.Flex
 }
 
 // GetActionPrompts returns the key actions for the page.

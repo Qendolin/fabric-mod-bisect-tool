@@ -1,108 +1,135 @@
 package ui
 
 import (
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/rivo/tview"
 )
 
-// NavigationManager handles page state and transitions.
+// NavigationManager handles page state and transitions using a hybrid model
+// of persistent "workspace" pages and transient "modal" overlays.
 type NavigationManager struct {
-	app   AppInterface
-	pages *tview.Pages
-
-	pageStack      []tview.Primitive
-	activePageID   string
-	pageIDs        map[tview.Primitive]string
-	pagePrimitives map[string]tview.Primitive
+	app             AppInterface
+	pages           *tview.Pages // The tview.Pages primitive from the layout
+	persistentPages map[string]Page
+	history         []string
+	modalStack      []string
 }
 
 // NewNavigationManager creates a new manager for page navigation.
 func NewNavigationManager(app AppInterface, pages *tview.Pages) *NavigationManager {
 	return &NavigationManager{
-		app:            app,
-		pages:          pages,
-		pageIDs:        make(map[tview.Primitive]string),
-		pagePrimitives: make(map[string]tview.Primitive),
+		app:             app,
+		pages:           pages,
+		persistentPages: make(map[string]Page),
+		history:         make([]string, 0),
+		modalStack:      make([]string, 0),
 	}
 }
 
-// ShowPage adds a page to the main Pages container and sets it as the current page.
-func (n *NavigationManager) ShowPage(pageID string, page Page, resize bool) {
-	n.pages.AddAndSwitchToPage(pageID, page.Primitive(), resize)
-	n.activePageID = pageID
-	n.pagePrimitives[pageID] = page.Primitive()
-	n.app.SetFocus(page.Primitive())
-	n.app.Layout().SetFooter(page.GetActionPrompts())
-	n.app.Layout().SetHeader(page.GetStatusPrimitive())
+// Register adds a persistent page to the manager. These pages are created
+// once and switched to by their ID.
+func (n *NavigationManager) Register(pageID string, page Page) {
+	if _, exists := n.persistentPages[pageID]; exists {
+		logging.Errorf("NavigationManager: A page with ID '%s' is already registered. It will be replaced.", pageID)
+		n.pages.RemovePage(pageID)
+	}
+
+	n.persistentPages[pageID] = page
+	n.pages.AddPage(pageID, page, true, false) // Add but don't make visible yet
 }
 
-// PushPage adds an overlay page to the stack.
-func (n *NavigationManager) PushPage(pageID string, page Page) {
-	n.pages.AddPage(pageID, page.Primitive(), true, true)
-	n.pageStack = append(n.pageStack, page.Primitive())
-	n.pageIDs[page.Primitive()] = pageID
-	n.pagePrimitives[pageID] = page.Primitive()
-	n.app.SetFocus(page.Primitive())
+// updateUIForPage is a helper to set the footer, header, and focus.
+func (n *NavigationManager) updateUIForPage(page Page) {
+	if page == nil {
+		n.app.Layout().SetFooter(nil)
+		n.app.Layout().SetHeader(nil)
+		return
+	}
 	n.app.Layout().SetFooter(page.GetActionPrompts())
 	n.app.Layout().SetHeader(page.GetStatusPrimitive())
+	n.app.SetFocus(page)
 }
 
-// PopPage removes the top-most page from the stack.
-func (n *NavigationManager) PopPage() {
-	if len(n.pageStack) > 0 {
-		topPage := n.pageStack[len(n.pageStack)-1]
-		n.pageStack = n.pageStack[:len(n.pageStack)-1]
+// SwitchTo changes the main visible page to the one specified by pageID.
+// It also manages the navigation history for the GoBack() function.
+func (n *NavigationManager) SwitchTo(pageID string) {
+	if _, ok := n.persistentPages[pageID]; !ok {
+		return // Do not switch to an unregistered page
+	}
 
-		if pageID, exists := n.pageIDs[topPage]; exists {
-			n.pages.RemovePage(pageID)
-			delete(n.pageIDs, topPage)
-			delete(n.pagePrimitives, pageID)
+	currentID, _ := n.pages.GetFrontPage()
+	// Only add to history if it's a different persistent page
+	if currentID != pageID && len(n.modalStack) == 0 {
+		if _, isPersistent := n.persistentPages[currentID]; isPersistent {
+			n.history = append(n.history, currentID)
 		}
 	}
 
-	var focusTarget tview.Primitive
-	if len(n.pageStack) > 0 {
-		focusTarget = n.pageStack[len(n.pageStack)-1]
-	} else {
-		focusTarget = n.pagePrimitives[n.activePageID]
+	n.pages.SwitchToPage(pageID)
+	n.updateUIForPage(n.persistentPages[pageID])
+}
+
+// GoBack navigates to the previous page in the history stack.
+func (n *NavigationManager) GoBack() {
+	if len(n.history) == 0 {
+		return // Cannot go back
 	}
 
-	if page, ok := focusTarget.(Page); ok {
-		n.app.Layout().SetFooter(page.GetActionPrompts())
-		n.app.Layout().SetHeader(page.GetStatusPrimitive())
+	// Pop the last page from history
+	lastPageID := n.history[len(n.history)-1]
+	n.history = n.history[:len(n.history)-1]
+
+	n.pages.SwitchToPage(lastPageID)
+	n.updateUIForPage(n.persistentPages[lastPageID])
+}
+
+// ShowModal displays a transient page (like a dialog) over the current view.
+func (n *NavigationManager) ShowModal(pageID string, page Page) {
+	n.pages.AddPage(pageID, page, true, true)
+	n.modalStack = append(n.modalStack, pageID)
+	n.updateUIForPage(page)
+}
+
+// CloseModal removes the top-most modal page.
+func (n *NavigationManager) CloseModal() {
+	if len(n.modalStack) == 0 {
+		return
 	}
 
-	if focusTarget != nil {
-		n.app.SetFocus(focusTarget)
-	}
+	// Pop the modal page
+	modalID := n.modalStack[len(n.modalStack)-1]
+	n.modalStack = n.modalStack[:len(n.modalStack)-1]
+	n.pages.RemovePage(modalID)
+
+	// Update UI for the page that is now in front
+	n.updateUIForPage(n.GetCurrentPage())
 }
 
-// ToggleLogPage shows/hides the log page overlay.
-func (n *NavigationManager) ToggleLogPage() {
-	if frontID, _ := n.pages.GetFrontPage(); frontID == PageLogID {
-		n.PopPage()
-	} else {
-		logPage := NewLogPage(n.app)
-		n.PushPage(PageLogID, logPage)
-	}
-}
-
-// UIManagerInterface implementation for pages to use
-func (n *NavigationManager) QueueUpdateDraw(f func()) {
-	n.app.QueueUpdateDraw(f)
-}
-func (n *NavigationManager) SetFocus(p tview.Primitive) { n.app.SetFocus(p) }
-func (n *NavigationManager) GetLogTextView() *tview.TextView {
-	return n.app.(interface{ GetLogTextView() *tview.TextView }).GetLogTextView()
-}
-
-// TODO: remove activePageID?
-func (n *NavigationManager) GetCurrentPageID() string {
-	return n.activePageID
-}
+// GetCurrentPage returns the Page interface of the front-most primitive.
 func (n *NavigationManager) GetCurrentPage() Page {
-	if n.activePageID == "" {
-		return nil
+	if len(n.modalStack) > 0 {
+		modalID := n.modalStack[len(n.modalStack)-1]
+		_, primitive := n.pages.GetFrontPage()
+		if p, ok := primitive.(Page); ok && modalID != "" {
+			return p
+		}
 	}
-	_, p := n.pages.GetFrontPage()
-	return p.(Page)
+
+	// If no modal, get the persistent page
+	pageID, _ := n.pages.GetFrontPage()
+	if page, ok := n.persistentPages[pageID]; ok {
+		return page
+	}
+
+	return nil
+}
+
+// ToggleLogPage either switches to the log page or goes back if already there.
+func (n *NavigationManager) ToggleLogPage() {
+	currentID, _ := n.pages.GetFrontPage()
+	if currentID == PageLogID {
+		n.GoBack()
+	} else {
+		n.SwitchTo(PageLogID)
+	}
 }

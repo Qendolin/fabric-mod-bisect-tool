@@ -85,11 +85,18 @@ func mapKeys(m map[string]struct{}) []string {
 
 // TestIMCS_Integration runs a full integration test of the core IMCS logic.
 func TestIMCS_Integration(t *testing.T) {
-	// Suppress logging to console during tests by default.
-	if err := logging.Init("test.log"); err != nil {
-		t.Fatalf("Failed to init logging: %v", err)
+	mainLogger := logging.NewLogger()
+	logFile, err := os.OpenFile(filepath.Join(testDir, "test.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		// Can't use logger yet, so print to stderr
+		os.Stderr.WriteString("Failed to open log file: " + err.Error())
+		os.Exit(1)
 	}
-	defer logging.Close()
+	defer logFile.Close()
+	mainLogger.SetWriter(logFile)
+
+	// Set this as the default logger for any package-level calls.
+	logging.SetDefault(mainLogger)
 
 	// Define a larger pool of mods (a-z) for better test coverage
 	baseModSpecs := make(map[string]string)

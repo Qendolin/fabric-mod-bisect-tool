@@ -1,166 +1,193 @@
 package logging
 
 import (
-	"bytes"
-	"context"
+	"fmt"
 	"io"
 	"log"
-	"os"
-	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 )
 
-var (
-	logFile *os.File
-	logger  *log.Logger
-	debug   bool
-)
+// Logger is a central logger that writes to a store and an optional io.Writer.
+type Logger struct {
+	mu     sync.Mutex
+	store  *LogStore
+	writer io.Writer
+	goLog  *log.Logger
+	debug  bool
+}
 
-// Init initializes the logging system. It sets up a log file and a
-// multi-writer to output to both the file and any provided extra writers.
-func Init(logFilePath string, extraWriters ...io.Writer) error {
-	var err error
-	logDir := filepath.Dir(logFilePath)
-	if err = os.MkdirAll(logDir, 0755); err != nil {
-		return err
+// NewLogger creates and initializes a new Logger instance.
+func NewLogger() *Logger {
+	l := &Logger{
+		store:  newLogStore(),
+		writer: io.Discard, // Default to discarding output
 	}
-
-	logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		return err
-	}
-
-	writers := []io.Writer{logFile}
-	writers = append(writers, extraWriters...)
-	multiWriter := io.MultiWriter(writers...)
-
-	logger = log.New(multiWriter, "", log.LstdFlags)
-	logger.Println("Logging initialized.")
-	return nil
+	l.goLog = log.New(l, "", 0) // The logger will write through our Write method
+	return l
 }
 
-func SetDebug(enable bool) {
-	debug = enable
-}
-
-// ChannelWriter is an io.Writer that sends log messages to a channel.
-// It supports graceful shutdown to prevent race conditions.
-type ChannelWriter struct {
-	LogChannel chan<- []byte
-	ctx        context.Context
-}
-
-// NewChannelWriter creates a new writer that sends log messages to a channel.
-func NewChannelWriter(ctx context.Context, ch chan<- []byte) *ChannelWriter {
-	return &ChannelWriter{
-		LogChannel: ch,
-		ctx:        ctx,
-	}
-}
-
-// Write implements the io.Writer interface. It is race-free on shutdown.
-func (cw *ChannelWriter) Write(p []byte) (n int, err error) {
-	// Check if shutdown has been initiated.
-	select {
-	case <-cw.ctx.Done():
-		// Context is cancelled, do not write.
+// Write implements the io.Writer interface. This allows the standard log package
+// to write through our logger, which will then dispatch to the configured writer.
+func (l *Logger) Write(p []byte) (n int, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.writer == nil {
 		return len(p), nil
-	default:
-		// Continue
 	}
-
-	msg := make([]byte, len(p))
-	copy(msg, p)
-	select {
-	case cw.LogChannel <- msg:
-	default:
-		// Channel is full, drop log message to UI to prevent blocking.
-	}
-	return len(p), nil
+	return l.writer.Write(p)
 }
 
-// CaptureWriter is an io.Writer that captures the first log line.
-type CaptureWriter struct {
-	Buffer *bytes.Buffer
+// SetWriter sets the output destination for the logger.
+func (l *Logger) SetWriter(w io.Writer) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.writer = w
 }
 
-// Write implements io.Writer, capturing data to its buffer.
-func (cw *CaptureWriter) Write(p []byte) (n int, err error) {
-	if cw.Buffer == nil {
-		cw.Buffer = &bytes.Buffer{}
+// GetWriter returns the current output writer.
+func (l *Logger) GetWriter() io.Writer {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.writer
+}
+
+// Store returns the internal LogStore.
+func (l *Logger) Store() *LogStore {
+	return l.store
+}
+
+// SetDebug enables or disables debug-level logging.
+func (l *Logger) SetDebug(enable bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debug = enable
+}
+
+// log is the internal handler for variadic logging.
+func (l *Logger) log(level LogLevel, v ...interface{}) {
+	if level == LevelDebug && !l.debug {
+		return
 	}
-	return cw.Buffer.Write(p)
+	// Use fmt.Sprint to handle the slice of interfaces.
+	message := strings.TrimSpace(fmt.Sprintln(v...))
+	entry := LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+	}
+	l.store.Add(entry)
+
+	logLine := fmt.Sprintf("%s %-5s %s", entry.Timestamp.Format("15:04:05.000"), level.String(), message)
+	l.goLog.Println(logLine)
+}
+
+// logf is the internal handler for formatted logging.
+func (l *Logger) logf(level LogLevel, format string, v ...interface{}) {
+	if level == LevelDebug && !l.debug {
+		return
+	}
+
+	message := fmt.Sprintf(format, v...)
+	entry := LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+	}
+	l.store.Add(entry)
+
+	logLine := fmt.Sprintf("%s %-5s %s", entry.Timestamp.Format("15:04:05.000"), level.String(), message)
+	l.goLog.Println(logLine)
 }
 
 // Info logs an informational message.
-func Info(v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Println(v...)
+func (l *Logger) Info(v ...interface{}) {
+	l.log(LevelInfo, v...)
 }
 
 // Infof logs a formatted informational message.
-func Infof(format string, v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Printf(format, v...)
+func (l *Logger) Infof(format string, v ...interface{}) {
+	l.logf(LevelInfo, format, v...)
 }
 
 // Warn logs a warning message.
-func Warn(v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Println(append([]interface{}{"WARN:"}, v...)...)
+func (l *Logger) Warn(v ...interface{}) {
+	l.log(LevelWarn, v...)
 }
 
 // Warnf logs a formatted warning message.
-func Warnf(format string, v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Printf("WARN: "+format, v...)
+func (l *Logger) Warnf(format string, v ...interface{}) {
+	l.logf(LevelWarn, format, v...)
 }
 
 // Error logs an error message.
-func Error(v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Println(append([]interface{}{"ERROR:"}, v...)...)
+func (l *Logger) Error(v ...interface{}) {
+	l.log(LevelError, v...)
 }
 
 // Errorf logs a formatted error message.
+func (l *Logger) Errorf(format string, v ...interface{}) {
+	l.logf(LevelError, format, v...)
+}
+
+// Debug logs a debug message.
+func (l *Logger) Debug(v ...interface{}) {
+	l.log(LevelDebug, v...)
+}
+
+// Debugf logs a formatted debug message.
+func (l *Logger) Debugf(format string, v ...interface{}) {
+	l.logf(LevelDebug, format, v...)
+}
+
+// ---- Global / Default Logger ----
+
+var defaultLogger = NewLogger()
+
+// SetDefault replaces the default logger instance.
+func SetDefault(logger *Logger) {
+	if logger != nil {
+		defaultLogger = logger
+	}
+}
+
+// Info logs an informational message using the default logger.
+func Info(v ...interface{}) {
+	defaultLogger.Info(v...)
+}
+
+// Infof ...
+func Infof(format string, v ...interface{}) {
+	defaultLogger.Infof(format, v...)
+}
+
+// Warn logs a warning message using the default logger.
+func Warn(v ...interface{}) {
+	defaultLogger.Warn(v...)
+}
+
+// Warnf ...
+func Warnf(format string, v ...interface{}) {
+	defaultLogger.Warnf(format, v...)
+}
+
+// Error logs an error message using the default logger.
+func Error(v ...interface{}) {
+	defaultLogger.Error(v...)
+}
+
+// Errorf ...
 func Errorf(format string, v ...interface{}) {
-	if logger == nil {
-		return
-	}
-	logger.Printf("ERROR: "+format, v...)
+	defaultLogger.Errorf(format, v...)
 }
 
-// Warn logs a warning message.
+// Debug logs a debug message using the default logger.
 func Debug(v ...interface{}) {
-	if logger == nil || !debug {
-		return
-	}
-	logger.Println(append([]interface{}{"WARN:"}, v...)...)
+	defaultLogger.Debug(v...)
 }
 
-// Warnf logs a formatted warning message.
+// Debugf ...
 func Debugf(format string, v ...interface{}) {
-	if logger == nil || !debug {
-		return
-	}
-	logger.Printf("DEBUG: "+format, v...)
-}
-
-// Close gracefully closes the log file handle.
-func Close() {
-	if logFile != nil {
-		if logger != nil {
-			logger.Println("Closing log file.")
-		}
-		logFile.Close()
-	}
+	defaultLogger.Debugf(format, v...)
 }

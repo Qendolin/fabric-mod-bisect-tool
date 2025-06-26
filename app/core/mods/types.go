@@ -50,7 +50,7 @@ func (m *Mod) FriendlyName() string {
 // ModStatus represents the current runtime state of a single mod.
 type ModStatus struct {
 	ID            string
-	Mod           *Mod // Pointer to the actual Mod metadata
+	Mod           *Mod
 	ForceEnabled  bool
 	ForceDisabled bool
 	ManuallyGood  bool

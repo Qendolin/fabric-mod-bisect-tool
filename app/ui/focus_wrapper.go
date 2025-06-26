@@ -6,7 +6,7 @@ import (
 )
 
 // FocusWrapper is a lightweight struct that wraps a tview.Primitive to make it
-// conform to our Page and Focusable interfaces, using a delegate function to
+// conform to our Focusable interface, using a delegate function to
 // determine its focusable children.
 type FocusWrapper struct {
 	*tview.Box
@@ -75,19 +75,6 @@ func (fw *FocusWrapper) HasFocus() bool {
 // MouseHandler returns the mouse handler for this primitive.
 func (fw *FocusWrapper) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (consumed bool, capture tview.Primitive) {
 	return fw.content.MouseHandler()
-}
-
-// Primitive returns the underlying primitive.
-func (fw *FocusWrapper) Primitive() tview.Primitive {
-	return fw
-}
-
-// GetActionPrompts returns nil, as this wrapper is generic.
-func (fw *FocusWrapper) GetActionPrompts() map[string]string {
-	if page, ok := fw.content.(Page); ok {
-		return page.GetActionPrompts()
-	}
-	return nil
 }
 
 // GetFocusablePrimitives implements the Focusable interface by calling the delegate function.

@@ -21,7 +21,7 @@ type App struct {
 	layoutManager *ui.LayoutManager
 	navManager    *ui.NavigationManager
 	dialogManager *ui.DialogManager
-	logHandler    *ui.LogHandler
+	logger        *logging.Logger
 	focusManager  *ui.FocusManager
 
 	// Core services
@@ -32,6 +32,13 @@ type App struct {
 	Runner    *systemrunner.Runner
 	Searcher  *conflict.Searcher
 
+	// Pages
+	setupPage     *ui.SetupPage
+	mainPage      *ui.MainPage
+	logPage       *ui.LogPage
+	loadingPage   *ui.LoadingPage
+	mangeModsPage *ui.ManageModsPage
+
 	appCtx    context.Context
 	cancelApp context.CancelFunc
 
@@ -39,13 +46,14 @@ type App struct {
 }
 
 // NewApp creates and initializes the TUI application.
-func NewApp() *App {
+func NewApp(logger *logging.Logger) *App {
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
 	a := &App{
 		Application: tview.NewApplication(),
 		appCtx:      appCtx,
 		cancelApp:   cancelApp,
+		logger:      logger,
 	}
 
 	a.layoutManager = ui.NewLayoutManager()
@@ -53,6 +61,18 @@ func NewApp() *App {
 	a.dialogManager = ui.NewDialogManager(a)
 	a.focusManager = ui.NewFocusManager(a)
 	a.SetRoot(a.layoutManager.RootPrimitive(), true).EnableMouse(true)
+
+	a.setupPage = ui.NewSetupPage(a)
+	a.mainPage = ui.NewMainPage(a)
+	a.logPage = ui.NewLogPage(a)
+	a.loadingPage = ui.NewLoadingPage(a)
+	a.mangeModsPage = ui.NewManageModsPage(a)
+
+	a.navManager.Register(ui.PageSetupID, a.setupPage)
+	a.navManager.Register(ui.PageMainID, a.mainPage)
+	a.navManager.Register(ui.PageLogID, a.logPage)
+	a.navManager.Register(ui.PageLoadingID, a.loadingPage)
+	a.navManager.Register(ui.PageManageModsID, a.mangeModsPage)
 
 	a.setupGlobalInputCapture()
 	a.setupCoreServices()
@@ -66,12 +86,12 @@ func (a *App) setupGlobalInputCapture() {
 		focusManager := a.GetFocusManager()
 
 		if event.Key() == tcell.KeyTab {
-			if focusManager.Cycle(a.navManager.GetCurrentPage().Primitive(), true) {
+			if focusManager.Cycle(a.navManager.GetCurrentPage(), true) {
 				return nil
 			}
 		}
 		if event.Key() == tcell.KeyBacktab {
-			if focusManager.Cycle(a.navManager.GetCurrentPage().Primitive(), false) {
+			if focusManager.Cycle(a.navManager.GetCurrentPage(), false) {
 				return nil
 			}
 		}
@@ -87,15 +107,6 @@ func (a *App) setupGlobalInputCapture() {
 	})
 }
 
-// InitLogging re-initializes the logging system to include the UI channel writer.
-func (a *App) InitLogging(logPath string) error {
-	logChannel := make(chan []byte, 100)
-	a.logHandler = ui.NewLogHandler(a, logChannel, &a.shutdownWg)
-
-	channelWriter := logging.NewChannelWriter(a.appCtx, logChannel)
-	return logging.Init(logPath, channelWriter)
-}
-
 // setupCoreServices initializes the backend logic components.
 func (a *App) setupCoreServices() {
 	a.ModLoader = mods.NewModLoaderService()
@@ -104,9 +115,7 @@ func (a *App) setupCoreServices() {
 
 // Run starts the tview application event loop.
 func (a *App) Run() error {
-	go a.logHandler.Start(a.appCtx)
-
-	a.navManager.ShowPage(ui.PageSetupID, ui.NewSetupPage(a), true)
+	a.navManager.SwitchTo(ui.PageSetupID)
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -114,9 +123,9 @@ func (a *App) Run() error {
 	if err = screen.Init(); err != nil {
 		return err
 	}
-	screen.EnableMouse()
-	screen.EnablePaste()
 	screen.SetTitle("Fabric Mod Bisect Tool") // tivew doesn't expose this
+	a.EnableMouse(true)
+	a.EnablePaste(true)
 	a.SetScreen(screen)
 	return a.Application.Run()
 }
@@ -125,13 +134,12 @@ func (a *App) Run() error {
 func (a *App) Stop() {
 	a.cancelApp()
 	a.shutdownWg.Wait()
-	logging.Close()
 	a.Application.Stop()
 }
 
 // AppInterface methods to be called by UI components
 func (a *App) GetApplicationContext() context.Context { return a.appCtx }
-func (a *App) GetLogTextView() *tview.TextView        { return a.logHandler.TextView() }
+func (a *App) GetLogger() *logging.Logger             { return a.logger }
 func (a *App) GetModLoader() mods.ModLoaderService    { return a.ModLoader }
 func (a *App) Navigation() *ui.NavigationManager      { return a.navManager }
 func (a *App) Dialogs() *ui.DialogManager             { return a.dialogManager }
@@ -145,11 +153,14 @@ func (a *App) OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potent
 	a.ModState = mods.NewStateManager(allMods, potentialProviders)
 	a.ModState.OnStateChanged = a.handleModStateChange
 	a.Activator = systemrunner.NewModActivator(modsPath, allMods)
+	if err := a.Activator.EnableAll(); err != nil {
+		a.dialogManager.ShowErrorDialog("Initialization Error", fmt.Sprintf("Failed to enable all mods: %v", err), nil)
+		return
+	}
 	a.Searcher = conflict.NewSearcher(a.ModState)
 	a.Searcher.Start(sortedModIDs)
 
-	mainPage := ui.NewMainPage(a)
-	a.navManager.ShowPage(ui.PageMainID, mainPage, true)
+	a.navManager.SwitchTo(ui.PageMainID)
 }
 
 // Add the new handler for mod state changes
@@ -166,12 +177,8 @@ func (a *App) handleModStateChange() {
 }
 
 func (a *App) StartModLoad(modsPath string) {
-	loadingPage := ui.NewLoadingPage(a, modsPath)
-	a.navManager.ShowPage(ui.PageLoadingID, loadingPage, true)
-
-	if lp, ok := loadingPage.(*ui.LoadingPage); ok {
-		lp.StartLoading()
-	}
+	a.navManager.SwitchTo(ui.PageLoadingID)
+	a.loadingPage.StartLoading(modsPath)
 }
 
 // Step initiates the next bisection test.
@@ -205,20 +212,20 @@ func (a *App) Step() {
 	}
 
 	onSuccess := func() {
-		a.navManager.PopPage() // Pop the TestPage
+		a.navManager.CloseModal()
 		a.processTestResult(systemrunner.GOOD, changes)
 	}
 	onFailure := func() {
-		a.navManager.PopPage()
+		a.navManager.CloseModal()
 		a.processTestResult(systemrunner.FAIL, changes)
 	}
 	onCancel := func() {
-		a.navManager.PopPage()
+		a.navManager.CloseModal()
 		a.cancelTest(changes)
 	}
 
 	testPage := ui.NewTestPage(a, a.Searcher.IsVerificationStep(), onSuccess, onFailure, onCancel)
-	a.navManager.PushPage(ui.PageTestID, testPage)
+	a.navManager.ShowModal(ui.PageTestID, testPage)
 }
 
 func (a *App) CancelTest(changes []systemrunner.BatchStateChange) {
@@ -227,7 +234,7 @@ func (a *App) CancelTest(changes []systemrunner.BatchStateChange) {
 	}
 	// Do not call StepBack here, as no search step was actually taken.
 	// Simply pop the page to return to the previous state.
-	a.navManager.PopPage()
+	a.navManager.CloseModal()
 }
 
 func (a *App) SubmitTestResult(result systemrunner.Result, changes []systemrunner.BatchStateChange) {
@@ -236,7 +243,7 @@ func (a *App) SubmitTestResult(result systemrunner.Result, changes []systemrunne
 		a.Activator.Revert(changes)
 	}
 
-	a.navManager.PopPage() // Close the TestPage
+	a.navManager.CloseModal() // Close the TestPage
 	if a.Searcher != nil {
 		a.Searcher.ResumeWithResult(a.appCtx, result)
 		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
@@ -291,7 +298,7 @@ func (a *App) displayResults() {
 
 	if a.Searcher.IsComplete() || (a.Searcher.LastFoundElement() != "" && !a.Searcher.IsVerificationStep()) {
 		resultPage := ui.NewResultPage(a, a.Searcher.GetCurrentState())
-		a.navManager.PushPage(ui.PageResultID, resultPage)
+		a.navManager.ShowModal(ui.PageResultID, resultPage)
 	}
 }
 

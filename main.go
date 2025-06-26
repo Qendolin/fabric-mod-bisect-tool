@@ -14,17 +14,28 @@ const (
 )
 
 func main() {
-	// 1. Setup OS signal trapping
+	// 1. Setup logging first.
+	mainLogger := logging.NewLogger()
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		// Can't use logger yet, so print to stderr
+		os.Stderr.WriteString("Failed to open log file: " + err.Error())
+		os.Exit(1)
+	}
+	defer logFile.Close()
+	mainLogger.SetWriter(logFile)
+
+	// Set this as the default logger for any package-level calls.
+	logging.SetDefault(mainLogger)
+
+	// 2. Setup OS signal trapping
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// 2. Create the App structure, passing log details
-	a := app.NewApp()
+	// 3. Create the App structure, passing the configured logger
+	a := app.NewApp(mainLogger)
 
-	// TODO: I don't like the way logging is initialized
-	a.InitLogging(logPath)
-
-	// 3. Goroutine to handle OS signals
+	// 4. Goroutine to handle OS signals
 	go func() {
 		<-sigChan
 		a.QueueUpdateDraw(func() {
@@ -32,11 +43,11 @@ func main() {
 		})
 	}()
 
-	// 4. Run the application
-	logging.Info("Application starting up.") // This log will go to file and UI TextView
+	// 5. Run the application
+	logging.Infof("Application starting up.")
 	if err := a.Run(); err != nil {
 		logging.Errorf("Application exited with error: %v", err)
 		os.Exit(1)
 	}
-	logging.Info("Application exited gracefully.")
+	logging.Infof("Application exited gracefully.")
 }

@@ -12,11 +12,6 @@ func NewModalPage(modal *tview.Modal) *ModalPage {
 	return &ModalPage{Modal: modal}
 }
 
-// Primitive returns the underlying tview.Primitive.
-func (p *ModalPage) Primitive() tview.Primitive {
-	return p
-}
-
 // GetActionPrompts returns an empty map as modals have their own buttons.
 func (p *ModalPage) GetActionPrompts() map[string]string {
 	return nil

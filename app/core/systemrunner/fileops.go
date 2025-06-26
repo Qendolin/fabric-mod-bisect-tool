@@ -119,6 +119,23 @@ func (ma *ModActivator) Revert(changes []BatchStateChange) {
 	}
 }
 
+func (ma *ModActivator) EnableAll() error {
+	logging.Info("Activator: Enabling all mods for a clean initial state.")
+
+	// Create a target set that includes all known mods
+	targetSet := make(map[string]struct{}, len(ma.allMods))
+	for id := range ma.allMods {
+		targetSet[id] = struct{}{}
+	}
+
+	_, err := ma.Apply(targetSet)
+	if err != nil {
+		return fmt.Errorf("failed during initial enabling of all mods: %w", err)
+	}
+
+	return nil
+}
+
 // calculateChanges determines which files need to be renamed based on the desired effective set
 // and the current physical state of mod files on disk as tracked by the activator.
 func (ma *ModActivator) calculateChanges(effectiveSet map[string]struct{}) []BatchStateChange {

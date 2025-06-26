@@ -20,6 +20,7 @@ type MainPage struct {
 	// UI Components
 	overviewText *tview.TextView
 	stepButton   *tview.Button
+	undoButton   *tview.Button
 	tabs         *TabbedPanes
 	statusText   *tview.TextView
 
@@ -35,7 +36,7 @@ type MainPage struct {
 }
 
 // NewMainPage creates a new MainPage instance.
-func NewMainPage(app AppInterface) Page {
+func NewMainPage(app AppInterface) *MainPage {
 	p := &MainPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -50,12 +51,22 @@ func NewMainPage(app AppInterface) Page {
 
 func (p *MainPage) setupLayout() {
 	p.overviewText = tview.NewTextView().SetDynamicColors(true)
-	p.stepButton = tview.NewButton("Step").SetSelectedFunc(p.app.Step)
+	p.stepButton = tview.NewButton("Start").SetSelectedFunc(p.app.Step)
+	DefaultStyleButton(p.stepButton)
+
+	p.undoButton = tview.NewButton("Undo").SetSelectedFunc(p.app.Undo)
+	DefaultStyleButton(p.undoButton)
+
+	buttonFlex := tview.NewFlex().
+		AddItem(p.stepButton, 0, 1, true).
+		AddItem(nil, 1, 0, false).
+		AddItem(p.undoButton, 0, 1, false)
+	buttonFlex.SetBorderPadding(1, 1, 0, 0)
 
 	overviewFlex := tview.NewFlex().
 		AddItem(p.overviewText, 0, 1, false).
 		AddItem(tview.NewBox(), 5, 0, false).
-		AddItem(p.stepButton, 10, 0, false)
+		AddItem(buttonFlex, 31, 0, true)
 	overviewFlex.SetBorderPadding(0, 0, 1, 1)
 
 	p.tabs = NewTabbedPanes()
@@ -97,12 +108,17 @@ func (p *MainPage) setupLayout() {
 	})
 	p.tabs.AddTab("Problematic Mods", problematicPage)
 
-	p.AddItem(NewTitleFrame(overviewFlex, "Overview"), 6, 0, false).
-		AddItem(NewTitleFrame(p.tabs, "Sets"), 0, 1, true)
+	p.AddItem(NewTitleFrame(overviewFlex, "Overview"), 6, 0, true).
+		AddItem(NewTitleFrame(p.tabs, "Sets"), 0, 1, false)
 }
 
 func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
+
+		// I don't know a proper fix for this
+		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
+			return event
+		}
 
 		// If page-wide hotkeys are pressed, handle them.
 		switch event.Key() {
@@ -115,10 +131,12 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 				p.app.Undo()
 				return nil
 			case 'm', 'M':
-				p.statusText.SetText("Manage Mods... (not implemented)")
+				p.app.Navigation().SwitchTo(PageManageModsID)
 				return nil
 			case 'r', 'R':
-				p.app.ResetSearch()
+				p.app.Dialogs().ShowQuestionDialog("Are you sure you want to reset the search?", func() {
+					p.app.ResetSearch()
+				}, nil)
 				return nil
 			}
 		}
@@ -131,6 +149,7 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 func (p *MainPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.stepButton,
+		p.undoButton,
 		p.tabs,
 	}
 }
@@ -151,11 +170,14 @@ func (p *MainPage) RefreshSearchState() {
 		}
 		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, state.LastTestResult)
 	}
+	buttonText := "Start"
 	currentStatus := "Ready to start Bisection"
 	if searcher.IsVerificationStep() {
 		currentStatus = "Verifying set of problematic mods"
+		buttonText = "Verify"
 	} else if searcher.GetTestsExecuted() > 0 && !searcher.IsComplete() {
 		currentStatus = "Searching for next problematic mod"
+		buttonText = "Step"
 	}
 	overview := fmt.Sprintf(
 		"Status: %s\nProgress: Test %d / %d (estimated)\nLast Result: %s\nFound Problems: %d",
@@ -163,17 +185,18 @@ func (p *MainPage) RefreshSearchState() {
 	)
 	p.overviewText.SetText(overview)
 	p.statusText.SetText(currentStatus)
+	p.stepButton.SetLabel(buttonText)
 
 	modCount := len(searcher.GetAllModIDs())
 
 	if len(state.Candidates) > 0 {
-		p.candidatesList.SetItems(state.Candidates)
+		p.candidatesList.SetItems(p.formatModList(state.Candidates))
 	} else {
 		p.candidatesList.SetItems([]string{"---"})
 	}
 	p.candidatesTitle.SetTitle(fmt.Sprintf("Candidates (Being Searched): %d / %d", len(state.Candidates), modCount))
 	if len(state.ConflictSet) > 0 {
-		p.problematicModsList.SetItems(mapKeysFromStruct(state.ConflictSet))
+		p.problematicModsList.SetItems(p.formatModList(mapKeysFromStruct(state.ConflictSet)))
 	} else {
 		p.problematicModsList.SetItems([]string{"---"})
 	}
@@ -185,7 +208,7 @@ func (p *MainPage) RefreshSearchState() {
 		knownGoodInStep = difference(step.Background, state.ConflictSet)
 	}
 	if len(knownGoodInStep) > 0 {
-		p.knownGoodList.SetItems(mapKeysFromStruct(knownGoodInStep))
+		p.knownGoodList.SetItems(p.formatModList(mapKeysFromStruct(knownGoodInStep)))
 	} else {
 		p.knownGoodList.SetItems([]string{"---"})
 	}
@@ -193,14 +216,12 @@ func (p *MainPage) RefreshSearchState() {
 
 	nextTestSet := searcher.CalculateNextTestSet()
 	if len(nextTestSet) > 0 {
-		p.testGroupList.SetItems(mapKeysFromStruct(nextTestSet))
+		p.testGroupList.SetItems(p.formatModList(mapKeysFromStruct(nextTestSet)))
 	} else {
 		p.testGroupList.SetItems([]string{"---"})
 	}
 	p.testGroupTitle.SetTitle(fmt.Sprintf("Mods in Next Test Group: %d / %d", len(nextTestSet), modCount))
 }
-
-func (p *MainPage) Primitive() tview.Primitive { return p }
 
 func (p *MainPage) GetActionPrompts() map[string]string {
 	return map[string]string{
@@ -211,6 +232,20 @@ func (p *MainPage) GetActionPrompts() map[string]string {
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status
 func (p *MainPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
+}
+
+func (p *MainPage) formatModList(modIDs []string) []string {
+	allMods := p.app.GetModState().GetAllMods()
+
+	formatted := make([]string, len(modIDs))
+	for i, id := range modIDs {
+		if mod, ok := allMods[id]; ok {
+			formatted[i] = fmt.Sprintf("%s [gray](%s)[-:-:-]", id, mod.FriendlyName())
+		} else {
+			formatted[i] = id
+		}
+	}
+	return formatted
 }
 
 func mapKeysFromStruct(m map[string]struct{}) []string {
