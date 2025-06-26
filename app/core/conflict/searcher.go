@@ -275,39 +275,62 @@ func (s *Searcher) startNextElementSearch() {
 		s.problemsFound+1, mapKeysFromStruct(searchContext), s.current.Candidates)
 }
 
-// handleFindNextResult drives the state machine for the binary search.
+// handleFindNextResult drives the state machine for the binary search using the optimized logic.
 func (s *Searcher) handleFindNextResult(result systemrunner.Result) {
 	if len(s.current.SearchStack) == 0 {
-		logging.Info("IMCS: Binary search for current element concluded without finding a culprit. Terminating overall search.")
-		s.isComplete = true // Should not be reached if handled properly, but acts as a safeguard.
+		s.isComplete = true // Should not be reached, but acts as a safeguard.
+		logging.Warn("IMCS: handleFindNextResult called with an empty search stack.")
 		return
 	}
+
+	// This is the step whose left half was just tested.
 	step := s.current.SearchStack[len(s.current.SearchStack)-1]
 
 	logging.Infof("IMCS: Processing binary search step #%d: Background=%v, Candidates=%v, Result=%s",
 		s.testsExecuted, mapKeysFromStruct(step.Background), step.Candidates, result)
 
+	// Base Case: This handles the result of a test on a single-element candidate set.
 	if len(step.Candidates) == 1 {
 		if result == systemrunner.FAIL {
+			// The single candidate is the conflict element for this iteration.
 			s.processFoundElement(step.Candidates[0])
 		} else {
-			// The entire binary search completed without finding a single new culprit.
+			// The binary search concluded without finding a new conflict element.
+			// This happens if the last possible candidate was tested and was good.
 			s.isComplete = true
-			logging.Info("IMCS: Binary search concluded without finding a new conflict element. Search is complete.")
+			logging.Info("IMCS: Final candidate test was GOOD. Search is complete.")
 		}
 		return
 	}
 
+	// --- Recursive Step Logic ---
+
+	// We are done with the current step, so pop it. We will push a new, more refined step.
 	s.current.SearchStack = s.current.SearchStack[:len(s.current.SearchStack)-1]
 	mid := len(step.Candidates) / 2
 	c1, c2 := step.Candidates[:mid], step.Candidates[mid:]
 
 	if result == systemrunner.FAIL {
+		// The conflict element is in the left half (c1).
 		logging.Infof("IMCS: Test with left half '%v' FAILED. Descending into left half.", c1)
-		s.current.SearchStack = append(s.current.SearchStack, newSearchStep(step.Background, c1))
+
+		// OPTIMIZATION: If c1 is a single element, we have found our culprit directly
+		// without needing another test or recursive step.
+		if len(c1) == 1 {
+			logging.Info("IMCS: Optimization: Left half is a single element. Processing it directly.")
+			s.processFoundElement(c1[0])
+		} else {
+			// c1 has multiple elements, so push a new step to search within it.
+			s.current.SearchStack = append(s.current.SearchStack, newSearchStep(step.Background, c1))
+		}
 	} else {
+		// The left half (c1) is "safe." The conflict must be in the right half (c2).
 		logging.Infof("IMCS: Test with left half '%v' GOOD. Adding to background, descending into right half '%v'.", c1, c2)
 		newBackground := union(step.Background, sliceToSet(c1))
+
+		// With the state machine, both the single-element (line 31) and multi-element (line 38)
+		// branches in the GOOD case schedule the *next test* by pushing a new step to the stack.
+		// The optimization logic for c2 (formal lines 31-36) is handled by the base case on the *next* ResumeWithResult call.
 		s.current.SearchStack = append(s.current.SearchStack, newSearchStep(newBackground, c2))
 	}
 }

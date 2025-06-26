@@ -5,6 +5,7 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/rivo/tview"
 )
 
@@ -23,7 +24,7 @@ type AppInterface interface {
 	OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string)
 	StartModLoad(path string)
 	Stop()
-	GetLogTextView() *tview.TextView
+	GetLogger() *logging.Logger
 	GetSearcher() *conflict.Searcher
 	GetModState() *mods.StateManager
 	Step()
@@ -33,8 +34,8 @@ type AppInterface interface {
 
 // Page is an interface that all UI pages must implement.
 type Page interface {
-	// Primitive returns the tview.Primitive that represents the page.
-	Primitive() tview.Primitive
+	tview.Primitive
+
 	// GetActionPrompts returns a map of key-to-description for the footer.
 	GetActionPrompts() map[string]string
 	// GetStatusPrimitive returns the page specific text view that displays the page's status

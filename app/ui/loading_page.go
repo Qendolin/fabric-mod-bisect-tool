@@ -23,13 +23,12 @@ type LoadingPage struct {
 }
 
 // NewLoadingPage creates a new LoadingPage instance.
-func NewLoadingPage(app AppInterface, modsPath string) Page {
+func NewLoadingPage(app AppInterface) *LoadingPage {
 	lp := &LoadingPage{
 		Flex:         tview.NewFlex().SetDirection(tview.FlexRow),
 		app:          app,
 		progressBar:  tview.NewTextView().SetDynamicColors(true),
 		progressText: tview.NewTextView().SetDynamicColors(true),
-		modsPath:     modsPath,
 		statusText:   tview.NewTextView().SetDynamicColors(true),
 	}
 
@@ -54,14 +53,15 @@ func NewLoadingPage(app AppInterface, modsPath string) Page {
 
 // StartLoading begins the asynchronous mod loading process.
 // This should be called after the page is shown.
-func (lp *LoadingPage) StartLoading() {
+func (lp *LoadingPage) StartLoading(modsPath string) {
+	lp.modsPath = modsPath
 	go func() {
 		// First, count the files for an accurate progress bar
 		files, err := os.ReadDir(lp.modsPath)
 		if err != nil {
 			go lp.app.QueueUpdateDraw(func() {
 				lp.app.Dialogs().ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to read mods directory: %v", err), func() {
-					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
+					lp.app.Navigation().SwitchTo(PageSetupID)
 				})
 			})
 			return
@@ -85,24 +85,19 @@ func (lp *LoadingPage) StartLoading() {
 		go lp.app.QueueUpdateDraw(func() {
 			if err != nil {
 				lp.app.Dialogs().ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to load mods: %v", err), func() {
-					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
+					lp.app.Navigation().SwitchTo(PageSetupID)
 				})
 				return
 			}
 			if len(allMods) == 0 {
 				lp.app.Dialogs().ShowErrorDialog("Information", "No mods were found in the specified directory.", func() {
-					lp.app.Navigation().ShowPage(PageSetupID, NewSetupPage(lp.app), true)
+					lp.app.Navigation().SwitchTo(PageSetupID)
 				})
 				return
 			}
 			lp.app.OnModsLoaded(lp.modsPath, allMods, potentialProviders, sortedModIDs)
 		})
 	}()
-}
-
-// Primitive returns the underlying tview.Primitive for this page.
-func (lp *LoadingPage) Primitive() tview.Primitive {
-	return lp
 }
 
 // GetActionPrompts returns the key actions for the loading page.
