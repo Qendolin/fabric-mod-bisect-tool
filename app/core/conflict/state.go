@@ -93,21 +93,13 @@ func (s SearchState) GetCurrentStep() (SearchStep, bool) {
 
 // GetBisectionSets determines the current C1 and C2 sets based on the state.
 // It returns the background for the test, and the C1 and C2 sets.
-func (s SearchState) GetBisectionSets() (background, c1, c2 map[string]struct{}) {
-	var candidatesForStep []string
-
+func (s SearchState) GetBisectionSets() (background, candidates map[string]struct{}) {
 	if step, ok := s.GetCurrentStep(); ok {
 		// Mid-bisection: use the context from the top of the stack.
-		candidatesForStep = step.Candidates
-		background = step.Background
+		return step.Background, stringSliceToSet(step.Candidates)
 	} else {
 		// Start of a new bisection: use the top-level candidates.
-		candidatesForStep = s.Candidates
-		background = s.ConflictSet // The background for a new bisection is the conflict set.
+		// The background for a new bisection is the conflict set.
+		return s.ConflictSet, stringSliceToSet(s.Candidates)
 	}
-
-	c1Slice, c2Slice := split(candidatesForStep)
-	c1 = stringSliceToSet(c1Slice)
-	c2 = stringSliceToSet(c2Slice)
-	return
 }

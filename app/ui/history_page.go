@@ -146,22 +146,22 @@ func (p *HistoryPage) refreshHistory() {
 
 func (p *HistoryPage) updateOverviewState(overview *OverviewWidget, entry *conflict.CompletedTest) {
 	// Use the sets from the entry's historical state for
-	good, c1, c2 := entry.StateBeforeTest.GetBisectionSets()
+	good, candidates := entry.StateBeforeTest.GetBisectionSets()
 	effective, _ := p.app.GetResolver().ResolveEffectiveSet(setToSlice(entry.Plan.ModIDsToTest), p.app.GetModState().GetAllMods(), p.app.GetModState().GetPotentialProviders(), p.app.GetModState().GetModStatusesSnapshot())
 	if entry.StateBeforeTest.IsVerifyingConflictSet {
 		// This makes the display more intuitive
-		c1 = map[string]struct{}{}
-		c2 = map[string]struct{}{}
+		candidates = map[string]struct{}{}
 	}
+	// Don't show problematic mods as good
 	good = subtractSet(good, entry.StateBeforeTest.ConflictSet)
-	overview.UpdateState(entry.StateBeforeTest.ConflictSet, good, c1, c2, effective)
+	overview.UpdateState(entry.StateBeforeTest.ConflictSet, good, candidates, effective)
 }
 
 // updateDetailView shows the details for the selected history entry.
 func (p *HistoryPage) updateDetailView(index int) {
 	if index < 0 || index >= len(p.historyCache) {
 		p.detailSummaryText.SetText("")
-		p.detailOverviewWidget.UpdateState(nil, nil, nil, nil, nil)
+		p.detailOverviewWidget.UpdateState(nil, nil, nil, nil)
 		p.detailSetsText.SetText("")
 		return
 	}
