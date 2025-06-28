@@ -104,8 +104,7 @@ func (p *LogPage) setKeybindings() {
 		}
 
 		// Handle navigation keys.
-		switch event.Key() {
-		case tcell.KeyEscape, tcell.KeyCtrlL:
+		if event.Key() == tcell.KeyEscape || (event.Key() == tcell.KeyCtrlL && event.Modifiers()&tcell.ModCtrl != 0) {
 			close(p.stopPolling) // Stop the poller goroutine
 			go p.app.QueueUpdateDraw(p.app.Navigation().GoBack)
 			return nil

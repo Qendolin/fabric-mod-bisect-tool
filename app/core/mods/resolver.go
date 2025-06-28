@@ -209,7 +209,7 @@ func (dr *DependencyResolver) resolveDependency(dependencyToSatisfy, requiringMo
 		if _, ok := dr.currentEffectiveSet[providerModID]; ok {
 			return true
 		}
-		logging.Errorf("Resolver: Dependency '%s' satisfied by '%s' but not active.", dependencyToSatisfy, providerModID, providerModID)
+		logging.Errorf("Resolver: Dependency '%s' satisfied by '%s' but not active.", dependencyToSatisfy, providerModID)
 		return false
 	}
 

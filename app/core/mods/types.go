@@ -76,3 +76,30 @@ func IsImplicitMod(depID string) bool {
 	}
 	return false
 }
+
+// Replace the dependency override structs with a new, parsed structure
+type OverrideAction int
+
+const (
+	ActionReplace OverrideAction = iota
+	ActionAdd
+	ActionRemove
+)
+
+type OverrideRule struct {
+	TargetModID    string // The mod whose dependencies are being changed
+	DependencyID   string // The dependency being changed (e.g., "minecraft")
+	VersionMatcher string // The new version string
+	Action         OverrideAction
+}
+
+// DependencyOverrides now holds a pre-parsed list of rules.
+type DependencyOverrides struct {
+	Rules []OverrideRule
+}
+
+// Struct for initial JSON parsing
+type rawDependencyOverrides struct {
+	Version   int                                     `json:"version"`
+	Overrides map[string]map[string]map[string]string `json:"overrides"`
+}

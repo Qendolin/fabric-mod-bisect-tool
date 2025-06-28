@@ -17,6 +17,8 @@ const (
 	FAIL Result = "FAIL"
 	// GOOD indicates the test ran successfully without the undesirable outcome.
 	GOOD Result = "GOOD"
+	// This is the initial value
+	UNKNOWN Result = ""
 )
 
 // Executor is a function that performs the actual system test.

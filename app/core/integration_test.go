@@ -3,7 +3,6 @@ package app_test
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,19 +85,16 @@ func mapKeys(m map[string]struct{}) []string {
 // TestIMCS_Integration runs a full integration test of the core IMCS logic.
 func TestIMCS_Integration(t *testing.T) {
 	mainLogger := logging.NewLogger()
+	mainLogger.SetDebug(true)
 	logFile, err := os.OpenFile(filepath.Join(testDir, "test.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
-		// Can't use logger yet, so print to stderr
 		os.Stderr.WriteString("Failed to open log file: " + err.Error())
 		os.Exit(1)
 	}
 	defer logFile.Close()
 	mainLogger.SetWriter(logFile)
-
-	// Set this as the default logger for any package-level calls.
 	logging.SetDefault(mainLogger)
 
-	// Define a larger pool of mods (a-z) for better test coverage
 	baseModSpecs := make(map[string]string)
 	var allBaseModIDs []string
 	for i := 0; i < 26; i++ {
@@ -108,12 +104,12 @@ func TestIMCS_Integration(t *testing.T) {
 		baseModSpecs[filename] = fmt.Sprintf(`{"id": "%s", "version": "1.0", "name": "Mod %s"}`, modID, char)
 		allBaseModIDs = append(allBaseModIDs, modID)
 	}
-	sort.Strings(allBaseModIDs) // Ensure sorted order for all mod IDs
+	sort.Strings(allBaseModIDs)
 
 	testCases := []struct {
 		name                string
-		modSpecsOverride    map[string]string // Specific mod definitions that override base
-		initialModIDs       []string          // If different from allBaseModIDs
+		modSpecsOverride    map[string]string
+		initialModIDs       []string
 		problematicSet      map[string]struct{}
 		expectedConflictSet map[string]struct{}
 	}{
@@ -131,13 +127,12 @@ func TestIMCS_Integration(t *testing.T) {
 				for k, v := range baseModSpecs {
 					specs[k] = v
 				}
-				// Override mod_a to depend on mod_c
 				specs["mod-a-1.0.jar"] = `{"id": "mod_a", "version": "1.0", "name": "Mod A", "depends": {"mod_c": ">=1.0"}}`
 				return specs
 			}(),
 			initialModIDs:       allBaseModIDs,
 			problematicSet:      map[string]struct{}{"mod_a": {}, "mod_c": {}},
-			expectedConflictSet: map[string]struct{}{"mod_a": {}}, // 'a' is the minimal trigger
+			expectedConflictSet: map[string]struct{}{"mod_a": {}},
 		},
 		{
 			name:                "2-Mod Independent Conflict",
@@ -167,26 +162,26 @@ func TestIMCS_Integration(t *testing.T) {
 				for k, v := range baseModSpecs {
 					specs[k] = v
 				}
-				// Define mod_x with an unresolvable dependency
 				specs["mod-x-1.0.jar"] = `{"id": "mod_x", "version": "1.0", "name": "Mod X", "depends": {"non_existent_dep": "*"}}`
 				return specs
 			}(),
 			initialModIDs:       allBaseModIDs,
 			problematicSet:      map[string]struct{}{"mod_x": {}}, // If mod_x were active, it would cause a problem
 			expectedConflictSet: map[string]struct{}{},            // But it can never be active, so no conflict is found
+
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// 1. Setup
+			// 1. Setup - Unchanged
 			modsDir := filepath.Join(testDir, tc.name)
-			_ = setupDummyMods(t, modsDir, tc.modSpecsOverride) // Ignore returned IDs; use initialModIDs
+			_ = setupDummyMods(t, modsDir, tc.modSpecsOverride)
 			defer os.RemoveAll(modsDir)
 
-			// 2. Initialize Core Services
+			// 2. Initialize Core Services - Unchanged
 			modLoader := mods.NewModLoaderService()
-			allMods, potentialProviders, sortedModIDs, err := modLoader.LoadMods(modsDir, nil)
+			allMods, potentialProviders, sortedModIDs, err := modLoader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
 			}
@@ -196,26 +191,33 @@ func TestIMCS_Integration(t *testing.T) {
 
 			modState := mods.NewStateManager(allMods, potentialProviders)
 			resolver := mods.NewDependencyResolver()
-			searcher := conflict.NewSearcher(modState)
 
-			modState.OnStateChanged = searcher.HandleExternalStateChange
+			searchProcess := conflict.NewSearchProcess(modState)
+			searchProcess.StartNewSearch()
 
-			searcher.Start(sortedModIDs)
-
-			// 3. Test Loop
+			// 3. Test Loop - Adapted for the new SearchProcess API
 			testCount := 0
-			for !searcher.IsComplete() && searcher.LastError() == nil {
+			for !searchProcess.GetCurrentState().IsComplete {
 				testCount++
 				t.Logf("\n--- STEP %d ---", testCount)
-				s := searcher.GetCurrentState()
+				if testCount > 100 {
+					t.Fatalf("Exceeded test count limit (100)")
+				}
+				s := searchProcess.GetCurrentState()
 				t.Logf("  Current ConflictSet: %v", mapKeys(s.ConflictSet))
 				t.Logf("  Remaining Candidates: %v", s.Candidates)
 
-				if !searcher.NeedsTest() {
-					t.Log("  No more tests needed. Searcher concluded.")
+				logging.Debugf("  [Harness] SearchProcess state at START of step: Candidates=%d, Background=%d, Stack=%d",
+					len(s.Candidates), len(s.Background), len(s.SearchStack))
+
+				// Get the plan for the next test. This is now a state-changing action.
+				plan, err := searchProcess.PlanNextTest()
+				if err != nil {
+					t.Logf("  Planning finished: %v", err)
 					break
 				}
-				testSet := searcher.CalculateNextTestSet()
+				logging.Debugf("  [Harness] SearchProcess returned a plan with %d mods to test.", len(plan.ModIDsToTest))
+				testSet := plan.ModIDsToTest
 				statuses := modState.GetModStatusesSnapshot()
 
 				t.Logf("  Preparing test with targets: %v", mapKeys(testSet))
@@ -227,6 +229,8 @@ func TestIMCS_Integration(t *testing.T) {
 					modState.GetPotentialProviders(),
 					statuses,
 				)
+
+				logging.Debugf("  [Harness] Resolver returned an effectiveSet of %d mods.", len(effectiveSet))
 
 				t.Logf("  > Effective mod set for test: %v", mapKeys(effectiveSet))
 
@@ -247,22 +251,30 @@ func TestIMCS_Integration(t *testing.T) {
 					result = systemrunner.FAIL
 				}
 
+				logging.Debugf("  [Harness] Simulating result: %s. Submitting this result to SearchProcess...", result)
+
+				logging.Debugf("  [Harness Check] Simulating test. Problematic set: %v. Effective set: %v. Is Conflict? %t. Sending result: %s",
+					mapKeys(tc.problematicSet), mapKeys(effectiveSet), isConflict, result)
+
 				t.Logf("  > Test Result: %s", result)
 
-				searcher.ResumeWithResult(context.Background(), result)
+				// Submit the result for the plan that was just run.
+				if err := searchProcess.SubmitTestResult(result); err != nil {
+					t.Fatalf("SubmitTestResult failed: %v", err)
+				}
+
+				finalStateInLoop := searchProcess.GetCurrentState()
+				logging.Debugf("  [Harness] SearchProcess state at END of step: Candidates=%d, Background=%d, Stack=%d",
+					len(finalStateInLoop.Candidates), len(finalStateInLoop.Background), len(finalStateInLoop.SearchStack))
 			}
 
-			if err := searcher.LastError(); err != nil {
-				t.Fatalf("Searcher finished with error: %v", err)
-			}
-
-			// 4. Assert Results
+			// 4. Assert Results - Adapted for the new SearchProcess API
 			t.Logf("\n--- TEST COMPLETE ---")
-			finalConflictSet := searcher.GetCurrentState().ConflictSet
+			finalState := searchProcess.GetCurrentState()
+			finalConflictSet := finalState.ConflictSet
 			t.Logf("  Final ConflictSet found: %v", mapKeys(finalConflictSet))
 
 			if !reflect.DeepEqual(finalConflictSet, tc.expectedConflictSet) {
-				// Convert to sorted slices for readable error message
 				var found, expected []string
 				for k := range finalConflictSet {
 					found = append(found, k)

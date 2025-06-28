@@ -169,8 +169,8 @@ func (p *ManageModsPage) toggleState(modID string, isBulk bool, stateType string
 // RefreshState updates the lists with the current mod states.
 func (p *ManageModsPage) RefreshState() {
 	modState := p.app.GetModState()
-	searcher := p.app.GetSearcher()
-	if modState == nil || searcher == nil {
+	searchProcess := p.app.GetSearchProcess()
+	if modState == nil || searchProcess == nil {
 		return
 	}
 
@@ -184,12 +184,17 @@ func (p *ManageModsPage) RefreshState() {
 	enabledIDs := []string{}
 	disabledIDs := []string{}
 
-	nextTestSet := searcher.CalculateNextTestSet()
+	// Get the next test set for preview from the idempotent getter
+	nextPlan, _ := searchProcess.GetNextTestPlan()
+	var nextTestSet map[string]struct{}
+	if nextPlan != nil {
+		nextTestSet = nextPlan.ModIDsToTest
+	}
 
 	for _, id := range allIDs {
 		status, _ := modState.GetModStatus(id)
 		mod := allMods[id]
-		searcherState := searcher.GetCurrentState()
+		searcherState := searchProcess.GetCurrentState()
 
 		var statusStr string
 		if status.ForceEnabled {
@@ -240,7 +245,7 @@ func (p *ManageModsPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
 }
 
-// GetFocusablePrimitives implements the Focusable interface for the MainPage.
+// GetFocusablePrimitives implements the Focusable interface.
 func (p *ManageModsPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.modTable,

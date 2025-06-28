@@ -4,37 +4,65 @@ import "errors"
 
 var errHistoryEmpty = errors.New("history is empty")
 
-// HistoryManager provides an undo/redo-style history for search states.
-type HistoryManager struct {
-	states []SearchSnapshot
+// UndoStack (renamed from HistoryManager) provides an undo/redo-style history
+// for search states.
+type UndoStack struct {
+	states []SearchState // Changed from SearchSnapshot to SearchState
 }
 
-// NewHistoryManager creates a new history manager.
-func NewHistoryManager() *HistoryManager {
-	return &HistoryManager{
-		states: make([]SearchSnapshot, 0),
+// NewUndoStack creates a new undo stack.
+func NewUndoStack() *UndoStack {
+	return &UndoStack{
+		states: make([]SearchState, 0),
 	}
 }
 
-// Push adds a new state to the history.
-func (h *HistoryManager) Push(snapshot SearchSnapshot) {
-	// Defensive copy of maps/slices to ensure the snapshot is truly immutable from future changes.
-	// This is critical for reliable history.
-	copiedConflictSet := make(map[string]struct{}, len(snapshot.ConflictSet))
-	for k := range snapshot.ConflictSet {
+// Push adds a new state to the undo stack. It performs a deep copy.
+func (s *UndoStack) Push(state SearchState) {
+	// Perform a deep copy to ensure the pushed state is immutable.
+	copiedState := deepCopyState(state)
+	s.states = append(s.states, copiedState)
+}
+
+// Pop removes and returns the most recent state from the history.
+func (s *UndoStack) Pop() (SearchState, error) {
+	if len(s.states) == 0 {
+		return SearchState{}, errHistoryEmpty
+	}
+	lastIndex := len(s.states) - 1
+	snapshot := s.states[lastIndex]
+	s.states = s.states[:lastIndex]
+	return snapshot, nil
+}
+
+// Clear removes all states from the history.
+func (s *UndoStack) Clear() {
+	s.states = make([]SearchState, 0)
+}
+
+// Size returns the number of states in the history.
+func (s *UndoStack) Size() int {
+	return len(s.states)
+}
+
+// deepCopyState creates a new SearchState with all maps and slices copied.
+func deepCopyState(state SearchState) SearchState {
+	// This function contains the logic you had in your original Push method.
+	copiedConflictSet := make(map[string]struct{}, len(state.ConflictSet))
+	for k := range state.ConflictSet {
 		copiedConflictSet[k] = struct{}{}
 	}
 
-	copiedCandidates := make([]string, len(snapshot.Candidates))
-	copy(copiedCandidates, snapshot.Candidates)
+	copiedCandidates := make([]string, len(state.Candidates))
+	copy(copiedCandidates, state.Candidates)
 
-	copiedBackground := make(map[string]struct{}, len(snapshot.Background))
-	for k := range snapshot.Background {
+	copiedBackground := make(map[string]struct{}, len(state.Background))
+	for k := range state.Background {
 		copiedBackground[k] = struct{}{}
 	}
 
-	copiedSearchStack := make([]SearchStep, len(snapshot.SearchStack))
-	for i, step := range snapshot.SearchStack {
+	copiedSearchStack := make([]SearchStep, len(state.SearchStack))
+	for i, step := range state.SearchStack {
 		copiedStepBackground := make(map[string]struct{}, len(step.Background))
 		for k := range step.Background {
 			copiedStepBackground[k] = struct{}{}
@@ -48,32 +76,15 @@ func (h *HistoryManager) Push(snapshot SearchSnapshot) {
 		}
 	}
 
-	h.states = append(h.states, SearchSnapshot{
+	return SearchState{
 		ConflictSet:            copiedConflictSet,
 		Candidates:             copiedCandidates,
 		Background:             copiedBackground,
 		SearchStack:            copiedSearchStack,
-		IsVerifyingConflictSet: snapshot.IsVerifyingConflictSet,
-	})
-}
-
-// Pop removes and returns the most recent state from the history.
-func (h *HistoryManager) Pop() (SearchSnapshot, error) {
-	if len(h.states) == 0 {
-		return SearchSnapshot{}, errHistoryEmpty
+		IsVerifyingConflictSet: state.IsVerifyingConflictSet,
+		AllModIDs:              state.AllModIDs, // This can be a shallow copy as it's immutable reference data
+		IsComplete:             state.IsComplete,
+		LastFoundElement:       state.LastFoundElement,
+		LastTestResult:         state.LastTestResult,
 	}
-	lastIndex := len(h.states) - 1
-	snapshot := h.states[lastIndex]
-	h.states = h.states[:lastIndex]
-	return snapshot, nil
-}
-
-// Clear removes all states from the history.
-func (h *HistoryManager) Clear() {
-	h.states = make([]SearchSnapshot, 0)
-}
-
-// Size returns the number of states in the history.
-func (h *HistoryManager) Size() int {
-	return len(h.states)
 }

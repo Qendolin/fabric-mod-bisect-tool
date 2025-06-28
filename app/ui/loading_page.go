@@ -76,7 +76,8 @@ func (lp *LoadingPage) StartLoading(modsPath string) {
 
 		processedFiles := 0
 		loader := lp.app.GetModLoader()
-		allMods, potentialProviders, sortedModIDs, err := loader.LoadMods(lp.modsPath, func(fileName string) {
+		// TODO: Dependency overrides
+		allMods, potentialProviders, sortedModIDs, err := loader.LoadMods(lp.modsPath, nil, func(fileName string) {
 			processedFiles++
 			lp.UpdateProgress(totalFiles, processedFiles, fileName)
 		})
