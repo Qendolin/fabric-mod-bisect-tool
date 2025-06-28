@@ -25,12 +25,12 @@ type App struct {
 	focusManager  *ui.FocusManager
 
 	// Core services
-	ModLoader mods.ModLoaderService
-	ModState  *mods.StateManager
-	Resolver  *mods.DependencyResolver
-	Activator *systemrunner.ModActivator
-	Runner    *systemrunner.Runner
-	Searcher  *conflict.Searcher
+	ModLoader     mods.ModLoaderService
+	ModState      *mods.StateManager
+	Resolver      *mods.DependencyResolver
+	Activator     *systemrunner.ModActivator
+	Runner        *systemrunner.Runner
+	SearchProcess *conflict.SearchProcess
 
 	// Pages
 	setupPage     *ui.SetupPage
@@ -95,13 +95,20 @@ func (a *App) setupGlobalInputCapture() {
 				return nil
 			}
 		}
-		if event.Key() == tcell.KeyCtrlL {
-			go a.QueueUpdateDraw(a.navManager.ToggleLogPage)
-			return nil
-		}
-		if event.Key() == tcell.KeyCtrlC {
-			go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
-			return nil
+
+		// Check for Ctrl modifier for specific hotkeys, because the key codes overlap
+		if event.Modifiers()&tcell.ModCtrl != 0 {
+			switch event.Key() {
+			case tcell.KeyCtrlL:
+				go a.QueueUpdateDraw(a.navManager.ToggleLogPage)
+				return nil
+			case tcell.KeyCtrlC:
+				go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
+				return nil
+			case tcell.KeyCtrlH:
+				go a.QueueUpdateDraw(a.navManager.ToggleHistoryPage)
+				return nil
+			}
 		}
 		return event
 	})
@@ -138,42 +145,43 @@ func (a *App) Stop() {
 }
 
 // AppInterface methods to be called by UI components
-func (a *App) GetApplicationContext() context.Context { return a.appCtx }
-func (a *App) GetLogger() *logging.Logger             { return a.logger }
-func (a *App) GetModLoader() mods.ModLoaderService    { return a.ModLoader }
-func (a *App) Navigation() *ui.NavigationManager      { return a.navManager }
-func (a *App) Dialogs() *ui.DialogManager             { return a.dialogManager }
-func (a *App) Layout() *ui.LayoutManager              { return a.layoutManager }
-func (a *App) GetFocusManager() *ui.FocusManager      { return a.focusManager }
-func (a *App) GetSearcher() *conflict.Searcher        { return a.Searcher }
-func (a *App) GetModState() *mods.StateManager        { return a.ModState }
+func (a *App) GetApplicationContext() context.Context    { return a.appCtx }
+func (a *App) GetLogger() *logging.Logger                { return a.logger }
+func (a *App) GetModLoader() mods.ModLoaderService       { return a.ModLoader }
+func (a *App) Navigation() *ui.NavigationManager         { return a.navManager }
+func (a *App) Dialogs() *ui.DialogManager                { return a.dialogManager }
+func (a *App) Layout() *ui.LayoutManager                 { return a.layoutManager }
+func (a *App) GetFocusManager() *ui.FocusManager         { return a.focusManager }
+func (a *App) GetSearchProcess() *conflict.SearchProcess { return a.SearchProcess }
+func (a *App) GetModState() *mods.StateManager           { return a.ModState }
+func (a *App) GetResolver() *mods.DependencyResolver     { return a.Resolver }
 
 func (a *App) OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string) {
 	logging.Infof("App: Mods loaded. Initializing services and transitioning to Main Page.")
 	a.ModState = mods.NewStateManager(allMods, potentialProviders)
 	a.ModState.OnStateChanged = a.handleModStateChange
 	a.Activator = systemrunner.NewModActivator(modsPath, allMods)
+
 	if err := a.Activator.EnableAll(); err != nil {
 		a.dialogManager.ShowErrorDialog("Initialization Error", fmt.Sprintf("Failed to enable all mods: %v", err), nil)
 		return
 	}
-	a.Searcher = conflict.NewSearcher(a.ModState)
-	a.Searcher.Start(sortedModIDs)
+
+	a.SearchProcess = conflict.NewSearchProcess(a.ModState) // Re-initialize with correct ModState
+	a.SearchProcess.StartNewSearch()
 
 	a.navManager.SwitchTo(ui.PageMainID)
+	a.handleModStateChange() // Trigger ui update
 }
 
 // Add the new handler for mod state changes
 func (a *App) handleModStateChange() {
-	if a.Searcher != nil {
-		a.Searcher.HandleExternalStateChange()
+	if a.SearchProcess != nil {
+		a.SearchProcess.InvalidateActivePlan()
 	}
-	// Queue a refresh for the currently visible page if it's an observer
-	go a.QueueUpdateDraw(func() {
-		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
-			page.RefreshSearchState()
-		}
-	})
+	if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+		page.RefreshSearchState()
+	}
 }
 
 func (a *App) StartModLoad(modsPath string) {
@@ -183,23 +191,29 @@ func (a *App) StartModLoad(modsPath string) {
 
 // Step initiates the next bisection test.
 func (a *App) Step() {
-	if a.Searcher == nil || a.Searcher.IsComplete() {
-		a.layoutManager.SetStatusText("Search is not active or is already complete.")
+	if a.SearchProcess == nil {
+		a.layoutManager.SetStatusText("Search is not active.")
 		return
 	}
 
-	if !a.Searcher.NeedsTest() {
-		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
-			page.RefreshSearchState()
-		}
+	// This is the new, clean check.
+	if a.SearchProcess.GetCurrentState().IsComplete {
+		a.layoutManager.SetStatusText("Search is already complete.")
+		// We can also trigger the result page again here if we want.
+		a.displayResults()
 		return
 	}
 
-	testSet := a.Searcher.CalculateNextTestSet()
+	// First, check if a test is available and get the plan.
+	plan, err := a.SearchProcess.PlanNextTest()
+	if err != nil {
+		a.layoutManager.SetStatusText(fmt.Sprintf("Cannot start test: %v", err))
+		return
+	}
 
 	// The call to the resolver is now much cleaner
 	effectiveSet, _ := a.Resolver.ResolveEffectiveSet(
-		systemrunner.SetToSlice(testSet),
+		systemrunner.SetToSlice(plan.ModIDsToTest),
 		a.ModState.GetAllMods(),
 		a.ModState.GetPotentialProviders(),
 		a.ModState.GetModStatusesSnapshot(),
@@ -224,7 +238,7 @@ func (a *App) Step() {
 		a.cancelTest(changes)
 	}
 
-	testPage := ui.NewTestPage(a, a.Searcher.IsVerificationStep(), onSuccess, onFailure, onCancel)
+	testPage := ui.NewTestPage(a, plan.IsVerificationStep, onSuccess, onFailure, onCancel)
 	a.navManager.ShowModal(ui.PageTestID, testPage)
 }
 
@@ -237,25 +251,10 @@ func (a *App) CancelTest(changes []systemrunner.BatchStateChange) {
 	a.navManager.CloseModal()
 }
 
-func (a *App) SubmitTestResult(result systemrunner.Result, changes []systemrunner.BatchStateChange) {
-	// Revert file changes before processing the result.
-	if a.Activator != nil {
-		a.Activator.Revert(changes)
-	}
-
-	a.navManager.CloseModal() // Close the TestPage
-	if a.Searcher != nil {
-		a.Searcher.ResumeWithResult(a.appCtx, result)
-		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
-			page.RefreshSearchState()
-		}
-	}
-}
-
 // Undo steps back the searcher state.
 func (a *App) Undo() {
-	if a.Searcher != nil {
-		if a.Searcher.StepBack() {
+	if a.SearchProcess != nil {
+		if a.SearchProcess.Undo() { // Delegate to SearchProcess.Undo
 			if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
 				page.RefreshSearchState()
 			}
@@ -265,8 +264,8 @@ func (a *App) Undo() {
 
 // ResetSearch resets the current search.
 func (a *App) ResetSearch() {
-	if a.Searcher != nil {
-		a.Searcher.Start(a.Searcher.GetAllModIDs())
+	if a.SearchProcess != nil {
+		a.SearchProcess.StartNewSearch() // Delegate to SearchProcess.StartNewSearch
 		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
 			page.RefreshSearchState()
 		}
@@ -277,8 +276,9 @@ func (a *App) processTestResult(result systemrunner.Result, changes []systemrunn
 	if a.Activator != nil {
 		a.Activator.Revert(changes)
 	}
-	if a.Searcher != nil {
-		a.Searcher.ResumeWithResult(a.appCtx, result)
+
+	if a.SearchProcess != nil {
+		a.SearchProcess.SubmitTestResult(result)
 		if page, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
 			page.RefreshSearchState()
 		}
@@ -289,15 +289,25 @@ func (a *App) cancelTest(changes []systemrunner.BatchStateChange) {
 	if a.Activator != nil {
 		a.Activator.Revert(changes)
 	}
+	if a.SearchProcess != nil {
+		a.SearchProcess.InvalidateActivePlan()
+	}
 }
 
 func (a *App) displayResults() {
-	if a.Searcher == nil {
+	if a.SearchProcess == nil {
 		return
 	}
 
-	if a.Searcher.IsComplete() || (a.Searcher.LastFoundElement() != "" && !a.Searcher.IsVerificationStep()) {
-		resultPage := ui.NewResultPage(a, a.Searcher.GetCurrentState())
+	// Use SearchProcess.GetCurrentState() to check completion
+	if a.SearchProcess.GetCurrentState().IsComplete {
+		resultPage := ui.NewResultPage(a, a.SearchProcess.GetCurrentState()) // Pass the SearchState
+		a.navManager.ShowModal(ui.PageResultID, resultPage)
+	}
+
+	state := a.SearchProcess.GetCurrentState()
+	if state.IsComplete || a.SearchProcess.WasLastTestVerification() {
+		resultPage := ui.NewResultPage(a, state)
 		a.navManager.ShowModal(ui.PageResultID, resultPage)
 	}
 }

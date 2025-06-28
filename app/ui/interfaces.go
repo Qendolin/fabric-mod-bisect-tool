@@ -25,8 +25,9 @@ type AppInterface interface {
 	StartModLoad(path string)
 	Stop()
 	GetLogger() *logging.Logger
-	GetSearcher() *conflict.Searcher
+	GetSearchProcess() *conflict.SearchProcess
 	GetModState() *mods.StateManager
+	GetResolver() *mods.DependencyResolver
 	Step()
 	Undo()
 	ResetSearch()

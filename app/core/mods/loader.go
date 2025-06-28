@@ -25,7 +25,7 @@ var (
 
 // ModLoaderService defines the interface for loading mod information.
 type ModLoaderService interface {
-	LoadMods(modsDir string, progressReport func(fileNameBeingProcessed string)) (
+	LoadMods(modsDir string, overrides *DependencyOverrides, progressReport func(fileNameBeingProcessed string)) (
 		allMods map[string]*Mod,
 		potentialProviders PotentialProvidersMap,
 		sortedModIDs []string,
@@ -64,7 +64,7 @@ type parsedModFile struct {
 }
 
 // LoadMods discovers mods, parses metadata, resolves basic conflicts, and builds provider maps.
-func (s *defaultModLoaderService) LoadMods(modsDir string, progressReport func(fileNameBeingProcessed string)) (
+func (s *defaultModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport func(fileNameBeingProcessed string)) (
 	map[string]*Mod, PotentialProvidersMap, []string, error) {
 
 	potentialProviders := make(PotentialProvidersMap)
@@ -86,6 +86,12 @@ func (s *defaultModLoaderService) LoadMods(modsDir string, progressReport func(f
 	allMods := make(map[string]*Mod)
 	if err := resolveModConflicts(parsedFileResults, allMods, modsDir); err != nil {
 		logging.Errorf("Loader: Error during mod conflict resolution: %v. Proceeding with available mods.", err)
+	}
+
+	if overrides != nil && len(overrides.Rules) > 0 {
+		logging.Info("Loader: Applying dependency overrides...")
+		s.applyOverridesToLoadedMods(allMods, overrides)
+		logging.Info("Loader: Dependency overrides applied.")
 	}
 
 	populateProviderMaps(allMods, potentialProviders)
@@ -642,4 +648,40 @@ func readZipFileEntry(f *zip.File) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
+}
+
+func (s *defaultModLoaderService) applyOverridesToLoadedMods(mods map[string]*Mod, overrides *DependencyOverrides) {
+	if overrides == nil || len(overrides.Rules) == 0 {
+		return
+	}
+
+	for _, rule := range overrides.Rules {
+		targetMod, exists := mods[rule.TargetModID]
+		if !exists {
+			logging.Warnf("Loader: Dependency override for unknown mod '%s'. Skipping rule.", rule.TargetModID)
+			continue
+		}
+
+		// Ensure the Depends map is not nil
+		if targetMod.FabricInfo.Depends == nil {
+			targetMod.FabricInfo.Depends = make(map[string]interface{})
+		}
+
+		switch rule.Action {
+		case ActionAdd: // Add or override
+			logging.Infof("Loader: Applying override: mod '%s' now depends on '%s' with version '%s'.", rule.TargetModID, rule.DependencyID, rule.VersionMatcher)
+			targetMod.FabricInfo.Depends[rule.DependencyID] = rule.VersionMatcher
+		case ActionRemove: // Remove
+			if _, ok := targetMod.FabricInfo.Depends[rule.DependencyID]; ok {
+				logging.Infof("Loader: Applying override: removing dependency on '%s' from mod '%s'.", rule.DependencyID, rule.TargetModID)
+				delete(targetMod.FabricInfo.Depends, rule.DependencyID)
+			}
+		case ActionReplace:
+			// NOTE: A full replacement is tricky. The current parsing treats it as a series of adds.
+			// A true replacement would clear the map first. This requires careful handling.
+			// For now, we log a warning and add/override as per the parsed rule.
+			logging.Warnf("Loader: 'replace' override action for 'depends' block on mod '%s' is being treated as add/override.", rule.TargetModID)
+			targetMod.FabricInfo.Depends[rule.DependencyID] = rule.VersionMatcher
+		}
+	}
 }
