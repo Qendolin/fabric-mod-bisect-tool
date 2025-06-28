@@ -32,12 +32,12 @@ func NewResultPage(app AppInterface, state conflict.SearchState) *ResultPage {
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetText(message)
-	textView.SetBorderPadding(0, 0, 1, 1)
+	textView.SetBorderPadding(1, 0, 1, 1)
 
 	explanationView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetText(explanation)
-	explanationView.SetBorderPadding(0, 0, 1, 1)
+	explanationView.SetBorderPadding(1, 1, 1, 1)
 
 	messageFrame := NewTitleFrame(textView, "Result")
 	explanationFrame := NewTitleFrame(explanationView, "What to do next")
@@ -62,9 +62,8 @@ func NewResultPage(app AppInterface, state conflict.SearchState) *ResultPage {
 		AddItem(closeButton, 15, 1, true).
 		AddItem(tview.NewBox(), 0, 1, false)
 
-	p.AddItem(messageFrame, 0, 1, false).
-		AddItem(explanationFrame, 0, 1, false).
-		AddItem(tview.NewBox(), 0, 1, false).
+	p.AddItem(messageFrame, 0, 2, false).
+		AddItem(explanationFrame, 5, 0, false).
 		AddItem(buttonLayout, 3, 0, true)
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -98,16 +97,16 @@ func (p *ResultPage) formatContent(state conflict.SearchState) (title, message, 
 	if state.IsComplete {
 		title = "Search Complete"
 		if len(state.ConflictSet) > 0 {
-			message = fmt.Sprintf("\nFound [yellow::b]%d[-:-:-] problematic mod(s):\n\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
-			explanation = "\n- Try disabling just these mods and launching the game to confirm.\n- Report the incompatibility to the mod authors."
+			message = fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s):\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
+			explanation = "- Try disabling just these mods and launching the game to confirm.\n- Report the incompatibility to the mod authors."
 		} else {
-			message = "\nNo conflict was found."
-			explanation = "\nThe bisection process completed without isolating a specific cause for failure."
+			message = "No problematic mods were found."
+			explanation = "The bisection process completed without isolating a specific cause for failure."
 		}
 	} else if state.LastFoundElement != "" {
 		title = "Intermediate Result"
-		message = fmt.Sprintf("\nFound [yellow::b]%d[-:-:-] problematic mod(s) so far:\n\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
-		explanation = "\nThe last test isolated a new conflict element.\n\nPress '[::b]S[-:-:-]' on the main page to continue the search."
+		message = fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s) so far:\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
+		explanation = "The last test isolated a new conflict element, but there are more!\nPress '[::b]S[-:-:-]' on the main page to continue the search."
 	}
 	return
 }

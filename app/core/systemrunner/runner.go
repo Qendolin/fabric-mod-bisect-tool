@@ -18,7 +18,7 @@ const (
 	// GOOD indicates the test ran successfully without the undesirable outcome.
 	GOOD Result = "GOOD"
 	// This is the initial value
-	UNKNOWN Result = ""
+	UNDEFINED Result = ""
 )
 
 // Executor is a function that performs the actual system test.
