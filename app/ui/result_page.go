@@ -3,9 +3,9 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,51 +15,45 @@ const PageResultID = "result_page"
 // ResultPage displays the final or intermediate results of the bisection search.
 type ResultPage struct {
 	*tview.Flex
-	app        AppInterface
-	statusText *tview.TextView
+	app         AppInterface
+	statusText  *tview.TextView
+	resultView  *tview.TextView
+	closeButton *tview.Button
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app AppInterface, state conflict.SearchState) *ResultPage {
+func NewResultPage(app AppInterface, state imcs.SearchState, dependers sets.Set) *ResultPage {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
 
-	title, message, explanation := p.formatContent(state)
+	title, message, explanation := p.formatContent(state, sets.MakeSlice(dependers))
 
-	textView := tview.NewTextView().
+	p.resultView = tview.NewTextView().
 		SetDynamicColors(true).
+		SetWordWrap(true).
 		SetText(message)
-	textView.SetBorderPadding(1, 0, 1, 1)
+	p.resultView.SetBorderPadding(1, 0, 1, 1)
 
 	explanationView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetText(explanation)
 	explanationView.SetBorderPadding(1, 1, 1, 1)
 
-	messageFrame := NewTitleFrame(textView, "Result")
+	messageFrame := NewTitleFrame(p.resultView, "Result")
 	explanationFrame := NewTitleFrame(explanationView, "What to do next")
 
-	closeButton := tview.NewButton("Close").
+	p.closeButton = tview.NewButton("Close").
 		SetSelectedFunc(func() {
 			p.app.Navigation().CloseModal()
 		})
-	closeButton.SetDisabled(true)
-	DefaultStyleButton(closeButton)
-
-	// prevent accidental input
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		p.app.QueueUpdateDraw(func() {
-			closeButton.SetDisabled(false)
-		})
-	}()
+	DefaultStyleButton(p.closeButton)
 
 	buttonLayout := tview.NewFlex().
 		AddItem(tview.NewBox(), 0, 1, false).
-		AddItem(closeButton, 15, 1, true).
+		AddItem(p.closeButton, 15, 1, true).
 		AddItem(tview.NewBox(), 0, 1, false)
 
 	p.AddItem(messageFrame, 0, 2, false).
@@ -80,34 +74,55 @@ func NewResultPage(app AppInterface, state conflict.SearchState) *ResultPage {
 }
 
 // formatContent generates the appropriate text based on the search state.
-func (p *ResultPage) formatContent(state conflict.SearchState) (title, message, explanation string) {
-	modState := p.app.GetModState()
+func (p *ResultPage) formatContent(state imcs.SearchState, dependers []string) (title, message, explanation string) {
+	modState := p.app.GetStateManager()
 	mods := modState.GetAllMods()
 
-	conflictMods := setToSlice(state.ConflictSet)
-	var conflictModsList []string
-	for _, id := range conflictMods {
-		modInfo := ""
-		if mod, ok := mods[id]; ok {
-			modInfo = fmt.Sprintf("(%s %s) in '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
-		}
-		conflictModsList = append(conflictModsList, fmt.Sprintf(" - [red::b]%s[-:-:-] %s", id, modInfo))
-	}
+	conflictMods := sets.MakeSlice(state.ConflictSet)
+	var messageBuilder strings.Builder
 
 	if state.IsComplete {
 		title = "Search Complete"
-		if len(state.ConflictSet) > 0 {
-			message = fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s):\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
-			explanation = "- Try disabling just these mods and launching the game to confirm.\n- Report the incompatibility to the mod authors."
+		if len(conflictMods) > 0 {
+			messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s):\n", len(conflictMods)))
+			for _, id := range conflictMods {
+				modInfo := ""
+				if mod, ok := mods[id]; ok {
+					modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
+				}
+				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+			}
+
+			if len(dependers) > 0 {
+				messageBuilder.WriteString(fmt.Sprintf("\nThese %d mod(s) must also be disabled as they depend on the problematic mods:\n", len(dependers)))
+				for _, id := range dependers {
+					modInfo := ""
+					if mod, ok := mods[id]; ok {
+						modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
+					}
+					messageBuilder.WriteString(fmt.Sprintf("  - [yellow]%s[-:-:-] %s\n", id, modInfo))
+				}
+			}
+			explanation = "To fix the issue, disable all mods listed above and then relaunch the game.\nOnce confirmed, please report the incompatibility to the mod authors."
+
 		} else {
-			message = "No problematic mods were found."
+			messageBuilder.WriteString("No problematic mods were found.")
 			explanation = "The bisection process completed without isolating a specific cause for failure."
 		}
 	} else if state.LastFoundElement != "" {
 		title = "Intermediate Result"
-		message = fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s) so far:\n%s\n", len(conflictMods), strings.Join(conflictModsList, "\n"))
-		explanation = "The last test isolated a new conflict element, but there are more!\nPress '[::b]S[-:-:-]' on the main page to continue the search."
+		messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s) so far:\n", len(conflictMods)))
+		for _, id := range conflictMods {
+			modInfo := ""
+			if mod, ok := mods[id]; ok {
+				modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+			}
+			messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+		}
+		explanation = "The last test isolated a new conflict, but there may be more!\nPress '[::b]S[-:-:-]' on the main page to continue the search."
 	}
+
+	message = messageBuilder.String()
 	return
 }
 
@@ -115,10 +130,16 @@ func (p *ResultPage) formatContent(state conflict.SearchState) (title, message, 
 func (p *ResultPage) GetActionPrompts() map[string]string {
 	return map[string]string{
 		"Enter/ESC": "Close",
+		"↑/↓":       "Scroll Text",
 	}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status
 func (p *ResultPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
+}
+
+// GetStatusPrimitive returns the tview.Primitive that displays the page's status
+func (p *ResultPage) GetFocusablePrimitives() []tview.Primitive {
+	return []tview.Primitive{p.resultView, p.closeButton}
 }

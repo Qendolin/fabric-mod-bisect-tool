@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -8,11 +9,11 @@ import (
 // OverviewWidget is a single-row visual representation of mod sets.
 type OverviewWidget struct {
 	*tview.Box
-	allMods       []string
-	problemMods   map[string]struct{}
-	goodMods      map[string]struct{}
-	candidateMods map[string]struct{}
-	effectiveMods map[string]struct{}
+	allMods      []string
+	conflictSet  sets.Set
+	clearedSet   sets.Set
+	candidateSet sets.Set
+	effectiveSet sets.Set
 }
 
 // NewOverviewWidget creates a new widget. allMods should be a sorted list.
@@ -32,11 +33,11 @@ func (w *OverviewWidget) SetAllMods(allMods []string) {
 }
 
 // UpdateState provides the widget with the current sets to display.
-func (w *OverviewWidget) UpdateState(problemMods, goodMods, candidateMods, effectiveMods map[string]struct{}) {
-	w.problemMods = problemMods
-	w.goodMods = goodMods
-	w.candidateMods = candidateMods
-	w.effectiveMods = effectiveMods
+func (w *OverviewWidget) UpdateState(problemMods, goodMods, candidateMods, effectiveMods sets.Set) {
+	w.conflictSet = problemMods
+	w.clearedSet = goodMods
+	w.candidateSet = candidateMods
+	w.effectiveSet = effectiveMods
 }
 
 // Draw implements tview.Primitive.
@@ -63,7 +64,7 @@ func (w *OverviewWidget) Draw(screen tcell.Screen) {
 // calculateSplitPointX determines the screen X-coordinate for the bisection split line.
 // Returns -1 if no split line should be drawn.
 func (w *OverviewWidget) calculateSplitPointX(drawX, drawWidth int) int {
-	if len(w.candidateMods) == 0 {
+	if len(w.candidateSet) == 0 {
 		return -1 // No candidates, no split.
 	}
 
@@ -71,7 +72,7 @@ func (w *OverviewWidget) calculateSplitPointX(drawX, drawWidth int) int {
 	candidateStartIndex := -1
 	candidateEndIndex := -1
 	for i, modID := range w.allMods {
-		if _, isCandidate := w.candidateMods[modID]; isCandidate {
+		if _, isCandidate := w.candidateSet[modID]; isCandidate {
 			if candidateStartIndex == -1 {
 				candidateStartIndex = i
 			}
@@ -140,20 +141,20 @@ func (w *OverviewWidget) determineColor(modIDs []string) tcell.Color {
 
 	for _, id := range modIDs {
 		// Highest priority first, with early exit.
-		if _, ok := w.problemMods[id]; ok {
+		if _, ok := w.conflictSet[id]; ok {
 			highestPriority = 5
 			break
 		}
 
-		if _, ok := w.goodMods[id]; ok {
+		if _, ok := w.clearedSet[id]; ok {
 			if highestPriority < 4 {
 				highestPriority = 4
 			}
-		} else if _, ok := w.candidateMods[id]; ok {
+		} else if _, ok := w.candidateSet[id]; ok {
 			if highestPriority < 2 {
 				highestPriority = 2
 			}
-		} else if _, ok := w.effectiveMods[id]; ok {
+		} else if _, ok := w.effectiveSet[id]; ok {
 			if highestPriority < 1 {
 				highestPriority = 1
 			}

@@ -1,6 +1,10 @@
-package conflict
+package imcs
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+)
 
 var errHistoryEmpty = errors.New("history is empty")
 
@@ -48,7 +52,7 @@ func (s *UndoStack) Size() int {
 // deepCopyState creates a new SearchState with all maps and slices copied.
 func deepCopyState(state SearchState) SearchState {
 	// This function contains the logic you had in your original Push method.
-	copiedConflictSet := make(map[string]struct{}, len(state.ConflictSet))
+	copiedConflictSet := make(sets.Set, len(state.ConflictSet))
 	for k := range state.ConflictSet {
 		copiedConflictSet[k] = struct{}{}
 	}
@@ -56,22 +60,22 @@ func deepCopyState(state SearchState) SearchState {
 	copiedCandidates := make([]string, len(state.Candidates))
 	copy(copiedCandidates, state.Candidates)
 
-	copiedBackground := make(map[string]struct{}, len(state.Background))
-	for k := range state.Background {
-		copiedBackground[k] = struct{}{}
+	copiedStableSet := make(sets.Set, len(state.StableSet))
+	for k := range state.StableSet {
+		copiedStableSet[k] = struct{}{}
 	}
 
 	copiedSearchStack := make([]SearchStep, len(state.SearchStack))
 	for i, step := range state.SearchStack {
-		copiedStepBackground := make(map[string]struct{}, len(step.Background))
-		for k := range step.Background {
-			copiedStepBackground[k] = struct{}{}
+		copiedStepStableSet := make(sets.Set, len(step.StableSet))
+		for k := range step.StableSet {
+			copiedStepStableSet[k] = struct{}{}
 		}
 		copiedStepCandidates := make([]string, len(step.Candidates))
 		copy(copiedStepCandidates, step.Candidates)
 
 		copiedSearchStack[i] = SearchStep{
-			Background: copiedStepBackground,
+			StableSet:  copiedStepStableSet,
 			Candidates: copiedStepCandidates,
 		}
 	}
@@ -79,7 +83,7 @@ func deepCopyState(state SearchState) SearchState {
 	return SearchState{
 		ConflictSet:            copiedConflictSet,
 		Candidates:             copiedCandidates,
-		Background:             copiedBackground,
+		StableSet:              copiedStableSet,
 		SearchStack:            copiedSearchStack,
 		IsVerifyingConflictSet: state.IsVerifyingConflictSet,
 		AllModIDs:              state.AllModIDs, // This can be a shallow copy as it's immutable reference data

@@ -53,7 +53,8 @@ func (n *NavigationManager) updateUIForPage(page Page) {
 // SwitchTo changes the main visible page to the one specified by pageID.
 // It also manages the navigation history for the GoBack() function.
 func (n *NavigationManager) SwitchTo(pageID string) {
-	if _, ok := n.persistentPages[pageID]; !ok {
+	page, ok := n.persistentPages[pageID]
+	if !ok {
 		return // Do not switch to an unregistered page
 	}
 
@@ -67,6 +68,10 @@ func (n *NavigationManager) SwitchTo(pageID string) {
 
 	n.pages.SwitchToPage(pageID)
 	n.updateUIForPage(n.persistentPages[pageID])
+
+	if activator, ok := page.(PageActivator); ok {
+		activator.OnPageActivated()
+	}
 }
 
 // GoBack navigates to the previous page in the history stack.
@@ -80,7 +85,12 @@ func (n *NavigationManager) GoBack() {
 	n.history = n.history[:len(n.history)-1]
 
 	n.pages.SwitchToPage(lastPageID)
-	n.updateUIForPage(n.persistentPages[lastPageID])
+	lastPage := n.persistentPages[lastPageID]
+	n.updateUIForPage(lastPage)
+
+	if activator, ok := lastPage.(PageActivator); ok {
+		activator.OnPageActivated()
+	}
 }
 
 // ShowModal displays a transient page (like a dialog) over the current view.
@@ -102,7 +112,12 @@ func (n *NavigationManager) CloseModal() {
 	n.pages.RemovePage(modalID)
 
 	// Update UI for the page that is now in front
-	n.updateUIForPage(n.GetCurrentPage())
+	currentPage := n.GetCurrentPage()
+	n.updateUIForPage(currentPage)
+
+	if activator, ok := currentPage.(PageActivator); ok {
+		activator.OnPageActivated()
+	}
 }
 
 // GetCurrentPage returns the Page interface of the front-most primitive.

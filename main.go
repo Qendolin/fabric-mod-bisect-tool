@@ -33,7 +33,8 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// 3. Create the App structure, passing the configured logger
-	a := app.NewApp(mainLogger)
+	cliArgs := app.ParseCLIArgs()
+	a := app.NewApp(mainLogger, cliArgs)
 
 	// 4. Goroutine to handle OS signals
 	go func() {

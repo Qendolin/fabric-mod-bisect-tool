@@ -1,4 +1,4 @@
-package systemrunner
+package mods
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
@@ -15,7 +15,7 @@ const disabledExtension = ".disabled"
 // ModActivator manages the physical file state of mods (enabled/disabled).
 type ModActivator struct {
 	modsDir string
-	allMods map[string]*mods.Mod
+	allMods map[string]*Mod
 	// currentActivations tracks the last known physical active state of each mod file.
 	// This map stores modID -> true if the file is currently active (.jar), false if disabled (.jar.disabled).
 	// This state is updated *after* a successful rename operation.
@@ -24,7 +24,7 @@ type ModActivator struct {
 
 // NewModActivator creates a new activator.
 // It initializes the internal tracking based on the mod's initial active state.
-func NewModActivator(modsDir string, allMods map[string]*mods.Mod) *ModActivator {
+func NewModActivator(modsDir string, allMods map[string]*Mod) *ModActivator {
 	activations := make(map[string]bool, len(allMods))
 	for id, mod := range allMods {
 		activations[id] = mod.IsInitiallyActive
@@ -47,7 +47,7 @@ type BatchStateChange struct {
 
 // Apply calculates and executes the necessary file renames to achieve the effectiveSet state.
 // It performs a batch of renames and returns the list of changes made.
-func (ma *ModActivator) Apply(effectiveSet map[string]struct{}) ([]BatchStateChange, error) {
+func (ma *ModActivator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error) {
 	changes := ma.calculateChanges(effectiveSet)
 	if len(changes) == 0 {
 		return nil, nil
@@ -123,7 +123,7 @@ func (ma *ModActivator) EnableAll() error {
 	logging.Info("Activator: Enabling all mods for a clean initial state.")
 
 	// Create a target set that includes all known mods
-	targetSet := make(map[string]struct{}, len(ma.allMods))
+	targetSet := make(sets.Set, len(ma.allMods))
 	for id := range ma.allMods {
 		targetSet[id] = struct{}{}
 	}
@@ -138,7 +138,7 @@ func (ma *ModActivator) EnableAll() error {
 
 // calculateChanges determines which files need to be renamed based on the desired effective set
 // and the current physical state of mod files on disk as tracked by the activator.
-func (ma *ModActivator) calculateChanges(effectiveSet map[string]struct{}) []BatchStateChange {
+func (ma *ModActivator) calculateChanges(effectiveSet sets.Set) []BatchStateChange {
 	var changes []BatchStateChange
 	for id, mod := range ma.allMods {
 		isCurrentlyActive := ma.currentActivations[id] // The physical state as tracked by activator

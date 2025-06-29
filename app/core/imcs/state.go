@@ -1,18 +1,30 @@
-package conflict
+package imcs
 
 import (
 	"sort"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+)
+
+// TestResult indicates the outcome of a test run.
+type TestResult string
+
+const (
+	// TestResultFail indicates the test exhibited the undesirable outcome.
+	TestResultFail TestResult = "FAIL"
+	// TestResultGood indicates the test ran successfully without the undesirable outcome.
+	TestResultGood TestResult = "GOOD"
+	// This is the initial value
+	TestResultUndefined TestResult = ""
 )
 
 // SearchStep represents a single logical step (or frame) in the
 // iterative implementation of the `FindNextConflictElement` bisection algorithm.
-// Each step contains the local context (background and candidates) relevant
+// Each step contains the local context (StableSet and Candidates) relevant
 // to that specific recursive call, pushed onto the SearchState's SearchStack.
 type SearchStep struct {
-	// Mods assumed to be active for this specific bisection step.
-	Background map[string]struct{}
+	// A set of components known to be safe (not part of the conflict) in the current search context.
+	StableSet sets.Set
 	// Mods currently being searched within for this specific bisection step.
 	// It is the union of C_1 and C_2.
 	Candidates []string
@@ -23,19 +35,19 @@ type SearchState struct {
 	// --- Fields representing the state of the main "FindConflictSet" procedure ---
 
 	// ConflictSet contains mods already identified as part of the minimal conflict set.
-	ConflictSet map[string]struct{}
+	ConflictSet sets.Set
 	// Candidates is the global pool of mods remaining to be searched for conflicts.
 	// This set only shrinks when a new element is added to ConflictSet.
 	Candidates []string
-	// Background is the set of mods globally proven to be "good" and not part of any
+	// StableSet is the set of mods globally proven to be "good" and not part of any
 	// conflict. It grows as bisections on candidate sets result in GOOD.
-	Background map[string]struct{}
+	StableSet sets.Set
 
 	// --- Fields representing the state of the "FindNextConflictElement" bisection ---
 
 	// SearchStack is an iterative implementation of the recursive "FindNextConflictElement"
 	// procedure. Each SearchStep on the stack is a snapshot of a recursive call's arguments
-	// (the local background and local candidates for that bisection).
+	// (the local safe set and local candidates for that bisection).
 	SearchStack []SearchStep
 
 	// --- Global Metadata and Flags ---
@@ -49,15 +61,15 @@ type SearchState struct {
 	// LastFoundElement stores the ID of the most recently discovered conflict element.
 	LastFoundElement string
 	// LastTestResult stores the outcome of the test that produced this state.
-	LastTestResult systemrunner.Result
+	LastTestResult TestResult
 }
 
 // newSearchStep creates a search step with sorted candidates for determinism.
-func newSearchStep(background map[string]struct{}, candidates []string) SearchStep {
+func newSearchStep(stableSet sets.Set, candidates []string) SearchStep {
 	// Sorting ensures that the binary search partitioning is deterministic across runs.
 	sort.Strings(candidates)
 	return SearchStep{
-		Background: background,
+		StableSet:  stableSet,
 		Candidates: candidates,
 	}
 }
@@ -70,9 +82,9 @@ func NewInitialState(allModIDs []string) SearchState {
 	sort.Strings(sortedInitialCandidates)
 
 	return SearchState{
-		ConflictSet:            make(map[string]struct{}),
+		ConflictSet:            make(sets.Set),
 		Candidates:             sortedInitialCandidates,
-		Background:             make(map[string]struct{}),
+		StableSet:              make(sets.Set),
 		SearchStack:            make([]SearchStep, 0),
 		IsVerifyingConflictSet: false,
 		AllModIDs:              allModIDs,
@@ -91,15 +103,32 @@ func (s SearchState) GetCurrentStep() (SearchStep, bool) {
 	return s.SearchStack[len(s.SearchStack)-1], true
 }
 
-// GetBisectionSets determines the current C1 and C2 sets based on the state.
-// It returns the background for the test, and the C1 and C2 sets.
-func (s SearchState) GetBisectionSets() (background, candidates map[string]struct{}) {
+// GetStableSet determines the current StableSet based on the state.
+func (s SearchState) GetStableSet() (stable sets.Set) {
 	if step, ok := s.GetCurrentStep(); ok {
 		// Mid-bisection: use the context from the top of the stack.
-		return step.Background, stringSliceToSet(step.Candidates)
+		return step.StableSet
 	} else {
 		// Start of a new bisection: use the top-level candidates.
-		// The background for a new bisection is the conflict set.
-		return s.ConflictSet, stringSliceToSet(s.Candidates)
+		// The StableSet for a new bisection is the conflict set.
+		return s.ConflictSet
+	}
+}
+
+// GetCandidateSet determines the current StableSet based on the state.
+func (s SearchState) GetCandidateSet() (candidates sets.Set) {
+	if step, ok := s.GetCurrentStep(); ok {
+		return sets.MakeSet(step.Candidates)
+	} else {
+		return sets.MakeSet(s.Candidates)
+	}
+}
+
+// GetClearedSet calculates the implicit ClearedSet
+func (s SearchState) GetClearedSet() (cleared sets.Set) {
+	if step, ok := s.GetCurrentStep(); ok {
+		return sets.Subtract(step.StableSet, s.ConflictSet)
+	} else {
+		return sets.Subtract(s.StableSet, s.ConflictSet)
 	}
 }
