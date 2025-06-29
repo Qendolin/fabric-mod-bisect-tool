@@ -1,17 +1,17 @@
-package conflict
+package imcs
 
-import "github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
+import "github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 
 // TestPlan is an immutable object representing a single, well-defined test.
 type TestPlan struct {
-	ModIDsToTest       map[string]struct{}
+	ModIDsToTest       sets.Set
 	IsVerificationStep bool
 }
 
 // CompletedTest is a record of a test that was planned and executed.
 type CompletedTest struct {
 	Plan            TestPlan
-	Result          systemrunner.Result
+	Result          TestResult
 	StateBeforeTest SearchState
 }
 

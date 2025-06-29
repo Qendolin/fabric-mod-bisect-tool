@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -39,14 +40,20 @@ func NewSetupPage(app AppInterface) *SetupPage {
 	p.inputField.SetBlurFunc(func() {
 		p.inputField.SetFieldBackgroundColor(tcell.ColorSlateGray)
 	})
+	p.inputField.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			p.app.SetFocus(p.loadButton)
+		}
+	})
 
 	p.loadButton = tview.NewButton("Load Mods").SetSelectedFunc(func() {
-		if p.inputField.GetText() == "" {
+		if strings.TrimSpace(p.inputField.GetText()) == "" {
 			app.Dialogs().ShowErrorDialog("Error", "Mods path cannot be empty.", nil)
 			return
 		}
-		app.StartModLoad(filepath.Clean(p.inputField.GetText()))
+		app.StartLoadingProcess(filepath.Clean(p.inputField.GetText()))
 	})
+
 	DefaultStyleButton(p.loadButton)
 
 	p.loadStateButton = tview.NewButton("Load Saved State").SetSelectedFunc(func() {

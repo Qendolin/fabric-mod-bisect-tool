@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -27,8 +28,10 @@ type HistoryPage struct {
 	detailSummaryText    *tview.TextView
 	detailSetsText       *tview.TextView
 
-	historyCache []conflict.CompletedTest
+	historyCache []imcs.CompletedTest
 }
+
+// TODO: Implement PageActivator, and make HistoryPage peristent, instead of a modal
 
 // NewHistoryPage creates a new page for viewing bisection history.
 func NewHistoryPage(app AppInterface) *HistoryPage {
@@ -89,14 +92,16 @@ func (p *HistoryPage) setInputCapture() {
 func (p *HistoryPage) refreshHistory() {
 	p.masterList.Clear()
 
-	if p.app.GetSearchProcess() == nil {
-		p.masterList.AddItem(tview.NewTextView().SetText("Process not started yet."), 1, 0, false)
+	vm := p.app.GetViewModel()
+
+	if !vm.IsReady {
+		p.masterList.AddItem(tview.NewTextView().SetText("Bisect process not ready."), 1, 0, false)
 		p.updateDetailView(-1)
 		return
 	}
 
-	p.historyCache = p.app.GetSearchProcess().GetExecutionLog().GetEntries()
-	allMods := p.app.GetModState().GetAllModIDs()
+	p.historyCache = vm.ExecutionLog
+	allMods := p.app.GetStateManager().GetAllModIDs()
 	p.detailOverviewWidget.SetAllMods(allMods)
 
 	if len(p.historyCache) == 0 {
@@ -106,11 +111,7 @@ func (p *HistoryPage) refreshHistory() {
 	}
 
 	for i, entry := range p.historyCache {
-		iteration := len(entry.StateBeforeTest.ConflictSet) + 1
-		// FIXME: duplicate code (not just this)
-		if entry.Plan.IsVerificationStep {
-			iteration -= 1
-		}
+		iteration := p.getIterationNumber(&entry)
 		step := i + 1
 		summary := fmt.Sprintf("Step %d (Iter %d): [yellow]%s[-]",
 			step, iteration, entry.Result)
@@ -144,17 +145,17 @@ func (p *HistoryPage) refreshHistory() {
 	}
 }
 
-func (p *HistoryPage) updateOverviewState(overview *OverviewWidget, entry *conflict.CompletedTest) {
-	// Use the sets from the entry's historical state for
-	good, candidates := entry.StateBeforeTest.GetBisectionSets()
-	effective, _ := p.app.GetResolver().ResolveEffectiveSet(setToSlice(entry.Plan.ModIDsToTest), p.app.GetModState().GetAllMods(), p.app.GetModState().GetPotentialProviders(), p.app.GetModState().GetModStatusesSnapshot())
-	if entry.StateBeforeTest.IsVerifyingConflictSet {
-		// This makes the display more intuitive
-		candidates = map[string]struct{}{}
+func (p *HistoryPage) updateOverviewState(overview *OverviewWidget, entry *imcs.CompletedTest) {
+	effective, _ := p.app.GetStateManager().ResolveEffectiveSet(entry.Plan.ModIDsToTest)
+
+	candidates := sets.Set{}
+	// This makes the display more intuitive
+	if !entry.StateBeforeTest.IsVerifyingConflictSet {
+		candidates = entry.StateBeforeTest.GetCandidateSet()
 	}
-	// Don't show problematic mods as good
-	good = subtractSet(good, entry.StateBeforeTest.ConflictSet)
-	overview.UpdateState(entry.StateBeforeTest.ConflictSet, good, candidates, effective)
+
+	cleared := entry.StateBeforeTest.GetClearedSet()
+	overview.UpdateState(entry.StateBeforeTest.ConflictSet, cleared, candidates, effective)
 }
 
 // updateDetailView shows the details for the selected history entry.
@@ -170,10 +171,8 @@ func (p *HistoryPage) updateDetailView(index int) {
 	p.updateOverviewState(p.detailOverviewWidget, &entry)
 
 	// Derive summary text
-	iteration := len(entry.StateBeforeTest.ConflictSet) + 1
-	if entry.Plan.IsVerificationStep {
-		iteration -= 1
-	}
+	iteration := p.getIterationNumber(&entry)
+
 	step := index + 1
 	numTested := len(entry.Plan.ModIDsToTest)
 	numCandidates := len(entry.StateBeforeTest.Candidates)
@@ -193,12 +192,11 @@ func (p *HistoryPage) updateDetailView(index int) {
 	p.detailSummaryText.SetText(summary)
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
-	problematicList := setToSlice(entry.StateBeforeTest.ConflictSet)
-	testSetList := setToSlice(entry.Plan.ModIDsToTest)
-	good := subtractSet(entry.StateBeforeTest.Background, entry.StateBeforeTest.ConflictSet)
-	goodList := setToSlice(good)
+	problematicList := sets.MakeSlice(entry.StateBeforeTest.ConflictSet)
+	testSetList := sets.MakeSlice(entry.Plan.ModIDsToTest)
+	goodList := sets.MakeSlice(entry.StateBeforeTest.GetClearedSet())
 
-	sets := fmt.Sprintf("[::b]Problematic Mods[-:-:-] (%d):\n%s\n\n[::b]Mods Tested[-:-:-] (%d):\n%s\n\n[::b]Good Mods[-:-:-] (%d):\n%s",
+	sets := fmt.Sprintf("[::b]Problematic Mods[-:-:-] (%d):\n%s\n\n[::b]Mods Tested[-:-:-] (%d):\n%s\n\n[::b]Cleared Mods[-:-:-] (%d):\n%s",
 		len(problematicList), strings.Join(problematicList, "\n"),
 		len(testSetList), strings.Join(testSetList, "\n"),
 		len(goodList), strings.Join(goodList, "\n"))
@@ -222,4 +220,12 @@ func (p *HistoryPage) GetFocusablePrimitives() []tview.Primitive {
 		p.masterList,
 		p.detailSetsText,
 	}
+}
+
+func (p *HistoryPage) getIterationNumber(entry *imcs.CompletedTest) int {
+	iteration := len(entry.StateBeforeTest.ConflictSet)
+	if entry.Plan.IsVerificationStep {
+		return iteration
+	}
+	return iteration + 1
 }

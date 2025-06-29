@@ -1,33 +1,51 @@
 package ui
 
 import (
-	"context"
-
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/rivo/tview"
 )
 
+// BisectionViewModel provides a snapshot of the current bisection state,
+// tailored for UI consumption. It decouples the UI from the underlying engine's implementation.
+type BisectionViewModel struct {
+	IsReady            bool
+	IsComplete         bool
+	IsVerificationStep bool
+	StepCount          int
+	Iteration          int
+	EstimatedMaxTests  int
+	LastTestResult     imcs.TestResult
+	AllModIDs          []string
+	ConflictSet        sets.Set
+	CandidateSet       sets.Set
+	ClearedSet         sets.Set
+	ActiveTestPlan     *imcs.TestPlan
+	NextTestPlan       *imcs.TestPlan
+	ExecutionLog       []imcs.CompletedTest
+}
+
 // AppInterface defines methods the UI layer needs to access from the main App struct.
 // It acts as a facade for UI components to interact with the application's core.
 type AppInterface interface {
+	// --- UI methods & Managers ---
 	QueueUpdateDraw(f func()) *tview.Application
-	SetFocus(p tview.Primitive) *tview.Application
-	GetFocus() tview.Primitive
-	GetApplicationContext() context.Context
-	GetFocusManager() *FocusManager
+	Stop()
 	Navigation() *NavigationManager
 	Dialogs() *DialogManager
 	Layout() *LayoutManager
-	GetModLoader() mods.ModLoaderService
-	OnModsLoaded(modsPath string, allMods map[string]*mods.Mod, potentialProviders mods.PotentialProvidersMap, sortedModIDs []string)
-	StartModLoad(path string)
-	Stop()
 	GetLogger() *logging.Logger
-	GetSearchProcess() *conflict.SearchProcess
-	GetModState() *mods.StateManager
-	GetResolver() *mods.DependencyResolver
+	GetFocus() tview.Primitive
+	SetFocus(tview.Primitive)
+
+	// --- Core Logic ---
+	StartLoadingProcess(modsPath string)
+	GetViewModel() BisectionViewModel
+	GetStateManager() *mods.StateManager // StateManager is still needed for detailed mod info.
+
+	// --- Actions ---
 	Step()
 	Undo()
 	ResetSearch()
@@ -56,4 +74,11 @@ type Focusable interface {
 	// GetFocusablePrimitives returns a slice of the immediate child primitives
 	// that can receive focus.
 	GetFocusablePrimitives() []tview.Primitive
+}
+
+// PageActivator defines an interface for pages that need to perform an action
+// (like refreshing their content) when they become the active page.
+type PageActivator interface {
+	// OnPageActivated is called by the NavigationManager when the page is switched to.
+	OnPageActivated()
 }

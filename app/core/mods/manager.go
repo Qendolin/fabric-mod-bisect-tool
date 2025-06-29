@@ -2,6 +2,8 @@ package mods
 
 import (
 	"sort"
+
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 )
 
 // StateManager provides a way to manage the state of mods. It uses a synchronous
@@ -13,6 +15,9 @@ type StateManager struct {
 
 	// Stores the runtime status for each mod, mapping mod ID to its status.
 	modStatuses map[string]*ModStatus
+
+	// Internal dependency resolver.
+	resolver *DependencyResolver
 
 	// OnStateChanged is a callback function that is executed whenever the
 	// state of any mod is modified.
@@ -36,6 +41,7 @@ func NewStateManager(allMods map[string]*Mod, potentialProviders PotentialProvid
 		allMods:            allMods,
 		modStatuses:        modStatuses,
 		potentialProviders: potentialProviders,
+		resolver:           NewDependencyResolver(allMods, potentialProviders),
 	}
 }
 
@@ -88,6 +94,63 @@ func (sm *StateManager) SetManuallyGood(modID string, isGood bool) {
 	}
 }
 
+// SetForceEnabledBatch updates the force-enabled state for multiple mods at once.
+// It sends only a single notification after all changes are made.
+func (sm *StateManager) SetForceEnabledBatch(modIDs []string, enabled bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.ForceEnabled != enabled {
+				status.ForceEnabled = enabled
+				if enabled {
+					status.ForceDisabled = false
+				}
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
+// SetForceDisabledBatch updates the force-disabled state for multiple mods at once.
+// It sends only a single notification after all changes are made.
+func (sm *StateManager) SetForceDisabledBatch(modIDs []string, disabled bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.ForceDisabled != disabled {
+				status.ForceDisabled = disabled
+				if disabled {
+					status.ForceEnabled = false
+				}
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
+// SetManuallyGoodBatch updates the "manually good" state for multiple mods at once.
+// It sends only a single notification after all changes are made.
+func (sm *StateManager) SetManuallyGoodBatch(modIDs []string, isGood bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.ManuallyGood != isGood {
+				status.ManuallyGood = isGood
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
 // GetModStatus returns the current ModStatus for a given modID.
 // Returns nil and false if the modID is not found.
 func (sm *StateManager) GetModStatus(modID string) (*ModStatus, bool) {
@@ -120,7 +183,13 @@ func (sm *StateManager) GetAllMods() map[string]*Mod {
 	return sm.allMods
 }
 
-// GetPotentialProviders returns the map of potential dependency providers.
-func (sm *StateManager) GetPotentialProviders() PotentialProvidersMap {
-	return sm.potentialProviders
+// ResolveEffectiveSet calculates the set of active top-level mods based on the
+// given target set and the current mod statuses managed by the StateManager.
+func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) (sets.Set, []ResolutionInfo) {
+	return sm.resolver.ResolveEffectiveSet(targetSet, sm.GetModStatusesSnapshot())
+}
+
+// FindTransitiveDependersOf delegates the call to its internal dependency resolver.
+func (sm *StateManager) FindTransitiveDependersOf(targets sets.Set) sets.Set {
+	return sm.resolver.FindTransitiveDependersOf(targets)
 }

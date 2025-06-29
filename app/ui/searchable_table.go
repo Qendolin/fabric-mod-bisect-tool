@@ -110,6 +110,14 @@ func (st *SearchableTable) SetData(data [][]string) {
 	st.Filter(st.searchField.GetText())
 }
 
+// Clear implements a custom Clear method that targets the inner table,
+// preventing the Flex layout from being destroyed.
+func (st *SearchableTable) Clear() {
+	st.table.Clear()
+	st.rawData = nil
+	st.columnWidths = nil
+}
+
 // Filter re-populates the table based on the search query.
 // Replace the Filter method to use pre-calculated widths
 func (st *SearchableTable) Filter(query string) {
@@ -191,11 +199,6 @@ func (st *SearchableTable) calculateColumnWidths() {
 				widths[i] = width
 			}
 		}
-	}
-
-	// Add padding
-	for i := range widths {
-		widths[i] += 2 // Add 2 characters for padding
 	}
 
 	st.columnWidths = widths

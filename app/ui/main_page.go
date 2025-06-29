@@ -2,10 +2,9 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/conflict"
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/systemrunner"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -171,20 +170,25 @@ func (p *MainPage) GetFocusablePrimitives() []tview.Primitive {
 	}
 }
 
+// Add this new method to the MainPage struct to implement the PageActivator interface.
+func (p *MainPage) OnPageActivated() {
+	p.RefreshSearchState()
+}
+
 // RefreshSearchState is the main entry point for updating the page's content based on the latest state of the search process.
 func (p *MainPage) RefreshSearchState() {
-	searchProcess := p.app.GetSearchProcess()
-	if searchProcess == nil {
-		p.overviewText.SetText("Status: Waiting for mods to be loaded...")
-		p.stepButton.SetDisabled(true)
+	vm := p.app.GetViewModel()
+
+	if !vm.IsReady {
+		p.overviewText.SetText("Waiting for mods to be loaded and bisection to start...")
 		return
 	}
 
-	state := searchProcess.GetCurrentState()
-	p.updateOverview(state, searchProcess)
-	p.updateModLists(state, searchProcess)
-	p.updateTestGroupTab(state, searchProcess)
-	p.updateOverviewWidget(state, searchProcess)
+	// Pass by reference to avoid large copy
+	p.updateOverview(&vm)
+	p.updateModLists(&vm)
+	p.updateTestGroupTab(&vm)
+	p.updateOverviewWidget(&vm)
 }
 
 func (p *MainPage) GetActionPrompts() map[string]string {
@@ -198,115 +202,90 @@ func (p *MainPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
 }
 
-// updateOverview updates the main status text and action buttons.
-func (p *MainPage) updateOverview(state conflict.SearchState, sp *conflict.SearchProcess) {
-	status, buttonText := p.determineStatusAndButtonText(state, sp)
+// updateOverview updates the main status text and action buttons using the ViewModel.
+func (p *MainPage) updateOverview(vm *BisectionViewModel) {
+	status, buttonText := p.determineStatusAndButtonText(vm)
 	p.statusText.SetText(status)
 	p.stepButton.SetLabel(buttonText)
-	p.stepButton.SetDisabled(sp.GetActiveTestPlan() != nil)
+	p.stepButton.SetDisabled(vm.ActiveTestPlan != nil)
 
 	lastResultStr := "N/A"
-	if state.LastTestResult != systemrunner.UNDEFINED && state.LastTestResult != "" {
+	if vm.LastTestResult != imcs.TestResultUndefined {
 		color := "green"
-		if state.LastTestResult == systemrunner.FAIL {
+		if vm.LastTestResult == imcs.TestResultFail {
 			color = "red"
 		}
-		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, state.LastTestResult)
+		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, vm.LastTestResult)
 	}
 
 	overviewText := fmt.Sprintf(
 		"Status: %s\nProgress: Test %d / ~%d\nLast Result: %s\nFound Problems: %d",
-		status, sp.GetStepCount(), sp.GetEstimatedMaxTests(), lastResultStr, len(state.ConflictSet),
+		status, vm.StepCount, vm.EstimatedMaxTests, lastResultStr, len(vm.ConflictSet),
 	)
 	p.overviewText.SetText(overviewText)
 }
 
-// determineStatusAndButtonText computes the user-facing status string and the label for the main action button.
-func (p *MainPage) determineStatusAndButtonText(state conflict.SearchState, sp *conflict.SearchProcess) (status, buttonText string) {
-	activePlan := sp.GetActiveTestPlan()
-	isVerifying := (activePlan != nil && activePlan.IsVerificationStep) || (activePlan == nil && state.IsVerifyingConflictSet)
-
+// determineStatusAndButtonText computes the user-facing status string and button label from the ViewModel.
+func (p *MainPage) determineStatusAndButtonText(vm *BisectionViewModel) (status, buttonText string) {
 	switch {
-	case state.IsComplete:
+	case vm.IsComplete:
 		return "Search Complete", "Results"
-	case activePlan != nil:
-		if activePlan.IsVerificationStep {
+	case vm.ActiveTestPlan != nil:
+		if vm.ActiveTestPlan.IsVerificationStep {
 			return "Verifying final conflict set...", "Step"
 		}
-		return fmt.Sprintf("Test in progress (Iter %d)...", len(state.ConflictSet)+1), "Step"
-	case isVerifying:
+		return fmt.Sprintf("Test in progress (Iter %d)...", vm.Iteration), "Step"
+	case vm.IsVerificationStep:
 		return "Ready to verify conflict set", "Verify"
-	case sp.GetStepCount() > 0 || len(state.ConflictSet) > 0:
+	case vm.StepCount > 0 || len(vm.ConflictSet) > 0:
 		return "Ready for next step", "Step"
 	default:
 		return "Ready to start bisection", "Start"
 	}
 }
 
-// updateModLists populates the Candidates, Known Good, and Problematic lists.
-func (p *MainPage) updateModLists(state conflict.SearchState, sp *conflict.SearchProcess) {
-	modCount := len(state.AllModIDs)
+// updateModLists populates the Candidates, Known Good, and Problematic lists from the ViewModel.
+func (p *MainPage) updateModLists(vm *BisectionViewModel) {
+	modCount := len(vm.AllModIDs)
 
-	p.updateList(p.candidatesList, p.candidatesTitle, state.Candidates, "Candidates (Being Searched): %d / %d", modCount)
-	p.updateList(p.problematicModsList, p.problematicModsTitle, setToSlice(state.ConflictSet), "Problematic Mods: %d", 0)
-
-	// The background for display is the global background, which accumulates good mods.
-	goodMods := setToSlice(subtractSet(state.Background, state.ConflictSet))
-	p.updateList(p.knownGoodList, p.knownGoodTitle, goodMods, "Known Good (Background): %d", 0)
+	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), "Candidates (Being Searched): %d / %d", modCount)
+	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.ConflictSet), "Problematic Mods: %d", 0)
+	p.updateList(p.knownGoodList, p.knownGoodTitle, sets.MakeSlice(vm.ClearedSet), "Cleared: %d", 0)
 }
 
-// updateTestGroupTab populates the lists in the "Test Group" tab.
-func (p *MainPage) updateTestGroupTab(state conflict.SearchState, sp *conflict.SearchProcess) {
-	nextPlan, err := sp.GetNextTestPlan()
-	if err != nil || nextPlan == nil {
+// updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.
+func (p *MainPage) updateTestGroupTab(vm *BisectionViewModel) {
+	if vm.NextTestPlan == nil {
 		p.updateList(p.testGroupList, p.testGroupTitle, nil, "Mods in Next Test Group: %d", 0)
 		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, "Implicitly Included Dependencies: %d", 0)
 		return
 	}
 
-	testSet := nextPlan.ModIDsToTest
-	p.updateList(p.testGroupList, p.testGroupTitle, setToSlice(testSet), "Mods in Next Test Group: %d", 0)
+	testSet := vm.NextTestPlan.ModIDsToTest
+	p.updateList(p.testGroupList, p.testGroupTitle, sets.MakeSlice(testSet), "Mods in Next Test Group: %d", 0)
 
 	// Calculate and display implicit dependencies.
-	effectiveSet, _ := p.app.GetResolver().ResolveEffectiveSet(
-		systemrunner.SetToSlice(testSet),
-		p.app.GetModState().GetAllMods(),
-		p.app.GetModState().GetPotentialProviders(),
-		p.app.GetModState().GetModStatusesSnapshot(),
-	)
-	implicitDeps := subtractSet(effectiveSet, testSet)
-	p.updateList(p.implicitDepsList, p.implicitDepsTitle, setToSlice(implicitDeps), "Implicitly Included Dependencies: %d", 0)
+	effectiveSet, _ := p.app.GetStateManager().ResolveEffectiveSet(testSet)
+	implicitDeps := sets.Subtract(effectiveSet, testSet)
+	p.updateList(p.implicitDepsList, p.implicitDepsTitle, sets.MakeSlice(implicitDeps), "Implicitly Included Dependencies: %d", 0)
 }
 
-// updateOverviewWidget updates the visual overview bar.
-func (p *MainPage) updateOverviewWidget(state conflict.SearchState, sp *conflict.SearchProcess) {
-	nextPlan, err := sp.GetNextTestPlan()
-	if err != nil {
-		p.overviewWidget.UpdateState(state.ConflictSet, nil, nil, nil)
+// updateOverviewWidget updates the visual overview bar from the ViewModel.
+func (p *MainPage) updateOverviewWidget(vm *BisectionViewModel) {
+	p.overviewWidget.SetAllMods(vm.AllModIDs)
+
+	nextPlan := vm.NextTestPlan
+	if nextPlan == nil {
+		// If there is no next plan, show the current state of conflict/cleared mods.
+		p.overviewWidget.UpdateState(vm.ConflictSet, vm.ClearedSet, vm.CandidateSet, nil)
 		return
 	}
 
-	testSet := nextPlan.ModIDsToTest
-	background, candidates := state.GetBisectionSets()
-
-	if state.IsVerifyingConflictSet {
-		// This makes the display more intuitive
-		candidates = map[string]struct{}{}
-	}
-
-	// Don't show problematic mods as good
-	goodMods := subtractSet(background, state.ConflictSet)
-
 	// Calculate the full effective set for the test.
-	effective, _ := p.app.GetResolver().ResolveEffectiveSet(
-		setToSlice(testSet),
-		p.app.GetModState().GetAllMods(),
-		p.app.GetModState().GetPotentialProviders(),
-		p.app.GetModState().GetModStatusesSnapshot(),
-	)
+	testSet := nextPlan.ModIDsToTest
+	effective, _ := p.app.GetStateManager().ResolveEffectiveSet(testSet)
 
-	p.overviewWidget.SetAllMods(state.AllModIDs)
-	p.overviewWidget.UpdateState(state.ConflictSet, goodMods, candidates, effective)
+	p.overviewWidget.UpdateState(vm.ConflictSet, vm.ClearedSet, vm.CandidateSet, effective)
 }
 
 // updateList is a helper to populate a SearchableList and its title.
@@ -324,8 +303,9 @@ func (p *MainPage) updateList(list *SearchableList, titleFrame *TitleFrame, mods
 	}
 }
 
+// formatModList formats a list of mod IDs into user-friendly strings.
 func (p *MainPage) formatModList(modIDs []string) []string {
-	allMods := p.app.GetModState().GetAllMods()
+	allMods := p.app.GetStateManager().GetAllMods()
 
 	formatted := make([]string, len(modIDs))
 	for i, id := range modIDs {
@@ -342,50 +322,4 @@ func (p *MainPage) confirmUndo() {
 	p.app.Dialogs().ShowQuestionDialog("Are you sure you want to undo the last step?", func() {
 		p.app.Undo()
 	}, nil)
-}
-
-func setToSlice(m map[string]struct{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func difference(a, b map[string]struct{}) map[string]struct{} {
-	diff := make(map[string]struct{})
-	for k := range a {
-		if _, found := b[k]; !found {
-			diff[k] = struct{}{}
-		}
-	}
-	return diff
-}
-
-func split(mods []string) ([]string, []string) {
-	if len(mods) == 0 {
-		return []string{}, []string{}
-	}
-	mid := (len(mods) + 1) / 2
-	return mods[:mid], mods[mid:]
-}
-
-func stringSliceToSet(s []string) map[string]struct{} {
-	set := make(map[string]struct{})
-	for _, item := range s {
-		set[item] = struct{}{}
-	}
-	return set
-}
-
-func union(a, b map[string]struct{}) map[string]struct{} {
-	res := make(map[string]struct{}, len(a)+len(b))
-	for k := range a {
-		res[k] = struct{}{}
-	}
-	for k := range b {
-		res[k] = struct{}{}
-	}
-	return res
 }

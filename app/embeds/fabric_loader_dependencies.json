@@ -1,0 +1,12 @@
+{
+	"version": 1,
+	"overrides": {
+		"owo-sentinel": {
+			"+depends": {
+				"owo": "*",
+				"owo-lib": "*"
+			},
+			"-provides": ["owo", "owo-lib"]
+		}
+	}
+}

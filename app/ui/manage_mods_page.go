@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -32,8 +33,7 @@ func NewManageModsPage(app AppInterface) *ManageModsPage {
 	}
 
 	headers := []string{"Status", "ID", "Name", "File"}
-	// Search on column 1 (ID) and 2 (Name)
-	p.modTable = NewSearchableTable(headers, 1, 2)
+	p.modTable = NewSearchableTable(headers, 1, 2) // Search on ID (col 1) and Name (col 2)
 	p.modTable.SetBorderPadding(0, 0, 1, 1)
 
 	p.forceDisabledList.SetBorderPadding(0, 0, 1, 1)
@@ -41,7 +41,7 @@ func NewManageModsPage(app AppInterface) *ManageModsPage {
 
 	p.setupLayout()
 	p.SetInputCapture(p.inputHandler())
-	p.RefreshState()
+	p.RefreshState() // Initial population
 
 	p.statusText.SetText("Manage individual mod states. Press [darkcyan::b]ESC[-:-:-] to return.")
 	return p
@@ -80,7 +80,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 }
 
 func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey {
-	modState := p.app.GetModState()
+	modState := p.app.GetStateManager()
 	if modState == nil {
 		return event
 	}
@@ -90,14 +90,12 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 		return event
 	}
 
-	// Get the mod ID from the selected row (it's in column 1)
 	cell := p.modTable.table.GetCell(row, 1)
 	if cell == nil {
 		return event
 	}
 	modID := cell.Text
-
-	shift := event.Modifiers() == tcell.ModShift
+	shift := event.Modifiers()&tcell.ModShift != 0
 
 	switch event.Rune() {
 	case 'd', 'D':
@@ -116,7 +114,7 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 
 // toggleState handles toggling a state for a single mod or all mods.
 func (p *ManageModsPage) toggleState(modID string, isBulk bool, stateType string, setter func(string, bool)) {
-	modState := p.app.GetModState()
+	modState := p.app.GetStateManager()
 
 	if isBulk {
 		allIDs := modState.GetAllModIDs()
@@ -141,14 +139,19 @@ func (p *ManageModsPage) toggleState(modID string, isBulk bool, stateType string
 			}
 		}
 
-		// If all mods are already in the target state, the action is to turn it off for all.
-		// Otherwise, the action is to turn it on for all.
 		newState := !allCurrentlyTrue
-		for _, id := range allIDs {
-			setter(id, newState)
+
+		// UPDATED: Use the new, efficient batch methods for bulk updates.
+		switch stateType {
+		case "Disabled":
+			modState.SetForceDisabledBatch(allIDs, newState)
+		case "Enabled":
+			modState.SetForceEnabledBatch(allIDs, newState)
+		case "Good":
+			modState.SetManuallyGoodBatch(allIDs, newState)
 		}
 	} else {
-		// Toggle state for the single selected mod
+		// Single-item logic remains the same, using the passed setter function.
 		status, _ := modState.GetModStatus(modID)
 		var currentState bool
 		switch stateType {
@@ -159,44 +162,44 @@ func (p *ManageModsPage) toggleState(modID string, isBulk bool, stateType string
 		case "Good":
 			currentState = status.ManuallyGood
 		}
-		// When toggling a single item, we also need to handle un-setting other states.
-		// The StateManager's SetForce... methods already handle this exclusivity.
 		setter(modID, !currentState)
 	}
-	p.RefreshState() // Refresh UI after state change
 }
 
-// RefreshState updates the lists with the current mod states.
+func (p *ManageModsPage) OnPageActivated() {
+	p.RefreshState()
+}
+
+// RefreshState updates the lists with the current mod states using the ViewModel.
 func (p *ManageModsPage) RefreshState() {
-	modState := p.app.GetModState()
-	searchProcess := p.app.GetSearchProcess()
-	if modState == nil || searchProcess == nil {
+	vm := p.app.GetViewModel()
+	if !vm.IsReady {
+		p.modTable.Clear()
+		p.forceEnabledList.SetText("")
+		p.forceDisabledList.SetText("")
 		return
 	}
+	modState := p.app.GetStateManager()
 
-	// Preserve selection
-	row, _ := p.modTable.table.GetSelection()
+	row, _ := p.modTable.table.GetSelection() // Preserve selection
 
 	allIDs := modState.GetAllModIDs()
 	allMods := modState.GetAllMods()
 	tableData := make([][]string, 0, len(allIDs))
-
 	enabledIDs := []string{}
 	disabledIDs := []string{}
 
-	// Get the next test set for preview from the idempotent getter
-	nextPlan, _ := searchProcess.GetNextTestPlan()
-	var nextTestSet map[string]struct{}
-	if nextPlan != nil {
-		nextTestSet = nextPlan.ModIDsToTest
+	var nextTestSet sets.Set
+	if vm.NextTestPlan != nil {
+		nextTestSet = vm.NextTestPlan.ModIDsToTest
 	}
 
 	for _, id := range allIDs {
 		status, _ := modState.GetModStatus(id)
 		mod := allMods[id]
-		searcherState := searchProcess.GetCurrentState()
 
 		var statusStr string
+		// Priority: Forced > Good > Problem > In Test > Inactive
 		if status.ForceEnabled {
 			statusStr = "[green]Enabled[-:-:-]"
 			enabledIDs = append(enabledIDs, id)
@@ -205,7 +208,7 @@ func (p *ManageModsPage) RefreshState() {
 			disabledIDs = append(disabledIDs, id)
 		} else if status.ManuallyGood {
 			statusStr = "[green]Good[-:-:-]"
-		} else if _, ok := searcherState.ConflictSet[id]; ok {
+		} else if _, ok := vm.ConflictSet[id]; ok {
 			statusStr = "[::b]Problem[-:-:-]"
 		} else if _, ok := nextTestSet[id]; ok {
 			statusStr = "[white]In Test[-:-:-]"
@@ -226,21 +229,19 @@ func (p *ManageModsPage) RefreshState() {
 	p.forceEnabledList.SetText(strings.Join(enabledIDs, "\n"))
 	p.forceDisabledList.SetText(strings.Join(disabledIDs, "\n"))
 
-	// Restore selection
 	if row > 0 && row < p.modTable.table.GetRowCount() {
-		p.modTable.table.Select(row, 0)
+		p.modTable.table.Select(row, 0) // Restore selection
 	}
 }
 
-func (p *ManageModsPage) Primitive() tview.Primitive { return p }
-
+// GetActionPrompts returns the key actions for the page.
 func (p *ManageModsPage) GetActionPrompts() map[string]string {
 	return map[string]string{
 		"E": "Force Enable", "D": "Force Disable", "G": "Mark Good", "Shift+Key": "Toggle All", "ESC": "Back",
 	}
 }
 
-// GetStatusPrimitive returns the tview.Primitive that displays the page's status
+// GetStatusPrimitive returns the tview.Primitive that displays the page's status.
 func (p *ManageModsPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
 }
@@ -254,7 +255,7 @@ func (p *ManageModsPage) GetFocusablePrimitives() []tview.Primitive {
 	}
 }
 
-// Implement SearchStateObserver to refresh when search state changes
+// RefreshSearchState implements the SearchStateObserver interface.
 func (p *ManageModsPage) RefreshSearchState() {
 	p.RefreshState()
 }

@@ -77,7 +77,7 @@ func IsImplicitMod(depID string) bool {
 	return false
 }
 
-// Replace the dependency override structs with a new, parsed structure
+// OverrideAction defines the type of modification for a rule.
 type OverrideAction int
 
 const (
@@ -86,20 +86,16 @@ const (
 	ActionRemove
 )
 
-type OverrideRule struct {
-	TargetModID    string // The mod whose dependencies are being changed
-	DependencyID   string // The dependency being changed (e.g., "minecraft")
-	VersionMatcher string // The new version string
-	Action         OverrideAction
+// OverrideRule is the interface for any dependency or provides override rule.
+type OverrideRule interface {
+	Apply(fmj *FabricModJson)
+	Target() string
+	Field() string
+	Key() string
+	Action() OverrideAction
 }
 
-// DependencyOverrides now holds a pre-parsed list of rules.
+// DependencyOverrides now holds a pre-parsed list of polymorphic rules.
 type DependencyOverrides struct {
 	Rules []OverrideRule
-}
-
-// Struct for initial JSON parsing
-type rawDependencyOverrides struct {
-	Version   int                                     `json:"version"`
-	Overrides map[string]map[string]map[string]string `json:"overrides"`
 }
