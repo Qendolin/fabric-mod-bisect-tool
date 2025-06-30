@@ -1,8 +1,6 @@
 package imcs
 
 import (
-	"errors"
-	"fmt"
 	"math"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
@@ -12,7 +10,6 @@ import (
 // Engine orchestrates the bisection search, owning the state and using
 // the stateless algorithm to advance it.
 type Engine struct {
-	allItems []string
 	// Items that will be added to the search at the end of the current iteration
 	pendingAdditions sets.Set
 
@@ -25,44 +22,33 @@ type Engine struct {
 }
 
 // NewEngine creates a new search orchestrator.
-func NewEngine(allItems []string) *Engine {
+func NewEngine(initialState SearchState) *Engine {
+	logging.Infof("IMCSEngine: Created new engine with %d total mods.", len(initialState.AllModIDs))
 	return &Engine{
-		allItems:         allItems,
 		algorithm:        NewIMCSAlgorithm(),
 		undoStack:        NewUndoStack(),
 		executionLog:     NewExecutionLog(),
 		pendingAdditions: make(sets.Set),
+		state:            initialState,
 	}
 }
 
-// StartNewSearch initializes a new search process.
-func (e *Engine) StartNewSearch() {
-	logging.Infof("IMCSEngine: Starting new search with %d total mods.", len(e.allItems))
-	e.state = NewInitialState(e.allItems)
-	e.undoStack.Clear()
-	e.executionLog.Clear()
-	e.activePlan = nil
-}
-
-// GetNextTestPlan calculates and returns the next test plan based on the current
-// state without changing any internal state. This is an idempotent getter for UI/preview.
-func (e *Engine) GetNextTestPlan() (*TestPlan, error) {
+// GetCurrentTestPlan returns the active test plan if one is in progress.
+// If no test is running, it returns a preview of the next plan to be executed.
+// Returns nil if the search is complete.
+func (e *Engine) GetCurrentTestPlan() (*TestPlan, error) {
 	if e.activePlan != nil {
-		return nil, fmt.Errorf("a test is already in progress and must be completed or cancelled")
+		return e.activePlan, nil
 	}
 	// Note: We call the algorithm's PlanNextTest, which is the pure function.
-	plan, err := e.algorithm.PlanNextTest(e.state)
-	if err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return e.algorithm.PlanNextTest(e.state)
 }
 
 // PlanNextTest commits to the next test plan, changing the process state to "awaiting result".
 // This is a non-idempotent action.
 func (e *Engine) PlanNextTest() (*TestPlan, error) {
 	if e.activePlan != nil {
-		return nil, fmt.Errorf("a test is already in progress")
+		return nil, ErrTestInProgress
 	}
 
 	plan, err := e.algorithm.PlanNextTest(e.state)
@@ -89,9 +75,8 @@ func (e *Engine) InvalidateActivePlan() {
 // It implicitly operates on the currently active plan.
 func (e *Engine) SubmitTestResult(result TestResult) error {
 	if e.activePlan == nil {
-		msg := "no active test plan to submit a result for"
-		logging.Warnf("IMCSEngine: " + msg)
-		return errors.New(msg)
+		logging.Warnf("IMCSEngine: no active test plan to submit a result for")
+		return ErrNoActivePlan
 	}
 
 	logging.Infof("IMCSEngine: Submitting result '%s' for active test.", result)
@@ -99,7 +84,10 @@ func (e *Engine) SubmitTestResult(result TestResult) error {
 	committedPlan := *e.activePlan
 
 	// Push the state *before* applying the result to the undo stack.
-	e.undoStack.Push(e.state)
+	e.undoStack.Push(UndoFrame{
+		State: e.state,
+		Plan:  *e.activePlan,
+	})
 
 	// Log the completed test for the UI history.
 	completedTest := CompletedTest{
@@ -110,13 +98,7 @@ func (e *Engine) SubmitTestResult(result TestResult) error {
 	e.executionLog.Log(completedTest)
 
 	// Calculate the next state.
-	newState, err := e.algorithm.ApplyResult(e.state, committedPlan, result)
-	if err != nil {
-		logging.Errorf("IMCSEngine: Error applying result: %v", err)
-		// Even on error, we should clear the active plan to avoid getting stuck.
-		e.activePlan = nil
-		return err
-	}
+	newState := e.algorithm.ApplyResult(e.state, committedPlan, result)
 
 	e.state = newState
 	e.activePlan = nil // Ready for the next test.
@@ -207,19 +189,24 @@ func (e *Engine) AddCandidates(additions sets.Set) {
 	e.state.Candidates = sets.MakeSlice(newCandidates)
 }
 
-// Undo reverts to the previous state in the search.
-// It also clears any active plan, as it is no longer valid.
-func (e *Engine) Undo() bool {
+// Undo reverts to the previous state in the search. It returns the state that
+// was just popped from the undo stack, allowing the caller to inspect the
+// change that was undone
+func (e *Engine) Undo() (*UndoFrame, bool) {
 	logging.Info("IMCSEngine: Attempting to undo last step.")
-	previousState, err := e.undoStack.Pop()
+	undoneFrame, err := e.undoStack.Pop()
 	if err != nil {
 		logging.Warnf("IMCSEngine: Cannot undo: %v", err)
-		return false
+		return nil, false
 	}
-	e.state = previousState
-	e.activePlan = nil // Invalidate any active plan after an undo.
-	logging.Info("IMCSEngine: Successfully reverted to previous state.")
-	return true
+
+	// Revert the engine's state to the one from the frame.
+	e.state = undoneFrame.State
+	e.InvalidateActivePlan()
+
+	logging.Infof("IMCSEngine: Successfully undid last step.")
+	// Return the entire frame so the service layer can inspect the plan.
+	return &undoneFrame, true
 }
 
 // GetCurrentState returns a read-only view of the current search state.
@@ -250,11 +237,8 @@ func (e *Engine) GetActiveTestPlan() *TestPlan {
 
 // WasLastTestVerification checks if the most recently completed test was the final verification step.
 func (e *Engine) WasLastTestVerification() bool {
-	lastTest, found := e.executionLog.GetLastTest()
-	if !found {
-		return false
-	}
-	return lastTest.Plan.IsVerificationStep
+	lastUndoFrame, ok := e.undoStack.Peek()
+	return ok && lastUndoFrame.State.IsVerifyingConflictSet
 }
 
 // GetEstimatedMaxTests provides an estimated upper bound for the total tests.

@@ -117,10 +117,9 @@ func (p *HistoryPage) refreshHistory() {
 	}
 
 	for i, entry := range p.historyCache {
-		iteration := p.getIterationNumber(&entry)
 		step := i + 1
-		summary := fmt.Sprintf("Step %d (Iter %d): [yellow]%s[-]",
-			step, iteration, entry.Result)
+		summary := fmt.Sprintf("Round %d - Iter %d - Step %d: [yellow]%s[-]",
+			entry.StateBeforeTest.Round, entry.StateBeforeTest.Iteration, step, entry.Result)
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
@@ -177,8 +176,6 @@ func (p *HistoryPage) updateDetailView(index int) {
 	p.updateOverviewState(p.detailOverviewWidget, &entry)
 
 	// Derive summary text
-	iteration := p.getIterationNumber(&entry)
-
 	step := index + 1
 	numTested := len(entry.Plan.ModIDsToTest)
 	numCandidates := len(entry.StateBeforeTest.Candidates)
@@ -193,8 +190,8 @@ func (p *HistoryPage) updateDetailView(index int) {
 		stateDesc = "This was the initial test of a candidate set."
 	}
 
-	summary := fmt.Sprintf("Step %d - Iteration %d\nResult: [yellow]%s[-]\n%s\nTested: %d mods, Candidates: %d mods remaining",
-		step, iteration, entry.Result, stateDesc, numTested, numCandidates)
+	summary := fmt.Sprintf("Round %d - Iteration %d - Step %d\nResult: [yellow]%s[-]\n%s\nTested: %d mods, Candidates: %d mods remaining",
+		entry.StateBeforeTest.Round, entry.StateBeforeTest.Iteration, step, entry.Result, stateDesc, numTested, numCandidates)
 	p.detailSummaryText.SetText(summary)
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
@@ -223,12 +220,4 @@ func (p *HistoryPage) GetFocusablePrimitives() []tview.Primitive {
 		p.masterList,
 		p.detailSetsText,
 	}
-}
-
-func (p *HistoryPage) getIterationNumber(entry *imcs.CompletedTest) int {
-	iteration := len(entry.StateBeforeTest.ConflictSet)
-	if entry.Plan.IsVerificationStep {
-		return iteration
-	}
-	return iteration + 1
 }

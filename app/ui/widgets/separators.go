@@ -23,7 +23,7 @@ func NewHorizontalSeparator(color tcell.Color) *HorizontalSeparator {
 func (s *HorizontalSeparator) Draw(screen tcell.Screen) {
 	s.Box.Draw(screen)
 	x, y, width, _ := s.GetInnerRect()
-	style := tcell.StyleDefault.Foreground(s.color)
+	style := tcell.StyleDefault.Background(tview.Styles.PrimitiveBackgroundColor).Foreground(s.color)
 	for i := 0; i < width; i++ {
 		screen.SetContent(x+i, y, tview.BoxDrawingsLightHorizontal, nil, style)
 	}
@@ -47,7 +47,7 @@ func NewVerticalSeparator(color tcell.Color) *VerticalSeparator {
 func (s *VerticalSeparator) Draw(screen tcell.Screen) {
 	s.Box.Draw(screen)
 	x, y, _, height := s.GetInnerRect()
-	style := tcell.StyleDefault.Foreground(s.color)
+	style := tcell.StyleDefault.Background(tview.Styles.PrimitiveBackgroundColor).Foreground(s.color)
 	for i := 0; i < height; i++ {
 		screen.SetContent(x, y+i, tview.BoxDrawingsLightVertical, nil, style)
 	}

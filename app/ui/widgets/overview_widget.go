@@ -50,13 +50,16 @@ func (w *OverviewWidget) Draw(screen tcell.Screen) {
 
 	splitPointScreenX := w.calculateSplitPointX(x, width)
 
+	lastModIndex := 0
 	for i := 0; i < width; i++ {
 		currentScreenX := x + i
 
 		if currentScreenX == splitPointScreenX {
 			w.drawSplitLine(screen, currentScreenX, y)
 		} else {
-			w.drawContentCell(screen, currentScreenX, y, width, i)
+			endModIndex := len(w.allMods) * (i + 1) / width
+			w.drawContentCell(screen, currentScreenX, y, lastModIndex, endModIndex)
+			lastModIndex = endModIndex
 		}
 	}
 }
@@ -116,20 +119,25 @@ func (w *OverviewWidget) drawSplitLine(screen tcell.Screen, x, y int) {
 }
 
 // drawContentCell draws a single cell of the overview bar, determining its foreground and background colors.
-func (w *OverviewWidget) drawContentCell(screen tcell.Screen, x, y, totalWidth, cellIndex int) {
-	numTotalMods := len(w.allMods)
+func (w *OverviewWidget) drawContentCell(screen tcell.Screen, x, y, startModIndex, endModIndex int) {
+	// If start and end are the same, this cell represents no mods, so draw nothing.
+	if startModIndex >= endModIndex {
+		return
+	}
 
-	// Determine the mod indices for the left and right halves of this cell.
-	start1 := numTotalMods * cellIndex / totalWidth
-	end1 := numTotalMods * (cellIndex*2 + 1) / (totalWidth * 2)
-	start2 := end1
-	end2 := numTotalMods * (cellIndex + 1) / totalWidth
+	midModIndex := startModIndex + (endModIndex-startModIndex)/2
 
-	// Determine the color for each half.
-	fgColor := w.determineColor(w.allMods[start1:end1])
-	bgColor := w.determineColor(w.allMods[start2:end2])
+	// Determine the color for each half of this specific cell.
+	fgColor := w.determineColor(w.allMods[startModIndex : midModIndex+1])
+	bgColor := w.determineColor(w.allMods[midModIndex+1 : endModIndex])
 
-	// Draw the cell using the half-block character.
+	if startModIndex == midModIndex+1 {
+		fgColor = bgColor
+	}
+	if midModIndex+1 == endModIndex {
+		bgColor = fgColor
+	}
+
 	style := tcell.StyleDefault.Foreground(fgColor).Background(bgColor)
 	screen.SetContent(x, y, '▌', nil, style)
 }

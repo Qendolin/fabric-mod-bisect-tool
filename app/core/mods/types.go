@@ -1,7 +1,5 @@
 package mods
 
-import "strings"
-
 // ProviderInfo describes a mod that can satisfy a dependency.
 type ProviderInfo struct {
 	TopLevelModID         string
@@ -68,9 +66,8 @@ type ResolutionInfo struct {
 // These are common implicit dependencies for Fabric mods that don't correspond to actual JARs.
 // For example, "java", "minecraft", "fabricloader" are usually provided by the game/environment.
 func IsImplicitMod(depID string) bool {
-	lowerDepID := strings.ToLower(depID) // Normalize for robustness
-	switch lowerDepID {
-	case "java", "minecraft", "fabricloader", "forge": // Added "forge" for broader compatibility
+	switch depID {
+	case "java", "minecraft", "fabricloader", "quilt_loader":
 		return true
 	}
 	return false

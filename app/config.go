@@ -6,6 +6,7 @@ import "flag"
 type CLIArgs struct {
 	NoEmbeddedOverrides bool
 	Verbose             bool
+	QuiltSupport        bool
 }
 
 // ParseCLIArgs parses the command-line flags and returns a populated CLIArgs struct.
@@ -14,6 +15,7 @@ func ParseCLIArgs() *CLIArgs {
 
 	flag.BoolVar(&args.NoEmbeddedOverrides, "no-embedded-overrides", false, "Disable the built-in dependency overrides for known problematic mods.")
 	flag.BoolVar(&args.Verbose, "verbose", false, "Enable verbose (debug) logging.")
+	flag.BoolVar(&args.QuiltSupport, "quilt", false, "Enable Quilt support")
 	flag.Parse()
 
 	return args

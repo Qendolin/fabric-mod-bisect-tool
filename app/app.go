@@ -3,9 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/bisect"
@@ -92,7 +94,8 @@ func (a *App) StartLoadingProcess(modsPath string) {
 	go func() {
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.NewModLoaderService()
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: a.cliArgs.QuiltSupport}}
+		logging.Infof("App: Loading mods from '%s', Quilt Support: %v", modsPath, a.cliArgs.QuiltSupport)
 		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, func(fileName string) {
 			a.QueueUpdateDraw(func() {
 				a.loadingPage.UpdateProgress(fileName)
@@ -124,9 +127,8 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 	// Loading was successful, now create the runtime services.
 	stateMgr := mods.NewStateManager(allMods, providers)
 	activator := mods.NewModActivator(modsPath, allMods)
-	engine := imcs.NewEngine(stateMgr.GetAllModIDs())
 
-	svc, err := bisect.NewService(stateMgr, activator, engine)
+	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {
 		a.dialogManager.ShowErrorDialog("Initialization Error", err.Error(), func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
@@ -136,7 +138,7 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 	a.bisectSvc = svc
 	a.bisectSvc.OnStateChange = a.handleCoreStateChange
-	a.bisectSvc.StartNewSearch()
+	a.bisectSvc.ResetSearch()
 	a.navManager.SwitchTo(ui.PageMainID)
 	a.handleCoreStateChange()
 }
@@ -152,18 +154,9 @@ func (a *App) Step() {
 	if a.bisectSvc == nil {
 		return
 	}
-	changes, plan, err := a.bisectSvc.PlanAndExecuteTestStep()
+	plan, changes, err := a.bisectSvc.AdvanceToNextTest()
 	if err != nil {
-		if a.bisectSvc.GetCurrentState().IsComplete {
-			a.displayResults()
-		} else {
-			logging.Errorf("App: Failed to execute test plan: %v", err)
-			userMessage := "Failed to apply mod file changes!\n" +
-				"Please ensure Minecraft is closed.\n\n" +
-				"For details see application log."
-			a.dialogManager.ShowErrorDialog("File Error", userMessage, nil)
-			return
-		}
+		a.handleStepError(err)
 		return
 	}
 
@@ -175,33 +168,54 @@ func (a *App) Step() {
 	a.navManager.ShowModal(ui.PageTestID, testPage)
 }
 
+func (a *App) ContinueSearch() {
+	if a.bisectSvc == nil {
+		return
+	}
+	logging.Debugf("App: ContinueSearch action triggered.")
+	// The service layer handles all the complex logic atomically.
+	result := a.bisectSvc.ContinueSearch()
+
+	// If the operation resulted in mods being auto-disabled, we must inform the user.
+	// This happens *after* the state has already been updated.
+	if len(result.NewlyDisabledMods) > 0 {
+		a.dialogManager.ShowInfoDialog(
+			"Unresolvable Mods Disabled",
+			fmt.Sprintf("To continue the search, the following mods were automatically disabled because their dependencies can no longer be met:\n\n[yellow]%s[-]", strings.Join(result.NewlyDisabledMods, ", ")),
+			nil,
+		)
+	}
+}
+
 func (a *App) Undo() {
 	logging.Debugf("App: Undo action triggered.")
 	a.bisectSvc.UndoLastStep()
 }
+
 func (a *App) ResetSearch() {
-	logging.Debugf("App: ResetSearch action triggered.")
-	a.bisectSvc.StartNewSearch()
+	logging.Debugf("App: ResetSearch faction triggered.")
+	a.bisectSvc.ResetSearch()
 }
+
 func (a *App) Run() error {
 	a.navManager.SwitchTo(ui.PageSetupID)
 	return a.Application.Run()
 }
+
 func (a *App) Stop() {
 	a.cancelApp()
 	a.shutdownWg.Wait()
 	a.Application.Stop()
 }
 
-// displayResults shows the result page when the search is complete.
+// displayResults shows the result page when the search is coplete.
 func (a *App) displayResults() {
 	if a.bisectSvc == nil {
 		return
 	}
 	state := a.bisectSvc.GetCurrentState()
 	if state.IsComplete || a.bisectSvc.Engine().WasLastTestVerification() {
-		dependers := a.bisectSvc.StateManager().FindTransitiveDependersOf(state.ConflictSet)
-		resultPage := pages.NewResultPage(a, state, dependers)
+		resultPage := pages.NewResultPage(a)
 		a.navManager.ShowModal(ui.PageResultID, resultPage)
 	}
 }
@@ -281,6 +295,21 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 	return mods.MergeDependencyOverrides(allOverrides...)
 }
 
+// handleStepError inspects an error from the bisection service and takes the
+// appropriate UI action, such as displaying results or showing an error dialog.
+func (a *App) handleStepError(err error) {
+	// Check if the error is the specific "search complete" signal.
+	if errors.Is(err, imcs.ErrSearchComplete) {
+		a.displayResults()
+		return
+	}
+
+	a.dialogManager.ShowErrorDialog("Bisection Error", `An error occurred and the next step could not be prepared.
+If another program, like Minecraft, is currently acessing your mods, please close it.
+
+Please check the application log for details.`, nil)
+}
+
 // --- AppInterface Implementation ---
 func (a *App) GetFocus() tview.Primitive         { return a.Application.GetFocus() }
 func (a *App) SetFocus(p tview.Primitive)        { a.Application.SetFocus(p) }
@@ -295,36 +324,30 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	}
 
 	engine := a.bisectSvc.Engine()
+	enumState := a.bisectSvc.EnumerationState()
 	state := engine.GetCurrentState()
-	nextPlan, _ := engine.GetNextTestPlan()
-	activePlan := engine.GetActiveTestPlan()
+	currentPlan, _ := engine.GetCurrentTestPlan()
 
-	isVerification := (activePlan != nil && activePlan.IsVerificationStep) ||
-		(activePlan == nil && nextPlan != nil && nextPlan.IsVerificationStep)
-
-	// The iteration number is the number of conflict elements we are trying to find.
-	// It's the number already found + 1, unless we are verifying the one just found.
-	iteration := len(state.ConflictSet)
-	if !isVerification {
-		iteration++
-	}
+	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
 
 	return ui.BisectionViewModel{
 		IsReady:            true,
 		IsComplete:         state.IsComplete,
 		IsVerificationStep: isVerification,
 		StepCount:          engine.GetStepCount(),
-		Iteration:          iteration,
+		Iteration:          state.Iteration,
+		Round:              state.Round,
 		EstimatedMaxTests:  engine.GetEstimatedMaxTests(),
 		LastTestResult:     state.LastTestResult,
-		ConflictSet:        state.ConflictSet,
+		AllConflictSets:    enumState.FoundConflictSets,
+		CurrentConflictSet: state.ConflictSet,
+		LastFoundElement:   state.LastFoundElement,
 		AllModIDs:          state.AllModIDs,
 		CandidateSet:       state.GetCandidateSet(),
 		ClearedSet:         state.GetClearedSet(),
 		PendingAdditions:   engine.GetPendingAdditions(),
-		ActiveTestPlan:     activePlan,
-		NextTestPlan:       nextPlan,
-		ExecutionLog:       engine.GetExecutionLog().GetEntries(),
+		CurrentTestPlan:    currentPlan,
+		ExecutionLog:       a.bisectSvc.GetCombinedExecutionLog(),
 	}
 }
 

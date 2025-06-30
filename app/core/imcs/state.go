@@ -32,6 +32,11 @@ type SearchStep struct {
 
 // SearchState (renamed from SearchSnapshot) represents a complete, immutable state of the conflict search.
 type SearchState struct {
+	// --- Fields representing the state of the extended "IMCS_Enumerator" procedure ---
+
+	// Round is the top-level enumeration count, tracking how many independent conflict sets have been found.
+	Round int
+
 	// --- Fields representing the state of the main "FindConflictSet" procedure ---
 
 	// ConflictSet contains mods already identified as part of the minimal conflict set.
@@ -42,6 +47,8 @@ type SearchState struct {
 	// StableSet is the set of mods globally proven to be "good" and not part of any
 	// conflict. It grows as bisections on candidate sets result in GOOD.
 	StableSet sets.Set
+	// Iteration is the count of conflict elements being searched for within the current round (e.g., finding the 2nd element in a 3-mod conflict).
+	Iteration int
 
 	// --- Fields representing the state of the "FindNextConflictElement" bisection ---
 
@@ -75,22 +82,19 @@ func newSearchStep(stableSet sets.Set, candidates []string) SearchStep {
 }
 
 // NewInitialState creates the starting state for a new search.
-func NewInitialState(allModIDs []string) SearchState {
-	// Sort the initial list for deterministic behavior.
-	sortedInitialCandidates := make([]string, len(allModIDs))
-	copy(sortedInitialCandidates, allModIDs)
-	sort.Strings(sortedInitialCandidates)
-
+func NewInitialState() SearchState {
 	return SearchState{
 		ConflictSet:            make(sets.Set),
-		Candidates:             sortedInitialCandidates,
+		Candidates:             make([]string, 0),
 		StableSet:              make(sets.Set),
 		SearchStack:            make([]SearchStep, 0),
 		IsVerifyingConflictSet: false,
-		AllModIDs:              allModIDs,
+		AllModIDs:              make([]string, 0),
 		IsComplete:             false,
 		LastFoundElement:       "",
 		LastTestResult:         "",
+		Round:                  1,
+		Iteration:              1,
 	}
 }
 

@@ -16,15 +16,17 @@ type BisectionViewModel struct {
 	IsVerificationStep bool
 	StepCount          int
 	Iteration          int
+	Round              int
 	EstimatedMaxTests  int
 	LastTestResult     imcs.TestResult
+	LastFoundElement   string
 	AllModIDs          []string
-	ConflictSet        sets.Set
+	AllConflictSets    []sets.Set
+	CurrentConflictSet sets.Set
 	CandidateSet       sets.Set
 	ClearedSet         sets.Set
 	PendingAdditions   sets.Set
-	ActiveTestPlan     *imcs.TestPlan
-	NextTestPlan       *imcs.TestPlan
+	CurrentTestPlan    *imcs.TestPlan
 	ExecutionLog       []imcs.CompletedTest
 }
 
@@ -50,6 +52,7 @@ type AppInterface interface {
 	Step()
 	Undo()
 	ResetSearch()
+	ContinueSearch()
 }
 
 // SearchStateObserver defines an interface for pages that need to be updated

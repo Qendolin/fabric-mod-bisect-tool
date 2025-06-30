@@ -13,13 +13,10 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
-// ModLoaderService loads mod information from the filesystem, parses metadata,
+// ModLoader loads mod information from the filesystem, parses metadata,
 // resolves conflicts, and builds dependency provider maps.
-type ModLoaderService struct{}
-
-// NewModLoaderService creates a new ModLoaderService.
-func NewModLoaderService() *ModLoaderService {
-	return &ModLoaderService{}
+type ModLoader struct {
+	ModParser
 }
 
 // task to be processed by a worker goroutine.
@@ -49,8 +46,12 @@ type nestedModInfo struct {
 }
 
 // LoadMods discovers mods, parses metadata, resolves basic conflicts, and builds provider maps.
-func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport func(fileNameBeingProcessed string)) (
-	map[string]*Mod, PotentialProvidersMap, []string, error) {
+func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport func(fileNameBeingProcessed string)) (
+	map[string]*Mod, PotentialProvidersMap, []string, error,
+) {
+	if ml.QuiltParsing {
+		logging.Info("ModLoader: Loading mods with Quilt support. Please note that log messages with fabric.mod.json might refer to quilt.mod.json too.")
+	}
 
 	potentialProviders := make(PotentialProvidersMap)
 	addImplicitProvides(potentialProviders)
@@ -66,7 +67,7 @@ func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrid
 		return make(map[string]*Mod), potentialProviders, []string{}, nil
 	}
 
-	parsedFileResults := s.parseJarFilesConcurrently(filesToProcess, modsDir, progressReport)
+	parsedFileResults := ml.parseJarFilesConcurrently(filesToProcess, modsDir, progressReport)
 
 	allMods := make(map[string]*Mod)
 	if err := resolveModConflicts(parsedFileResults, allMods, modsDir); err != nil {
@@ -75,7 +76,7 @@ func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrid
 
 	if overrides != nil && len(overrides.Rules) > 0 {
 		logging.Info("ModLoader: Applying dependency overrides...")
-		s.applyOverridesToLoadedMods(allMods, overrides)
+		ml.applyOverridesToLoadedMods(allMods, overrides)
 		logging.Info("ModLoader: Dependency overrides applied.")
 	}
 
@@ -109,7 +110,7 @@ func filterJarFiles(diskFiles []os.DirEntry) []os.DirEntry {
 }
 
 // parseJarFilesConcurrently processes JAR files in parallel to extract mod metadata.
-func (s *ModLoaderService) parseJarFilesConcurrently(filesToProcess []os.DirEntry, modsDir string, progressReport func(string)) []*parsedModFile {
+func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, modsDir string, progressReport func(string)) []*parsedModFile {
 	numFiles := len(filesToProcess)
 	if numFiles == 0 {
 		return nil
@@ -122,7 +123,7 @@ func (s *ModLoaderService) parseJarFilesConcurrently(filesToProcess []os.DirEntr
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go s.jarProcessingWorker(&wg, tasks, results)
+		go ml.jarProcessingWorker(&wg, tasks, results)
 	}
 
 	for _, file := range filesToProcess {
@@ -142,7 +143,7 @@ func (s *ModLoaderService) parseJarFilesConcurrently(filesToProcess []os.DirEntr
 			continue
 		}
 		if res.modData != nil {
-			s.logParsedFile(res)
+			ml.logParsedFile(res)
 			collectedModFileResults = append(collectedModFileResults, res.modData)
 		}
 	}
@@ -150,7 +151,7 @@ func (s *ModLoaderService) parseJarFilesConcurrently(filesToProcess []os.DirEntr
 }
 
 // logParsedFile handles the logging for a single successfully parsed file result.
-func (s *ModLoaderService) logParsedFile(res processFileResult) {
+func (ml *ModLoader) logParsedFile(res processFileResult) {
 	currentMod := res.modData.mod
 	nestedMods := res.modData.nested
 
@@ -169,7 +170,7 @@ func (s *ModLoaderService) logParsedFile(res processFileResult) {
 }
 
 // jarProcessingWorker is a goroutine worker that processes file tasks.
-func (s *ModLoaderService) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan processFileTask, results chan<- processFileResult) {
+func (ml *ModLoader) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan processFileTask, results chan<- processFileResult) {
 	defer wg.Done()
 	for task := range tasks {
 		if task.progressFunc != nil {
@@ -181,7 +182,7 @@ func (s *ModLoaderService) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan 
 		baseFilename := strings.TrimSuffix(task.fileEntry.Name(), ".jar.disabled")
 		baseFilename = strings.TrimSuffix(baseFilename, ".jar")
 
-		topLevelFmj, nestedMods, err := extractModMetadata(fullPath)
+		topLevelFmj, nestedMods, err := ml.ExtractModMetadata(fullPath)
 		if err != nil {
 			results <- processFileResult{baseFileName: baseFilename, parseError: fmt.Errorf("extracting metadata from %s: %w", task.fileEntry.Name(), err)}
 			continue
@@ -408,7 +409,7 @@ func updateEffectiveProvides(effectiveProvides map[string]string, providedID, ve
 // addImplicitProvides adds common implicit dependencies to the potential providers map.
 // This runs after all mods are parsed, so we don't need to check for conflicts here.
 func addImplicitProvides(potentialProviders PotentialProvidersMap) {
-	implicitIDs := []string{"java", "minecraft", "fabricloader"}
+	implicitIDs := []string{"java", "minecraft", "fabricloader", "quilt_loader"}
 	for _, id := range implicitIDs {
 		potentialProviders[id] = append(potentialProviders[id], ProviderInfo{
 			TopLevelModID: id, VersionOfProvidedItem: "0.0.0",
@@ -456,7 +457,7 @@ func compareVersions(v1Str, v2Str string) int {
 }
 
 // applyOverridesToLoadedMods applies a final, merged set of override rules.
-func (s *ModLoaderService) applyOverridesToLoadedMods(mods map[string]*Mod, overrides *DependencyOverrides) {
+func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides *DependencyOverrides) {
 	if overrides == nil || len(overrides.Rules) == 0 {
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -77,9 +78,8 @@ func createJarFromSpec(t *testing.T, spec modSpec) ([]byte, error) {
 }
 
 // runBisectionTest is a test harness that executes the full bisection process.
-func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mods.Mod, problematicSet sets.Set) sets.Set {
+func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mods.Mod, problematicSets []sets.Set) sets.Set {
 	t.Helper()
-	svc.StartNewSearch()
 
 	for testCount := 0; !svc.Engine().GetCurrentState().IsComplete; testCount++ {
 		if testCount > 100 {
@@ -94,7 +94,6 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 
 		effectiveSet, _ := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest)
 
-		// Build a set of all IDs provided by the effective set of mods.
 		allProvidedIDsByEffectiveSet := sets.Copy(effectiveSet)
 		for modID := range effectiveSet {
 			if mod, ok := allMods[modID]; ok {
@@ -104,8 +103,14 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			}
 		}
 
-		// The test fails if the set of all provided IDs is a superset of the problematic set.
-		isFailure := len(problematicSet) > 0 && len(sets.Subtract(problematicSet, allProvidedIDsByEffectiveSet)) == 0
+		// UPDATED: A test fails if *any* of the problematic sets are fully satisfied.
+		isFailure := false
+		for _, pSet := range problematicSets {
+			if len(pSet) > 0 && len(sets.Subtract(pSet, allProvidedIDsByEffectiveSet)) == 0 {
+				isFailure = true
+				break
+			}
+		}
 
 		result := imcs.TestResultGood
 		if isFailure {
@@ -113,7 +118,9 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 		}
 
 		t.Logf("Step %d: Testing %v -> Effective %v -> Result: %s", testCount+1, sets.MakeSlice(plan.ModIDsToTest), sets.MakeSlice(effectiveSet), result)
-		svc.Engine().SubmitTestResult(result)
+		if err := svc.Engine().SubmitTestResult(result); err != nil {
+			t.Fatalf("SubmitTestResult failed: %v", err)
+		}
 	}
 
 	return svc.Engine().GetCurrentState().ConflictSet
@@ -121,15 +128,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 
 // TestBisectService_Integration runs a full integration test of the bisect service.
 func TestBisectService_Integration(t *testing.T) {
-	mainLogger := logging.NewLogger()
-	mainLogger.SetDebug(true)
-	logFile, err := os.OpenFile(filepath.Join(testDir, "test.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		t.Fatalf("Failed to open log file: %v", err)
-	}
-	defer logFile.Close()
-	mainLogger.SetWriter(logFile)
-	logging.SetDefault(mainLogger)
+	setupLogger(t)
 
 	baseModSpecs := make(map[string]modSpec)
 	for i := 0; i < 26; i++ {
@@ -230,7 +229,7 @@ func TestBisectService_Integration(t *testing.T) {
 			setupDummyMods(t, modsDir, tc.modSpecs)
 			defer os.RemoveAll(modsDir)
 
-			loader := mods.NewModLoaderService()
+			loader := mods.ModLoader{}
 			allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
@@ -238,24 +237,146 @@ func TestBisectService_Integration(t *testing.T) {
 
 			stateMgr := mods.NewStateManager(allMods, providers)
 			activator := mods.NewModActivator(modsDir, allMods)
-			engine := imcs.NewEngine(stateMgr.GetAllModIDs())
 
 			if tc.stateManagerSetup != nil {
 				tc.stateManagerSetup(stateMgr)
 			}
 
-			svc, err := bisect.NewService(stateMgr, activator, engine)
+			svc, err := bisect.NewService(stateMgr, activator)
 			if err != nil {
 				t.Fatalf("NewService failed: %v", err)
 			}
 
-			finalConflictSet := runBisectionTest(t, svc, allMods, tc.problematicSet)
+			svc.ResetSearch()
+			finalConflictSet := runBisectionTest(t, svc, allMods, []sets.Set{tc.problematicSet})
 
 			if !reflect.DeepEqual(finalConflictSet, tc.expectedConflictSet) {
 				t.Errorf("Test case '%s' failed.\nExpected: %v\nGot:      %v", tc.name, sets.MakeSlice(tc.expectedConflictSet), sets.MakeSlice(finalConflictSet))
 			}
 		})
 	}
+}
+
+// TestBisectService_Enumeration verifies that the service can find multiple
+// independent conflict sets by using the ContinueSearch workflow.
+func TestBisectService_Enumeration(t *testing.T) {
+	setupLogger(t)
+
+	// Setup: Create a base set of mods.
+	baseModSpecs := make(map[string]modSpec)
+	for i := 0; i < 10; i++ {
+		char := string(rune('a' + i))
+		modID := fmt.Sprintf("mod_%s", char)
+		filename := fmt.Sprintf("mod-%s-1.0.jar", char)
+		baseModSpecs[filename] = modSpec{JSONContent: fmt.Sprintf(`{"id": "%s", "version": "1.0"}`, modID)}
+	}
+
+	// Define two independent conflicts.
+	problematicSets := []sets.Set{
+		sets.MakeSet([]string{"mod_b", "mod_c"}),
+		sets.MakeSet([]string{"mod_h"}),
+	}
+
+	// Initialize the environment.
+	modsDir := filepath.Join(testDir, "enumeration_test")
+	if err := os.RemoveAll(modsDir); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("failed to clean mods dir: %v", err)
+	}
+	setupDummyMods(t, modsDir, baseModSpecs)
+	defer os.RemoveAll(modsDir)
+
+	loader := mods.ModLoader{}
+	allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
+	if err != nil {
+		t.Fatalf("LoadMods failed: %v", err)
+	}
+
+	// Initialize the service. NewService implicitly calls ResetSearch.
+	stateMgr := mods.NewStateManager(allMods, providers)
+	activator := mods.NewModActivator(modsDir, allMods)
+	svc, err := bisect.NewService(stateMgr, activator)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+
+	// --- Round 1: Find the first conflict set ---
+	t.Log("--- Starting Round 1 ---")
+	foundSet1 := runBisectionTest(t, svc, allMods, problematicSets)
+
+	// Verify that one of the two conflict sets was found.
+	if !reflect.DeepEqual(foundSet1, problematicSets[0]) && !reflect.DeepEqual(foundSet1, problematicSets[1]) {
+		t.Fatalf("Round 1 found an incorrect conflict set. Expected one of %v, but got %v", problematicSets, sets.MakeSlice(foundSet1))
+	}
+	t.Logf("Round 1 successful. Found conflict set: %v", sets.MakeSlice(foundSet1))
+
+	// --- Continue Search: Prepare for Round 2 ---
+	if !svc.Engine().GetCurrentState().IsComplete {
+		t.Fatal("Engine should be in a completed state before continuing.")
+	}
+	t.Log("--- Continuing Search for Round 2 ---")
+	svc.ContinueSearch()
+
+	// --- Round 2: Find the second conflict set ---
+	t.Log("--- Starting Round 2 ---")
+	foundSet2 := runBisectionTest(t, svc, allMods, problematicSets)
+
+	// Verify that the *other* conflict set was found.
+	var expectedSet2 sets.Set
+	if reflect.DeepEqual(foundSet1, problematicSets[0]) {
+		expectedSet2 = problematicSets[1]
+	} else {
+		expectedSet2 = problematicSets[0]
+	}
+
+	if !reflect.DeepEqual(foundSet2, expectedSet2) {
+		t.Fatalf("Round 2 found an incorrect conflict set. Expected %v, but got %v", sets.MakeSlice(expectedSet2), sets.MakeSlice(foundSet2))
+	}
+	t.Logf("Round 2 successful. Found conflict set: %v", sets.MakeSlice(foundSet2))
+
+	// --- Final Verification ---
+	// After finding the second set, the service should contain *both* archived sets.
+	// Note: The second set is in the engine's current state, but not yet archived in enumState.
+	// To get the full picture, we add the final found set to the archived list.
+	allFound := copySets(svc.EnumerationState().FoundConflictSets)
+	allFound = append(allFound, foundSet2)
+
+	if len(allFound) != 2 {
+		t.Fatalf("Expected to find 2 total conflict sets, but service reported %d", len(allFound))
+	}
+
+	// Sort slices for deterministic comparison.
+	sort.Slice(allFound, func(i, j int) bool {
+		return sets.MakeSlice(allFound[i])[0] < sets.MakeSlice(allFound[j])[0]
+	})
+	sort.Slice(problematicSets, func(i, j int) bool {
+		return sets.MakeSlice(problematicSets[i])[0] < sets.MakeSlice(problematicSets[j])[0]
+	})
+
+	if !reflect.DeepEqual(allFound, problematicSets) {
+		t.Errorf("Final enumeration result is incorrect.\nExpected: %v\nGot:      %v", problematicSets, allFound)
+	}
+
+	t.Log("Enumeration test successful.")
+}
+
+func setupLogger(t *testing.T) {
+	mainLogger := logging.NewLogger()
+	mainLogger.SetDebug(true)
+	logFile, err := os.OpenFile(filepath.Join(testDir, "test.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		t.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+	mainLogger.SetWriter(logFile)
+	logging.SetDefault(mainLogger)
+}
+
+func copySets(original []sets.Set) []sets.Set {
+	setsCopy := make([]sets.Set, len(original))
+	for i, s := range original {
+		setsCopy[i] = sets.Copy(s)
+	}
+	return setsCopy
 }
 
 func deepCopySpecs(original map[string]modSpec) map[string]modSpec {

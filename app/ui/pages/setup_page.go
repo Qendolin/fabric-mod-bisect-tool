@@ -38,7 +38,8 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 	p.inputField = tview.NewInputField().
 		SetLabel("Mods Directory Path: ").
 		SetFieldWidth(0)
-	p.inputField.SetPlaceholder("C:\\Users\\Example\\.minecraft\\mods")
+	p.inputField.SetPlaceholder("C:\\Users\\Example\\.minecraft\\mods").
+		SetFieldTextColor(tcell.ColorBlack)
 	p.inputField.SetFocusFunc(func() {
 		p.inputField.SetFieldBackgroundColor(tcell.ColorBlue)
 	})
@@ -114,6 +115,8 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 
 	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 8, 0, true).
 		AddItem(widgets.NewTitleFrame(instructions, "Info"), 0, 1, false)
+
+	p.statusText.SetText("Welcome to the Fabric Mod Bisect Tool by Qendolin! Paste the path to your 'mods' directory below.")
 
 	return p
 }

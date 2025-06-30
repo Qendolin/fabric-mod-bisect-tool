@@ -8,7 +8,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/titanous/json5"
@@ -21,15 +20,19 @@ var (
 	reSanitizeTabs     = regexp.MustCompile(`(?m)"[^"]*?"`)
 )
 
-// extractModMetadata opens a JAR and extracts its top-level and nested fabric.mod.json files.
-func extractModMetadata(jarPath string) (FabricModJson, []nestedModInfo, error) {
+type ModParser struct {
+	QuiltParsing bool
+}
+
+// ExtractModMetadata opens a JAR and extracts its top-level and nested fabric.mod.json files.
+func (p *ModParser) ExtractModMetadata(jarPath string) (FabricModJson, []nestedModInfo, error) {
 	zr, err := zip.OpenReader(jarPath)
 	if err != nil {
 		return FabricModJson{}, nil, fmt.Errorf("opening JAR %s as zip: %w", jarPath, err)
 	}
 	defer zr.Close()
 
-	topLevelFmj, err := parseFabricModJsonFromReader(&zr.Reader, jarPath)
+	topLevelFmj, err := p.parseFabricModJsonFromReader(&zr.Reader, jarPath)
 	if err != nil {
 		return FabricModJson{}, nil, fmt.Errorf("parsing top-level fabric.mod.json for %s: %w", jarPath, err)
 	}
@@ -41,7 +44,7 @@ func extractModMetadata(jarPath string) (FabricModJson, []nestedModInfo, error) 
 			continue
 		}
 
-		foundMods, err := recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, "")
+		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, "")
 		if err != nil {
 			logging.Warnf("ModLoader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry.File, filepath.Base(jarPath), err)
 			continue
@@ -52,7 +55,7 @@ func extractModMetadata(jarPath string) (FabricModJson, []nestedModInfo, error) 
 }
 
 // recursivelyParseNestedJar parses a nested JAR and any of its own nested JARs.
-func recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, currentPathPrefix string) ([]nestedModInfo, error) {
+func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, currentPathPrefix string) ([]nestedModInfo, error) {
 	var nestedZipFile *zip.File
 	for _, f := range parentZipReader.File {
 		if f.Name == pathInParent {
@@ -81,7 +84,7 @@ func recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, curren
 		return nil, fmt.Errorf("treating nested content '%s' as zip: %w", pathInParent, err)
 	}
 
-	currentFmj, err := parseFabricModJsonFromReader(innerZipReader, pathInParent)
+	currentFmj, err := p.parseFabricModJsonFromReader(innerZipReader, pathInParent)
 	if err != nil {
 		return nil, fmt.Errorf("parsing metadata from '%s': %w", pathInParent, err)
 	}
@@ -94,7 +97,7 @@ func recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, curren
 		if deeperJarEntry.File == "" {
 			continue
 		}
-		deeperNestedMods, err := recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, fullPathInJar)
+		deeperNestedMods, err := p.recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, fullPathInJar)
 		if err != nil {
 			logging.Warnf("ModLoader: Skipping deeper nested JAR '%s' within '%s': %v", deeperJarEntry.File, fullPathInJar, err)
 			continue
@@ -106,46 +109,63 @@ func recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, curren
 
 // parseFabricModJsonFromReader searches for and unmarshals fabric.mod.json from a zip reader.
 // It also validates that the mod does not provide any reserved/implicit IDs.
-func parseFabricModJsonFromReader(zipReader *zip.Reader, jarIdentifier string) (FabricModJson, error) {
-	for _, f := range zipReader.File {
-		if !strings.EqualFold(f.Name, "fabric.mod.json") {
-			continue
+func (p *ModParser) parseFabricModJsonFromReader(zipReader *zip.Reader, jarIdentifier string) (FabricModJson, error) {
+	var file *zip.File
+	if p.QuiltParsing {
+		file = p.getZipFileEntry(zipReader, "quilt.mod.json")
+		if file != nil {
+			logging.Debugf("ModLoader: %s has a quilt.mod.json which takes priority over fabric.mod.json", jarIdentifier)
 		}
-		fmjData, err := readZipFileEntry(f)
-		if err != nil {
-			return FabricModJson{}, fmt.Errorf("reading fabric.mod.json from %s: %w", jarIdentifier, err)
-		}
-		fmjData = sanitizeJsonStringContent(fmjData)
-
-		var fmj FabricModJson
-		if err := json5.Unmarshal(fmjData, &fmj); err != nil {
-			dataSnippet := string(fmjData)
-			if len(dataSnippet) > 200 {
-				dataSnippet = dataSnippet[:200] + "..."
-			}
-			return FabricModJson{}, fmt.Errorf("unmarshaling fabric.mod.json from %s (data snippet: %s): %w", jarIdentifier, dataSnippet, err)
-		}
-		if fmj.ID == "" {
-			return FabricModJson{}, fmt.Errorf("fabric.mod.json from %s has empty mod ID", jarIdentifier)
-		}
-
-		// Validate that the mod is not providing a reserved ID.
-		if IsImplicitMod(fmj.ID) {
-			return FabricModJson{}, fmt.Errorf("mod from '%s' illegally uses reserved ID '%s'", jarIdentifier, fmj.ID)
-		}
-		for _, providedID := range fmj.Provides {
-			if IsImplicitMod(providedID) {
-				return FabricModJson{}, fmt.Errorf("mod '%s' from '%s' illegally provides reserved ID '%s'", fmj.ID, jarIdentifier, providedID)
-			}
-		}
-
-		return fmj, nil
 	}
-	return FabricModJson{}, fmt.Errorf("fabric.mod.json not found in %s", jarIdentifier)
+	if file == nil {
+		file = p.getZipFileEntry(zipReader, "fabric.mod.json")
+	}
+	if file == nil {
+		return FabricModJson{}, fmt.Errorf("fabric.mod.json not found in %s", jarIdentifier)
+	}
+
+	fmjData, err := p.readZipFileEntry(file)
+	if err != nil {
+		return FabricModJson{}, fmt.Errorf("reading fabric.mod.json from %s: %w", jarIdentifier, err)
+	}
+	fmjData = p.sanitizeJsonStringContent(fmjData)
+
+	var fmj FabricModJson
+	if err := json5.Unmarshal(fmjData, &fmj); err != nil {
+		dataSnippet := string(fmjData)
+		if len(dataSnippet) > 200 {
+			dataSnippet = dataSnippet[:200] + "..."
+		}
+		return FabricModJson{}, fmt.Errorf("unmarshaling fabric.mod.json from %s (data snippet: %s): %w", jarIdentifier, dataSnippet, err)
+	}
+	if fmj.ID == "" {
+		return FabricModJson{}, fmt.Errorf("fabric.mod.json from %s has empty mod ID", jarIdentifier)
+	}
+
+	// Validate that the mod is not providing a reserved ID.
+	if IsImplicitMod(fmj.ID) {
+		return FabricModJson{}, fmt.Errorf("mod from '%s' illegally uses reserved ID '%s'", jarIdentifier, fmj.ID)
+	}
+	for _, providedID := range fmj.Provides {
+		if IsImplicitMod(providedID) {
+			return FabricModJson{}, fmt.Errorf("mod '%s' from '%s' illegally provides reserved ID '%s'", fmj.ID, jarIdentifier, providedID)
+		}
+	}
+
+	return fmj, nil
+}
+
+func (p *ModParser) getZipFileEntry(r *zip.Reader, name string) *zip.File {
+	for _, f := range r.File {
+		if f.Name == name {
+			return f
+		}
+	}
+	return nil
 }
 
 // sanitizeJsonStringContent removes problematic characters from JSON string content.
-func sanitizeJsonStringContent(data []byte) []byte {
+func (p *ModParser) sanitizeJsonStringContent(data []byte) []byte {
 	sanitizedData := reSanitizeNewlines.ReplaceAllFunc(data, func(match []byte) []byte {
 		submatches := reSanitizeNewlines.FindSubmatch(match)
 		if len(submatches) < 3 {
@@ -168,7 +188,7 @@ func sanitizeJsonStringContent(data []byte) []byte {
 }
 
 // readZipFileEntry reads the content of a file entry within a ZIP archive.
-func readZipFileEntry(f *zip.File) ([]byte, error) {
+func (p *ModParser) readZipFileEntry(f *zip.File) ([]byte, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
