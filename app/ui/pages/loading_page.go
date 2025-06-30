@@ -1,10 +1,12 @@
-package ui
+package pages
 
 import (
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/rivo/tview"
 )
 
@@ -14,7 +16,7 @@ const PageLoadingID = "loading_page"
 // LoadingPage displays progress while mods are being loaded.
 type LoadingPage struct {
 	*tview.Flex
-	app          AppInterface
+	app          ui.AppInterface
 	progressBar  *tview.TextView
 	progressText *tview.TextView
 	statusText   *tview.TextView
@@ -24,7 +26,7 @@ type LoadingPage struct {
 }
 
 // NewLoadingPage creates a new LoadingPage instance.
-func NewLoadingPage(app AppInterface) *LoadingPage {
+func NewLoadingPage(app ui.AppInterface) *LoadingPage {
 	lp := &LoadingPage{
 		Flex:         tview.NewFlex().SetDirection(tview.FlexRow),
 		app:          app,
@@ -47,7 +49,7 @@ func NewLoadingPage(app AppInterface) *LoadingPage {
 		).
 		AddItem(tview.NewBox(), 0, 1, false)
 
-	lp.AddItem(NewTitleFrame(centeredFlex, "Loading Mods"), 0, 1, true)
+	lp.AddItem(widgets.NewTitleFrame(centeredFlex, "Loading Mods"), 0, 1, true)
 	lp.statusText.SetText("Loading mod files from disk...")
 	return lp
 }
@@ -74,7 +76,7 @@ func (lp *LoadingPage) StartLoading(modsPath string) {
 	lp.UpdateProgress("Starting...") // Initial update
 }
 
-// UpdateProgress updates the progress bar and text. This is now fully functional.
+// UpdateProgress updates the progress bar and text.
 func (lp *LoadingPage) UpdateProgress(currentFile string) {
 	lp.processedFiles++
 
@@ -101,8 +103,8 @@ func (lp *LoadingPage) UpdateProgress(currentFile string) {
 }
 
 // GetActionPrompts returns the key actions for the loading page.
-func (lp *LoadingPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{}
+func (lp *LoadingPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

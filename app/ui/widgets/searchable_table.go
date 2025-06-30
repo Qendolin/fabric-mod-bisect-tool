@@ -1,4 +1,4 @@
-package ui
+package widgets
 
 import (
 	"fmt"
@@ -116,6 +116,26 @@ func (st *SearchableTable) Clear() {
 	st.table.Clear()
 	st.rawData = nil
 	st.columnWidths = nil
+}
+
+// GetSelection returns the currently selected row and column.
+func (st *SearchableTable) GetSelection() (row, column int) {
+	return st.table.GetSelection()
+}
+
+// GetCell returns the cell at the specified row and column.
+func (st *SearchableTable) GetCell(row, column int) *tview.TableCell {
+	return st.table.GetCell(row, column)
+}
+
+// GetRowCount returns the number of rows in the table, including headers.
+func (st *SearchableTable) GetRowCount() int {
+	return st.table.GetRowCount()
+}
+
+// Select sets the currently selected cell by row and column.
+func (st *SearchableTable) Select(row, column int) {
+	st.table.Select(row, column)
 }
 
 // Filter re-populates the table based on the search query.

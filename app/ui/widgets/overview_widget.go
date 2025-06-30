@@ -1,4 +1,4 @@
-package ui
+package widgets
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"

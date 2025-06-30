@@ -61,7 +61,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 		if _, isDirectMod := s.allMods[modID]; isDirectMod {
 			s.ensureModActive(modID, "System (Initial Set)", "Target", modID)
 		} else if !IsImplicitMod(modID) {
-			s.resolveDependency(modID, "System (Initial Target)", modID)
+			s.resolveDependency(modID, "System (Initial Target)")
 		}
 	}
 
@@ -74,7 +74,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 			if _, isDirectMod := s.allMods[modID]; isDirectMod {
 				s.ensureModActive(modID, "System (Initial Set)", "Forced", modID)
 			} else if !IsImplicitMod(modID) {
-				s.resolveDependency(modID, "System (Forced)", modID)
+				s.resolveDependency(modID, "System (Forced)")
 			}
 		}
 	}
@@ -94,8 +94,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 }
 
 // ensureModActive attempts to activate a mod and its dependencies.
-// Returns true if modToActivateID and all its hard (non-optional, non-implicit)
-// dependencies were successfully activated.
+// Returns true if modToActivateID and all its hard (non-optional, non-implicit) dependencies were successfully activated.
 func (s *resolutionSession) ensureModActive(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied string) bool {
 	if status, ok := s.modStatuses[modToActivateID]; ok && status.ForceDisabled {
 		logging.Debugf("Resolver: Mod '%s' is force-disabled, cannot activate (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
@@ -103,6 +102,7 @@ func (s *resolutionSession) ensureModActive(modToActivateID, neededByModID, reas
 	}
 
 	if _, ok := s.currentEffectiveSet[modToActivateID]; ok {
+		logging.Debugf("Resolver: Mod '%s' is already in the effective set. Skipping activation.", modToActivateID)
 		s.updateNeededForList(modToActivateID, neededByModID)
 		return true
 	}
@@ -127,7 +127,7 @@ func (s *resolutionSession) ensureModActive(modToActivateID, neededByModID, reas
 			continue
 		}
 
-		if !s.resolveDependency(depID, modToActivateID, depID) {
+		if !s.resolveDependency(depID, modToActivateID) {
 			allDependenciesSuccessfullyResolved = false
 			unmetDependencies = append(unmetDependencies, depID)
 		}
@@ -210,7 +210,7 @@ func (s *resolutionSession) updateResolutionPath(modID, neededBy, reason, satisf
 
 // resolveDependency attempts to find a provider for a dependency and ensure it's active.
 // Returns true if the dependency was successfully resolved.
-func (s *resolutionSession) resolveDependency(dependencyToSatisfy, requiringModID, originalDeclaration string) bool {
+func (s *resolutionSession) resolveDependency(dependencyToSatisfy, requiringModID string) bool {
 	if providerModID, isSatisfied := s.dependencySatisfied[dependencyToSatisfy]; isSatisfied {
 		logging.Debugf("Resolver: Dependency '%s' (for '%s') already satisfied by '%s'.", dependencyToSatisfy, requiringModID, providerModID)
 		s.updateNeededForList(providerModID, requiringModID)
@@ -250,6 +250,7 @@ func (s *resolutionSession) resolveDependency(dependencyToSatisfy, requiringModI
 // It prioritizes any valid, already-active mod over any inactive mod.
 func (s *resolutionSession) findBestProvider(depID string) *ProviderInfo {
 	providerCandidates, ok := s.potentialProviders[depID]
+	logging.Debugf("Resolver: Finding provider for '%s'. Candidates: %v", depID, providerCandidates)
 	if !ok || len(providerCandidates) == 0 {
 		return nil
 	}

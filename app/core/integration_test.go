@@ -94,7 +94,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 
 		effectiveSet, _ := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest)
 
-		// CORRECTED: Build a set of all IDs provided by the effective set of mods.
+		// Build a set of all IDs provided by the effective set of mods.
 		allProvidedIDsByEffectiveSet := sets.Copy(effectiveSet)
 		for modID := range effectiveSet {
 			if mod, ok := allMods[modID]; ok {
@@ -104,7 +104,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			}
 		}
 
-		// CORRECTED: The test fails if the set of all provided IDs is a superset of the problematic set.
+		// The test fails if the set of all provided IDs is a superset of the problematic set.
 		isFailure := len(problematicSet) > 0 && len(sets.Subtract(problematicSet, allProvidedIDsByEffectiveSet)) == 0
 
 		result := imcs.TestResultGood
@@ -166,7 +166,7 @@ func TestBisectService_Integration(t *testing.T) {
 				return specs
 			}(),
 			problematicSet:      sets.MakeSet([]string{"mod_j"}),
-			expectedConflictSet: sets.MakeSet([]string{"mod_c"}), // CORRECTED: The trigger is mod_c.
+			expectedConflictSet: sets.MakeSet([]string{"mod_c"}),
 		},
 		{
 			name: "Dependency Provider Conflict",
@@ -177,7 +177,7 @@ func TestBisectService_Integration(t *testing.T) {
 				return specs
 			}(),
 			problematicSet:      sets.MakeSet([]string{"mod_b"}),
-			expectedConflictSet: sets.MakeSet([]string{"mod_a"}), // CORRECTED: The trigger is mod_a.
+			expectedConflictSet: sets.MakeSet([]string{"mod_a"}),
 		},
 		{
 			name: "Nested JAR Conflict",

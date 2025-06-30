@@ -148,12 +148,10 @@ func (n *NavigationManager) ToggleLogPage() {
 }
 
 func (n *NavigationManager) ToggleHistoryPage() {
-	// Check if a page with this ID is already the front-most modal
-	if len(n.modalStack) > 0 && n.modalStack[len(n.modalStack)-1] == PageHistoryID {
-		n.CloseModal()
+	currentID, _ := n.pages.GetFrontPage()
+	if currentID == PageHistoryID {
+		n.GoBack()
 	} else {
-		// Create a new instance every time, as it's a modal.
-		historyPage := NewHistoryPage(n.app)
-		n.ShowModal(PageHistoryID, historyPage)
+		n.SwitchTo(PageHistoryID)
 	}
 }

@@ -1,4 +1,4 @@
-package ui
+package pages
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,14 +17,14 @@ const PageResultID = "result_page"
 // ResultPage displays the final or intermediate results of the bisection search.
 type ResultPage struct {
 	*tview.Flex
-	app         AppInterface
+	app         ui.AppInterface
 	statusText  *tview.TextView
 	resultView  *tview.TextView
 	closeButton *tview.Button
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app AppInterface, state imcs.SearchState, dependers sets.Set) *ResultPage {
+func NewResultPage(app ui.AppInterface, state imcs.SearchState, dependers sets.Set) *ResultPage {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -42,14 +44,14 @@ func NewResultPage(app AppInterface, state imcs.SearchState, dependers sets.Set)
 		SetText(explanation)
 	explanationView.SetBorderPadding(1, 1, 1, 1)
 
-	messageFrame := NewTitleFrame(p.resultView, "Result")
-	explanationFrame := NewTitleFrame(explanationView, "What to do next")
+	messageFrame := widgets.NewTitleFrame(p.resultView, "Result")
+	explanationFrame := widgets.NewTitleFrame(explanationView, "What to do next")
 
 	p.closeButton = tview.NewButton("Close").
 		SetSelectedFunc(func() {
 			p.app.Navigation().CloseModal()
 		})
-	DefaultStyleButton(p.closeButton)
+	widgets.DefaultStyleButton(p.closeButton)
 
 	buttonLayout := tview.NewFlex().
 		AddItem(tview.NewBox(), 0, 1, false).
@@ -127,10 +129,9 @@ func (p *ResultPage) formatContent(state imcs.SearchState, dependers []string) (
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ResultPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"↑/↓", "Scroll Text"},
-		{"Enter/ESC", "Close"},
+func (p *ResultPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "↑/↓", Action: "Scroll Text"},
 	}
 }
 

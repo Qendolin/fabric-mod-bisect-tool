@@ -85,6 +85,19 @@ const (
 	ActionRemove
 )
 
+func (a OverrideAction) String() string {
+	switch a {
+	case ActionReplace:
+		return "Replace"
+	case ActionAdd:
+		return "Add"
+	case ActionRemove:
+		return "Remove"
+	default:
+		return "Unknown"
+	}
+}
+
 // OverrideRule is the interface for any dependency or provides override rule.
 type OverrideRule interface {
 	Apply(fmj *FabricModJson)
@@ -92,9 +105,10 @@ type OverrideRule interface {
 	Field() string
 	Key() string
 	Action() OverrideAction
+	Value() string
 }
 
-// DependencyOverrides now holds a pre-parsed list of polymorphic rules.
+// DependencyOverrides holds a pre-parsed list of polymorphic rules.
 type DependencyOverrides struct {
 	Rules []OverrideRule
 }

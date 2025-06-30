@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,16 +25,19 @@ func main() {
 	}
 	defer logFile.Close()
 	mainLogger.SetWriter(logFile)
-
-	// Set this as the default logger for any package-level calls.
 	logging.SetDefault(mainLogger)
+
+	cliArgs := app.ParseCLIArgs()
+	if cliArgs.Verbose {
+		mainLogger.SetDebug(true)
+		logging.Infof("Main: Verbose logging enabled.")
+	}
 
 	// 2. Setup OS signal trapping
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// 3. Create the App structure, passing the configured logger
-	cliArgs := app.ParseCLIArgs()
 	a := app.NewApp(mainLogger, cliArgs)
 
 	// 4. Goroutine to handle OS signals
@@ -48,6 +52,7 @@ func main() {
 	logging.Infof("Main: Application starting up.")
 	if err := a.Run(); err != nil {
 		logging.Errorf("Main: Application exited with error: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	logging.Infof("Main: Application exited gracefully.")

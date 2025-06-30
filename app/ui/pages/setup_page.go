@@ -1,4 +1,4 @@
-package ui
+package pages
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -16,7 +18,7 @@ const PageSetupID = "setup_page"
 // SetupPage represents the initial setup screen.
 type SetupPage struct {
 	*tview.Flex
-	app        AppInterface
+	app        ui.AppInterface
 	statusText *tview.TextView
 
 	inputField      *tview.InputField
@@ -26,7 +28,7 @@ type SetupPage struct {
 }
 
 // NewSetupPage creates a new SetupPage instance.
-func NewSetupPage(app AppInterface) *SetupPage {
+func NewSetupPage(app ui.AppInterface) *SetupPage {
 	p := &SetupPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -36,7 +38,7 @@ func NewSetupPage(app AppInterface) *SetupPage {
 	p.inputField = tview.NewInputField().
 		SetLabel("Mods Directory Path: ").
 		SetFieldWidth(0)
-	p.inputField.SetPlaceholder("C:/Users/Example/.minecraft/mods")
+	p.inputField.SetPlaceholder("C:\\Users\\Example\\.minecraft\\mods")
 	p.inputField.SetFocusFunc(func() {
 		p.inputField.SetFieldBackgroundColor(tcell.ColorBlue)
 	})
@@ -56,25 +58,25 @@ func NewSetupPage(app AppInterface) *SetupPage {
 		}
 		app.StartLoadingProcess(filepath.Clean(p.inputField.GetText()))
 	})
-
-	DefaultStyleButton(p.loadButton)
+	widgets.DefaultStyleButton(p.loadButton)
 
 	p.loadStateButton = tview.NewButton("Load Saved State").SetSelectedFunc(func() {
 		p.statusText.SetText("Loading saved state (not implemented yet)...")
 	})
-	DefaultStyleButton(p.loadStateButton)
+	widgets.DefaultStyleButton(p.loadStateButton)
+	// TODO: implement state loading
+	p.loadStateButton.SetDisabled(true)
 
 	p.quitButton = tview.NewButton("Quit").SetSelectedFunc(func() {
 		go app.QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
 	})
-	DefaultStyleButton(p.quitButton)
+	widgets.DefaultStyleButton(p.quitButton)
 
 	buttonsFlex := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(p.loadButton, 30, 0, true).
-		// TODO: implement state loading
-		// AddItem(nil, 1, 0, false).
-		// AddItem(p.loadStateButton, 30, 0, true).
+		AddItem(nil, 1, 0, false).
+		AddItem(p.loadStateButton, 30, 0, true).
 		AddItem(nil, 0, 1, false).
 		AddItem(p.quitButton, 30, 0, true)
 
@@ -110,15 +112,15 @@ func NewSetupPage(app AppInterface) *SetupPage {
 `, buildTime))
 	instructions.SetBorderPadding(0, 0, 1, 1)
 
-	p.AddItem(NewTitleFrame(setupFlex, "Setup"), 8, 0, true).
-		AddItem(NewTitleFrame(instructions, "Info"), 0, 1, false)
+	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 8, 0, true).
+		AddItem(widgets.NewTitleFrame(instructions, "Info"), 0, 1, false)
 
 	return p
 }
 
 // GetActionPrompts returns the key actions for the setup page.
-func (p *SetupPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{}
+func (p *SetupPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

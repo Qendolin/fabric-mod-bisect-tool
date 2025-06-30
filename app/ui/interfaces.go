@@ -52,21 +52,6 @@ type AppInterface interface {
 	ResetSearch()
 }
 
-type ActionPrompt struct {
-	Input  string
-	Action string
-}
-
-// Page is an interface that all UI pages must implement.
-type Page interface {
-	tview.Primitive
-
-	// GetActionPrompts returns a map of key-to-description for the footer.
-	GetActionPrompts() []ActionPrompt
-	// GetStatusPrimitive returns the page specific text view that displays the page's status
-	GetStatusPrimitive() *tview.TextView
-}
-
 // SearchStateObserver defines an interface for pages that need to be updated
 // when the conflict searcher's state changes.
 type SearchStateObserver interface {
@@ -80,11 +65,4 @@ type Focusable interface {
 	// GetFocusablePrimitives returns a slice of the immediate child primitives
 	// that can receive focus.
 	GetFocusablePrimitives() []tview.Primitive
-}
-
-// PageActivator defines an interface for pages that need to perform an action
-// (like refreshing their content) when they become the active page.
-type PageActivator interface {
-	// OnPageActivated is called by the NavigationManager when the page is switched to.
-	OnPageActivated()
 }

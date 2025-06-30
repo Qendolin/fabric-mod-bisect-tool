@@ -14,6 +14,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/embeds"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/pages"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -31,11 +32,12 @@ type App struct {
 	bisectSvc *bisect.Service
 
 	// Pages
-	setupPage      *ui.SetupPage
-	mainPage       *ui.MainPage
-	logPage        *ui.LogPage
-	loadingPage    *ui.LoadingPage
-	manageModsPage *ui.ManageModsPage
+	setupPage      *pages.SetupPage
+	mainPage       *pages.MainPage
+	logPage        *pages.LogPage
+	loadingPage    *pages.LoadingPage
+	manageModsPage *pages.ManageModsPage
+	historyPage    *pages.HistoryPage
 
 	appCtx    context.Context
 	cancelApp context.CancelFunc
@@ -63,17 +65,19 @@ func NewApp(logger *logging.Logger, cliArgs *CLIArgs) *App {
 	a.focusManager = ui.NewFocusManager(a)
 	a.SetRoot(a.layoutManager.RootPrimitive(), true).EnableMouse(true)
 
-	a.setupPage = ui.NewSetupPage(a)
-	a.mainPage = ui.NewMainPage(a)
-	a.logPage = ui.NewLogPage(a)
-	a.loadingPage = ui.NewLoadingPage(a)
-	a.manageModsPage = ui.NewManageModsPage(a)
+	a.setupPage = pages.NewSetupPage(a)
+	a.mainPage = pages.NewMainPage(a)
+	a.logPage = pages.NewLogPage(a)
+	a.loadingPage = pages.NewLoadingPage(a)
+	a.manageModsPage = pages.NewManageModsPage(a)
+	a.historyPage = pages.NewHistoryPage(a)
 
 	a.navManager.Register(ui.PageSetupID, a.setupPage)
 	a.navManager.Register(ui.PageMainID, a.mainPage)
 	a.navManager.Register(ui.PageLogID, a.logPage)
 	a.navManager.Register(ui.PageLoadingID, a.loadingPage)
 	a.navManager.Register(ui.PageManageModsID, a.manageModsPage)
+	a.navManager.Register(ui.PageHistoryID, a.historyPage)
 
 	a.setupGlobalInputCapture()
 
@@ -167,12 +171,18 @@ func (a *App) Step() {
 	onFailure := func() { a.navManager.CloseModal(); a.bisectSvc.SubmitTestResult(imcs.TestResultFail, changes) }
 	onCancel := func() { a.navManager.CloseModal(); a.bisectSvc.CancelTest(changes) }
 
-	testPage := ui.NewTestPage(a, plan.IsVerificationStep, onSuccess, onFailure, onCancel)
+	testPage := pages.NewTestPage(a, plan.IsVerificationStep, onSuccess, onFailure, onCancel)
 	a.navManager.ShowModal(ui.PageTestID, testPage)
 }
 
-func (a *App) Undo()        { a.bisectSvc.UndoLastStep() }
-func (a *App) ResetSearch() { a.bisectSvc.StartNewSearch() }
+func (a *App) Undo() {
+	logging.Debugf("App: Undo action triggered.")
+	a.bisectSvc.UndoLastStep()
+}
+func (a *App) ResetSearch() {
+	logging.Debugf("App: ResetSearch action triggered.")
+	a.bisectSvc.StartNewSearch()
+}
 func (a *App) Run() error {
 	a.navManager.SwitchTo(ui.PageSetupID)
 	return a.Application.Run()
@@ -190,10 +200,8 @@ func (a *App) displayResults() {
 	}
 	state := a.bisectSvc.GetCurrentState()
 	if state.IsComplete || a.bisectSvc.Engine().WasLastTestVerification() {
-		// This now finds all direct and indirect dependers.
 		dependers := a.bisectSvc.StateManager().FindTransitiveDependersOf(state.ConflictSet)
-
-		resultPage := ui.NewResultPage(a, state, dependers)
+		resultPage := pages.NewResultPage(a, state, dependers)
 		a.navManager.ShowModal(ui.PageResultID, resultPage)
 	}
 }
