@@ -1,52 +1,57 @@
 package imcs
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 )
 
-var errHistoryEmpty = errors.New("history is empty")
+// UndoFrame captures a complete undoable action, containing both the state
+// before the action and the plan that was executed.
+type UndoFrame struct {
+	State SearchState
+	Plan  TestPlan
+}
 
-// UndoStack (renamed from HistoryManager) provides an undo/redo-style history
-// for search states.
+// UndoStack now manages a stack of UndoFrames.
 type UndoStack struct {
-	states []SearchState // Changed from SearchSnapshot to SearchState
+	frames []UndoFrame
 }
 
-// NewUndoStack creates a new undo stack.
 func NewUndoStack() *UndoStack {
-	return &UndoStack{
-		states: make([]SearchState, 0),
-	}
+	return &UndoStack{frames: make([]UndoFrame, 0)}
 }
 
-// Push adds a new state to the undo stack. It performs a deep copy.
-func (s *UndoStack) Push(state SearchState) {
-	// Perform a deep copy to ensure the pushed state is immutable.
-	copiedState := deepCopyState(state)
-	s.states = append(s.states, copiedState)
+func (s *UndoStack) Push(frame UndoFrame) {
+	s.frames = append(s.frames, frame)
 }
 
-// Pop removes and returns the most recent state from the history.
-func (s *UndoStack) Pop() (SearchState, error) {
-	if len(s.states) == 0 {
-		return SearchState{}, errHistoryEmpty
+func (s *UndoStack) Pop() (UndoFrame, error) {
+	if len(s.frames) == 0 {
+		return UndoFrame{}, fmt.Errorf("undo stack is empty")
 	}
-	lastIndex := len(s.states) - 1
-	snapshot := s.states[lastIndex]
-	s.states = s.states[:lastIndex]
-	return snapshot, nil
+	frame := s.frames[len(s.frames)-1]
+	s.frames = s.frames[:len(s.frames)-1]
+	return frame, nil
+}
+
+func (s *UndoStack) Size() int {
+	return len(s.frames)
+}
+
+// Peek returns the most recent state from the history.
+func (s *UndoStack) Peek() (UndoFrame, bool) {
+	if len(s.frames) == 0 {
+		return UndoFrame{}, false
+	}
+	lastIndex := len(s.frames) - 1
+	snapshot := s.frames[lastIndex]
+	return snapshot, true
 }
 
 // Clear removes all states from the history.
 func (s *UndoStack) Clear() {
-	s.states = make([]SearchState, 0)
-}
-
-// Size returns the number of states in the history.
-func (s *UndoStack) Size() int {
-	return len(s.states)
+	s.frames = make([]UndoFrame, 0)
 }
 
 // deepCopyState creates a new SearchState with all maps and slices copied.
@@ -90,5 +95,7 @@ func deepCopyState(state SearchState) SearchState {
 		IsComplete:             state.IsComplete,
 		LastFoundElement:       state.LastFoundElement,
 		LastTestResult:         state.LastTestResult,
+		Round:                  state.Round,
+		Iteration:              state.Iteration,
 	}
 }

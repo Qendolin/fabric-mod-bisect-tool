@@ -2,8 +2,6 @@
 package imcs
 
 import (
-	"fmt"
-
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
@@ -20,7 +18,7 @@ func NewIMCSAlgorithm() *IMCSAlgorithm {
 // This logic now directly mirrors the decision points in the formal IMCS algorithm.
 func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 	if state.IsComplete {
-		return nil, fmt.Errorf("search is already complete")
+		return nil, ErrSearchComplete
 	}
 
 	// Priority 1: A bisection search for an element is in progress.
@@ -42,7 +40,7 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 	// Priority 3: No bisection, no verification. Time to start a new search for the next element.
 	if len(state.Candidates) == 0 {
 		// All candidates have been processed. The search is over.
-		return nil, fmt.Errorf("search complete")
+		return nil, ErrSearchComplete
 	}
 
 	// This is the start of a "FindNextConflictElement" call. Plan the first test.
@@ -58,7 +56,7 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 
 // ApplyResult takes a state, a completed test plan, and its result,
 // and returns the new, updated state. This is a pure function.
-func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result TestResult) (SearchState, error) {
+func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result TestResult) SearchState {
 	newState := deepCopyState(state)
 	newState.LastTestResult = result
 	newState.IsVerifyingConflictSet = false // Flag is consumed after one use.
@@ -72,8 +70,9 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 		} else { // GOOD
 			// The current ConflictSet is not sufficient. Continue the search for more elements.
 			logging.Info("IMCSAlgorithm: Verification FAILED. ConflictSet not sufficient, continuing search.")
+			newState.Iteration++
 		}
-		return newState, nil
+		return newState
 	}
 
 	// --- Handle Bisection Step Result ---
@@ -100,6 +99,8 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 			newState.StableSet = newState.ConflictSet
 			newState.Candidates = sets.SubtractSlices(newState.Candidates, []string{foundMod})
 			newState.LastFoundElement = foundMod
+
+			// The iteration count should be incremented here when following the formal algorithm strictly
 
 			// Terminate this bisection, clear the stack, and flag for verification.
 			newState.SearchStack = make([]SearchStep, 0)
@@ -134,5 +135,5 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 
 	logging.Debugf("IMCSAlgorithm.ApplyResult: Applied result '%s'. New state: IsComplete=%t, ConflictSet=%v, StackDepth=%d", result, newState.IsComplete, sets.FormatSet(newState.ConflictSet), len(newState.SearchStack))
 
-	return newState, nil
+	return newState
 }

@@ -47,9 +47,11 @@ func (lm *LayoutManager) setupLayout() {
 	lm.status = tview.NewFlex().SetDirection(tview.FlexRow)
 	lm.SetHeader(nil)
 
-	lm.header.AddItem(lm.status, 0, 1, false).
+	// Use boxes instead of padding to avoid transparent gap
+	lm.header.AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(lm.status, 0, 1, false).
+		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(lm.errorCounters, 0, 1, false)
-	lm.header.SetBorderPadding(0, 0, 1, 1)
 
 	lm.root.SetBorder(true).
 		SetTitle(" Fabric Mod Bisect Tool ").

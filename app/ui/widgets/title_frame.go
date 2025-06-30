@@ -41,7 +41,7 @@ func (f *TitleFrame) Draw(screen tcell.Screen) {
 
 	// Draw the horizontal line at the top
 	lineY := y
-	style := tcell.StyleDefault.Foreground(f.color) // White color for the line
+	style := tcell.StyleDefault.Background(tview.Styles.PrimitiveBackgroundColor).Foreground(f.color) // White color for the line
 	for i := 0; i < width; i++ {
 		screen.SetContent(x+i, lineY, lineRune, nil, style)
 	}

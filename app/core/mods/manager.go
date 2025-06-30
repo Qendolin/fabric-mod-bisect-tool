@@ -188,7 +188,6 @@ func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) (sets.Set, []Res
 	return sm.resolver.ResolveEffectiveSet(targetSet, sm.GetModStatusesSnapshot())
 }
 
-// FindTransitiveDependersOf delegates the call to its internal dependency resolver.
-func (sm *StateManager) FindTransitiveDependersOf(targets sets.Set) sets.Set {
-	return sm.resolver.FindTransitiveDependersOf(targets)
+func (sm *StateManager) Resolver() *DependencyResolver {
+	return sm.resolver
 }

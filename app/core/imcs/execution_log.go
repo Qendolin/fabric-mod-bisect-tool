@@ -27,6 +27,14 @@ func NewExecutionLog() *ExecutionLog {
 	}
 }
 
+// Append appends another execution log to the current one.
+func (el *ExecutionLog) Append(other *ExecutionLog) {
+	if other == nil {
+		return
+	}
+	el.entries = append(el.entries, other.entries...)
+}
+
 // Log adds a new completed test to the log.
 func (el *ExecutionLog) Log(test CompletedTest) {
 	el.entries = append(el.entries, test)

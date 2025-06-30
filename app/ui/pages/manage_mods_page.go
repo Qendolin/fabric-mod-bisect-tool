@@ -67,6 +67,10 @@ func (p *ManageModsPage) setupLayout() {
 
 func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
+		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
+			return event
+		}
+
 		if p.modTable.HasFocus() {
 			// Handle state changes when table is focused
 			if p.handleTableInput(event) == nil {
@@ -209,8 +213,8 @@ func (p *ManageModsPage) RefreshState() {
 	disabledIDs := []string{}
 
 	var nextTestSet sets.Set
-	if vm.NextTestPlan != nil {
-		nextTestSet = vm.NextTestPlan.ModIDsToTest
+	if vm.CurrentTestPlan != nil {
+		nextTestSet = vm.CurrentTestPlan.ModIDsToTest
 	}
 
 	for _, id := range allIDs {
@@ -232,7 +236,7 @@ func (p *ManageModsPage) RefreshState() {
 			disabledIDs = append(disabledIDs, id)
 		} else if status.Omitted {
 			statusStr = "[steelblue]Omitted[-:-:-]"
-		} else if _, ok := vm.ConflictSet[id]; ok {
+		} else if _, ok := vm.CurrentConflictSet[id]; ok {
 			statusStr = "[red::b]Problem[-:-:-]"
 		} else if _, ok := nextTestSet[id]; ok {
 			statusStr = "[white]In Test[-:-:-]"

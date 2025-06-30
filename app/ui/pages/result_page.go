@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
@@ -17,21 +16,24 @@ const PageResultID = "result_page"
 // ResultPage displays the final or intermediate results of the bisection search.
 type ResultPage struct {
 	*tview.Flex
-	app         ui.AppInterface
-	statusText  *tview.TextView
-	resultView  *tview.TextView
-	closeButton *tview.Button
+	app            ui.AppInterface
+	statusText     *tview.TextView
+	resultView     *tview.TextView
+	closeButton    *tview.Button
+	continueButton *tview.Button
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app ui.AppInterface, state imcs.SearchState, dependers sets.Set) *ResultPage {
+func NewResultPage(app ui.AppInterface) *ResultPage {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
 
-	title, message, explanation := p.formatContent(state, sets.MakeSlice(dependers))
+	vm := app.GetViewModel()
+
+	title, message, explanation := p.formatContent(&vm)
 
 	p.resultView = tview.NewTextView().
 		SetDynamicColors(true).
@@ -53,17 +55,40 @@ func NewResultPage(app ui.AppInterface, state imcs.SearchState, dependers sets.S
 		})
 	widgets.DefaultStyleButton(p.closeButton)
 
+	p.continueButton = tview.NewButton("Continue Search").
+		SetSelectedFunc(func() {
+			p.app.Dialogs().ShowQuestionDialog(
+				"This will start a new search for the next conflict set within the remaining mods. Continue?",
+				func() { // OnYes
+					p.app.Navigation().CloseModal()
+					p.app.ContinueSearch()
+				},
+				nil, // OnNo
+			)
+		})
+	widgets.DefaultStyleButton(p.continueButton)
+
+	// Determine if the "Continue Search" button should be shown.
+	canContinue := vm.IsComplete && len(vm.CandidateSet) > 0
 	buttonLayout := tview.NewFlex().
-		AddItem(tview.NewBox(), 0, 1, false).
-		AddItem(p.closeButton, 15, 1, true).
 		AddItem(tview.NewBox(), 0, 1, false)
 
+	if canContinue {
+		buttonLayout.AddItem(p.closeButton, 15, 0, true)
+		buttonLayout.AddItem(tview.NewBox(), 1, 0, false)
+		buttonLayout.AddItem(p.continueButton, 20, 0, false)
+	} else {
+		p.continueButton.SetDisabled(true)
+		buttonLayout.AddItem(p.closeButton, 15, 0, true)
+	}
+	buttonLayout.AddItem(tview.NewBox(), 0, 1, false)
+
 	p.AddItem(messageFrame, 0, 2, false).
-		AddItem(explanationFrame, 5, 0, false).
+		AddItem(explanationFrame, 7, 0, false).
 		AddItem(buttonLayout, 3, 0, true)
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyEnter {
+		if event.Key() == tcell.KeyEscape {
 			app.Navigation().CloseModal()
 			return nil
 		}
@@ -75,53 +100,93 @@ func NewResultPage(app ui.AppInterface, state imcs.SearchState, dependers sets.S
 	return p
 }
 
-// formatContent generates the appropriate text based on the search state.
-func (p *ResultPage) formatContent(state imcs.SearchState, dependers []string) (title, message, explanation string) {
+// formatContent generates the appropriate text based on the bisection ViewModel.
+func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, explanation string) {
 	modState := p.app.GetStateManager()
 	mods := modState.GetAllMods()
 
-	conflictMods := sets.MakeSlice(state.ConflictSet)
+	// Combine all found conflict sets for display. For a complete search,
+	// this includes the final set found.
+	allFoundSets := vm.AllConflictSets
+	if vm.IsComplete && len(vm.CurrentConflictSet) > 0 {
+		allFoundSets = append(allFoundSets, vm.CurrentConflictSet)
+	}
+
 	var messageBuilder strings.Builder
 
-	if state.IsComplete {
+	if vm.IsComplete {
 		title = "Search Complete"
-		if len(conflictMods) > 0 {
-			messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s):\n", len(conflictMods)))
-			for _, id := range conflictMods {
-				modInfo := ""
-				if mod, ok := mods[id]; ok {
-					modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
-				}
-				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+		if len(allFoundSets) > 0 {
+			// Adapt wording based on the number of conflicts found.
+			if len(allFoundSets) == 1 {
+				messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s):\n", len(allFoundSets[0])))
+			} else {
+				messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] independent conflict sets:\n", len(allFoundSets)))
 			}
 
-			if len(dependers) > 0 {
-				messageBuilder.WriteString(fmt.Sprintf("\nThese %d mod(s) must also be disabled as they depend on the problematic mods:\n", len(dependers)))
-				for _, id := range dependers {
+			// Display each conflict set.
+			for i, conflictSet := range allFoundSets {
+				if len(allFoundSets) > 1 {
+					messageBuilder.WriteString(fmt.Sprintf("\n[::u]Conflict Set #%d[-:-:-]\n", i+1))
+				}
+				for _, id := range sets.MakeSlice(conflictSet) {
 					modInfo := ""
 					if mod, ok := mods[id]; ok {
 						modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
 					}
-					messageBuilder.WriteString(fmt.Sprintf("  - [yellow]%s[-:-:-] %s\n", id, modInfo))
+					messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+				}
+
+				allModsSet := sets.MakeSet(modState.GetAllModIDs())
+				unresolvable := modState.Resolver().CalculateUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
+
+				if len(unresolvable) > 0 {
+					messageBuilder.WriteString("    [gray]└ Disabling this set would also require disabling:\n")
+					unresolvableMods := sets.MakeSlice(unresolvable)
+					for _, modID := range unresolvableMods {
+						mod := mods[modID]
+						messageBuilder.WriteString(fmt.Sprintf("      - [yellow]%s[-:-:-] from '%s.jar'\n", modID, mod.BaseFilename))
+					}
 				}
 			}
+
+			// Build the explanation text.
 			explanation = "To fix the issue, disable all mods listed above and then relaunch the game.\nOnce confirmed, please report the incompatibility to the mod authors."
+			if len(vm.CandidateSet) > 0 {
+				explanation += "\n\nIf issues persist, use 'Continue Search' to find other conflicts."
+			}
 
 		} else {
 			messageBuilder.WriteString("No problematic mods were found.")
 			explanation = "The bisection process completed without isolating a specific cause for failure."
 		}
-	} else if state.LastFoundElement != "" {
+	} else if vm.LastFoundElement != "" {
+		// This branch handles the "Intermediate Result" dialog.
 		title = "Intermediate Result"
-		messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s) so far:\n", len(conflictMods)))
-		for _, id := range conflictMods {
-			modInfo := ""
-			if mod, ok := mods[id]; ok {
-				modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+		if len(allFoundSets) > 0 {
+			messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] conflict set(s) so far. The most recent is:\n", len(allFoundSets)))
+			// Show only the most recently completed conflict set.
+			lastSet := allFoundSets[len(allFoundSets)-1]
+			for _, id := range sets.MakeSlice(lastSet) {
+				modInfo := ""
+				if mod, ok := mods[id]; ok {
+					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+				}
+				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
 			}
-			messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+		} else {
+			// Fallback for the very first found element.
+			messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] problematic mod(s) so far:\n", len(vm.CurrentConflictSet)))
+			for _, id := range sets.MakeSlice(vm.CurrentConflictSet) {
+				modInfo := ""
+				if mod, ok := mods[id]; ok {
+					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+				}
+				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
+			}
 		}
-		explanation = "The last test isolated a new conflict, but there may be more!\nPress '[::b]S[-:-:-]' on the main page to continue the search."
+
+		explanation = "The last test isolated a new conflict, but the bisection is not yet complete.\nPress '[::b]S[-:-:-]' on the main page to continue the search."
 	}
 
 	message = messageBuilder.String()
@@ -142,5 +207,10 @@ func (p *ResultPage) GetStatusPrimitive() *tview.TextView {
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status
 func (p *ResultPage) GetFocusablePrimitives() []tview.Primitive {
-	return []tview.Primitive{p.resultView, p.closeButton}
+	primitives := []tview.Primitive{p.closeButton}
+	if !p.continueButton.IsDisabled() {
+		primitives = append(primitives, p.continueButton)
+	}
+	primitives = append(primitives, p.resultView)
+	return primitives
 }

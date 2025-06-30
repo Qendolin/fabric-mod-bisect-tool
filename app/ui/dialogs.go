@@ -27,9 +27,12 @@ func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func())
 				}
 			})
 		})
-	modal.SetBackgroundColor(tcell.ColorDarkRed)
+	modal.SetTextColor(tcell.ColorWhite).
+		SetTitleColor(tcell.ColorWhite).
+		SetBackgroundColor(tcell.ColorDarkRed).
+		SetBorderColor(tcell.ColorWhite)
 	modal.Box.SetBackgroundColor(tcell.ColorDarkRed)
-	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
+	modal.SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("error_dialog", NewModalPage(modal))
 }
 
@@ -37,22 +40,22 @@ func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func())
 func (m *DialogManager) ShowQuitDialog() {
 	modal := tview.NewModal().
 		SetText("Are you sure you want to quit?").
-		AddButtons([]string{"Cancel", "Quit without Saving", "Quit and Save"}).
+		AddButtons([]string{"Cancel", "Quit"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			go m.app.QueueUpdateDraw(func() {
 				m.app.Navigation().CloseModal()
-				switch buttonLabel {
-				case "Quit and Save":
-					logging.Info("App: Quitting and saving state (not implemented yet).")
+				switch buttonIndex {
+				case 1:
+					logging.Info("App: Quitting.")
 					m.app.Stop()
-				case "Quit without Saving":
-					logging.Info("App: Quitting without saving state.")
-					m.app.Stop()
-				case "Cancel":
+				case 0:
 				}
 			})
 		})
-	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" Quit ").SetTitleAlign(tview.AlignLeft)
+	modal.SetTextColor(tcell.ColorBlack).
+		SetTitleColor(tcell.ColorBlack).
+		SetBorderColor(tcell.ColorWhite)
+	modal.SetTitle(" Quit ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("quit_dialog", NewModalPage(modal))
 }
 
@@ -75,7 +78,10 @@ func (m *DialogManager) ShowQuestionDialog(question string, onYes func(), onNo f
 				}
 			})
 		})
-	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" Confirm ").SetTitleAlign(tview.AlignLeft)
+	modal.SetTextColor(tcell.ColorBlack).
+		SetTitleColor(tcell.ColorBlack).
+		SetBorderColor(tcell.ColorWhite)
+	modal.SetTitle(" Confirm ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("yes_no_dialog", NewModalPage(modal))
 }
 
@@ -92,7 +98,10 @@ func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) 
 				}
 			})
 		})
-	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
+	modal.SetTextColor(tcell.ColorBlack).
+		SetTitleColor(tcell.ColorBlack).
+		SetBorderColor(tcell.ColorWhite)
+	modal.SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("info_dialog", NewModalPage(modal))
 }
 

@@ -97,7 +97,8 @@ func (n *NavigationManager) GoBack() {
 func (n *NavigationManager) ShowModal(pageID string, page Page) {
 	n.pages.AddPage(pageID, page, true, true)
 	n.modalStack = append(n.modalStack, pageID)
-	n.updateUIForPage(page)
+	// Don't call updateUIForPage here
+	n.app.SetFocus(page)
 }
 
 // CloseModal removes the top-most modal page.

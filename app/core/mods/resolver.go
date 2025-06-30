@@ -354,6 +354,7 @@ func (s *resolutionSession) collectResolutionPath() []ResolutionInfo {
 	return pathSlice
 }
 
+// TODO: Remove maybe
 // FindTransitiveDependersOf calculates the complete set of mods that depend,
 // directly or indirectly, on any mod in the initial target set.
 func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.Set {
@@ -396,4 +397,45 @@ func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.S
 	}
 
 	return dependerSet
+}
+
+// CalculateUnresolvableMods determines which mods from a given set of candidates
+// cannot have their dependencies met if the only available providers are also
+// within that same set.
+func (dr *DependencyResolver) CalculateUnresolvableMods(availableMods sets.Set) sets.Set {
+	unresolvable := make(sets.Set)
+
+	// We must iterate over a sorted slice for deterministic behavior.
+	sortedCandidates := sets.MakeSlice(availableMods)
+
+	for _, modID := range sortedCandidates {
+		mod, ok := dr.allMods[modID]
+		if !ok {
+			continue // Should not happen
+		}
+
+		for depID := range mod.FabricInfo.Depends {
+			if IsImplicitMod(depID) {
+				continue
+			}
+
+			// Check if a valid provider for this dependency exists *within the available set*.
+			hasProvider := false
+			if providerCandidates, found := dr.potentialProviders[depID]; found {
+				for _, provider := range providerCandidates {
+					if _, providerIsAvailable := availableMods[provider.TopLevelModID]; providerIsAvailable {
+						hasProvider = true
+						break
+					}
+				}
+			}
+
+			if !hasProvider {
+				unresolvable[modID] = struct{}{}
+				break // This mod is unresolvable, no need to check its other dependencies.
+			}
+		}
+	}
+
+	return unresolvable
 }
