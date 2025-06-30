@@ -101,8 +101,8 @@ func (lp *LoadingPage) UpdateProgress(currentFile string) {
 }
 
 // GetActionPrompts returns the key actions for the loading page.
-func (lp *LoadingPage) GetActionPrompts() map[string]string {
-	return map[string]string{}
+func (lp *LoadingPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

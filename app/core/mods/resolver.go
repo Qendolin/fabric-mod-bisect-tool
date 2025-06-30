@@ -153,7 +153,7 @@ func (s *resolutionSession) updateNeededForList(modID, neededByModID string) {
 	}
 	info, ok := s.resolutionPath[modID]
 	if !ok {
-		logging.Errorf("Resolver Error: Mod '%s' active but no resolution path found to update NeededFor.", modID)
+		logging.Errorf("Resolver: Mod '%s' active but no resolution path found to update NeededFor.", modID)
 		return
 	}
 
@@ -326,7 +326,7 @@ func (s *resolutionSession) collectResolutionPath() []ResolutionInfo {
 		if info, ok := s.resolutionPath[modID]; ok {
 			pathSlice = append(pathSlice, info)
 		} else {
-			logging.Errorf("Resolver Error: Mod '%s' in effective set but missing resolution path.", modID)
+			logging.Errorf("Resolver: Mod '%s' in effective set but missing resolution path.", modID)
 			pathSlice = append(pathSlice, ResolutionInfo{ModID: modID, Reason: "Error: Path Undefined"})
 		}
 	}

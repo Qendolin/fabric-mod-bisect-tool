@@ -5,19 +5,21 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
 // Service encapsulates the entire bisection business logic.
 type Service struct {
 	state     *mods.StateManager
-	activator *mods.ModActivator
+	activator *mods.Activator
 	engine    *imcs.Engine
 
 	OnStateChange func()
 }
 
 // NewService creates a new bisect service from pre-loaded components.
-func NewService(stateMgr *mods.StateManager, activator *mods.ModActivator, engine *imcs.Engine) (*Service, error) {
+func NewService(stateMgr *mods.StateManager, activator *mods.Activator, engine *imcs.Engine) (*Service, error) {
 	if err := activator.EnableAll(); err != nil {
 		return nil, fmt.Errorf("failed to enable all mods on startup: %w", err)
 	}
@@ -33,7 +35,8 @@ func NewService(stateMgr *mods.StateManager, activator *mods.ModActivator, engin
 
 // handleStateChange is called when a mod's forced status changes.
 func (s *Service) handleStateChange() {
-	s.engine.InvalidateActivePlan() // A forced status change invalidates any planned test.
+	validCandidates := s.getValidCandidates()
+	s.engine.Reconcile(validCandidates)
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
@@ -41,7 +44,7 @@ func (s *Service) handleStateChange() {
 
 // --- Direct Component Access ---
 func (s *Service) StateManager() *mods.StateManager { return s.state }
-func (s *Service) Activator() *mods.ModActivator    { return s.activator }
+func (s *Service) Activator() *mods.Activator       { return s.activator }
 func (s *Service) Engine() *imcs.Engine             { return s.engine }
 
 // --- High-Level Workflow Methods ---
@@ -53,6 +56,7 @@ func (s *Service) GetCurrentState() imcs.SearchState {
 
 // StartNewSearch resets the bisection process.
 func (s *Service) StartNewSearch() {
+	s.engine.MergePendingAdditions()
 	s.engine.StartNewSearch()
 	if s.OnStateChange != nil {
 		s.OnStateChange()
@@ -80,7 +84,9 @@ func (s *Service) PlanAndExecuteTestStep() (changes []mods.BatchStateChange, pla
 // SubmitTestResult processes the outcome of a test.
 func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchStateChange) {
 	s.activator.Revert(changes)
-	s.engine.SubmitTestResult(result)
+	if err := s.engine.SubmitTestResult(result); err != nil {
+		logging.Errorf("BisectService: Failed to submit test result to engine: %v", err)
+	}
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
@@ -107,4 +113,17 @@ func (s *Service) GetExecutionLog() *imcs.ExecutionLog {
 		return nil
 	}
 	return s.engine.GetExecutionLog()
+}
+
+// getValidCandidates now uses the term "Omitted".
+func (s *Service) getValidCandidates() sets.Set {
+	allModIDs := sets.MakeSet(s.state.GetAllModIDs())
+	nonCandidateSet := make(sets.Set)
+	for id, status := range s.state.GetModStatusesSnapshot() {
+		// A mod is NOT a candidate if it's disabled, omitted, or force-enabled.
+		if status.ForceDisabled || status.Omitted || status.ForceEnabled {
+			nonCandidateSet[id] = struct{}{}
+		}
+	}
+	return sets.Subtract(allModIDs, nonCandidateSet)
 }

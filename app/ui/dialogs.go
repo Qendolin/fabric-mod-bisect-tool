@@ -27,7 +27,9 @@ func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func())
 				}
 			})
 		})
-	modal.SetBorderColor(tcell.ColorRed).SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
+	modal.SetBackgroundColor(tcell.ColorDarkRed)
+	modal.Box.SetBackgroundColor(tcell.ColorDarkRed)
+	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("error_dialog", NewModalPage(modal))
 }
 
@@ -50,6 +52,7 @@ func (m *DialogManager) ShowQuitDialog() {
 				}
 			})
 		})
+	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" Quit ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("quit_dialog", NewModalPage(modal))
 }
 
@@ -72,5 +75,23 @@ func (m *DialogManager) ShowQuestionDialog(question string, onYes func(), onNo f
 				}
 			})
 		})
+	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" Confirm ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("yes_no_dialog", NewModalPage(modal))
+}
+
+// ShowInfoDialog displays a modal dialog with a neutral informational message.
+func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) {
+	modal := tview.NewModal().
+		SetText(message).
+		AddButtons([]string{"Dismiss"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			go m.app.QueueUpdateDraw(func() {
+				m.app.Navigation().CloseModal()
+				if onDismiss != nil {
+					onDismiss()
+				}
+			})
+		})
+	modal.SetBorderColor(tcell.ColorWhite).SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
+	m.app.Navigation().ShowModal("info_dialog", NewModalPage(modal))
 }

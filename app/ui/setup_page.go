@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -32,8 +34,9 @@ func NewSetupPage(app AppInterface) *SetupPage {
 	}
 
 	p.inputField = tview.NewInputField().
-		SetLabel("Mods Path: ").
+		SetLabel("Mods Directory Path: ").
 		SetFieldWidth(0)
+	p.inputField.SetPlaceholder("C:/Users/Example/.minecraft/mods")
 	p.inputField.SetFocusFunc(func() {
 		p.inputField.SetFieldBackgroundColor(tcell.ColorBlue)
 	})
@@ -69,8 +72,9 @@ func NewSetupPage(app AppInterface) *SetupPage {
 	buttonsFlex := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(p.loadButton, 30, 0, true).
-		AddItem(nil, 1, 0, false).
-		AddItem(p.loadStateButton, 30, 0, true).
+		// TODO: implement state loading
+		// AddItem(nil, 1, 0, false).
+		// AddItem(p.loadStateButton, 30, 0, true).
 		AddItem(nil, 0, 1, false).
 		AddItem(p.quitButton, 30, 0, true)
 
@@ -81,18 +85,29 @@ func NewSetupPage(app AppInterface) *SetupPage {
 		AddItem(buttonsFlex, 3, 0, false)
 	setupFlex.SetBorderPadding(1, 1, 1, 1)
 
+	buildTime := "Unknown"
+	if info, ok := debug.ReadBuildInfo(); ok {
+
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.time" {
+				buildTime = setting.Value
+				break
+			}
+		}
+	}
+
 	instructions := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(`
+		SetText(fmt.Sprintf(`
 [::b]Instructions:[-:-:-]
   - Enter the path to your Minecraft mods folder.
   - Paste path: [darkcyan::b]Ctrl+V[-:-:-] or [darkcyan::b]Right Click[-:-:-] (in most terminals).
 
 [::b]Tool Information:[-:-:-]
-  - Version: 0.1.0
+  - Build: %s
   - Author: Qendolin
-  - License: MIT
-`)
+  - License: MPL 2.0
+`, buildTime))
 	instructions.SetBorderPadding(0, 0, 1, 1)
 
 	p.AddItem(NewTitleFrame(setupFlex, "Setup"), 8, 0, true).
@@ -102,11 +117,8 @@ func NewSetupPage(app AppInterface) *SetupPage {
 }
 
 // GetActionPrompts returns the key actions for the setup page.
-func (p *SetupPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"Tab":   "Next Field",
-		"Enter": "Activate Button",
-	}
+func (p *SetupPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

@@ -115,9 +115,7 @@ func (n *NavigationManager) CloseModal() {
 	currentPage := n.GetCurrentPage()
 	n.updateUIForPage(currentPage)
 
-	if activator, ok := currentPage.(PageActivator); ok {
-		activator.OnPageActivated()
-	}
+	// Does not cause OnPageActivated invocations
 }
 
 // GetCurrentPage returns the Page interface of the front-most primitive.

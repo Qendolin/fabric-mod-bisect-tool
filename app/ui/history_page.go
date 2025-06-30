@@ -194,22 +194,22 @@ func (p *HistoryPage) updateDetailView(index int) {
 	// Display the sets. Convert maps to sorted slices for consistent display.
 	problematicList := sets.MakeSlice(entry.StateBeforeTest.ConflictSet)
 	testSetList := sets.MakeSlice(entry.Plan.ModIDsToTest)
-	goodList := sets.MakeSlice(entry.StateBeforeTest.GetClearedSet())
+	clearedList := sets.MakeSlice(entry.StateBeforeTest.GetClearedSet())
 
 	sets := fmt.Sprintf("[::b]Problematic Mods[-:-:-] (%d):\n%s\n\n[::b]Mods Tested[-:-:-] (%d):\n%s\n\n[::b]Cleared Mods[-:-:-] (%d):\n%s",
 		len(problematicList), strings.Join(problematicList, "\n"),
 		len(testSetList), strings.Join(testSetList, "\n"),
-		len(goodList), strings.Join(goodList, "\n"))
+		len(clearedList), strings.Join(clearedList, "\n"))
 	p.detailSetsText.SetText(sets)
 }
 
 // Page interface implementation
-func (p *HistoryPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"↑/↓":        "Navigate History",
-		"PgUp/PgDn":  "Scroll Page",
-		"Home/End":   "Scroll Top/Bottom",
-		"ESC/Ctrl+H": "Close",
+func (p *HistoryPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"↑/↓", "Navigate History"},
+		{"PgUp/PgDn", "Scroll Page"},
+		{"Home/End", "Scroll Top/Bottom"},
+		{"ESC/Ctrl+H", "Close"},
 	}
 }
 func (p *HistoryPage) GetStatusPrimitive() *tview.TextView { return nil }

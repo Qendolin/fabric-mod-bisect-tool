@@ -61,7 +61,7 @@ func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrid
 
 	filesToProcess := filterJarFiles(diskFiles)
 	if len(filesToProcess) == 0 {
-		logging.Infof("Loader: No .jar or .jar.disabled files found in %s", modsDir)
+		logging.Infof("ModLoader: No .jar or .jar.disabled files found in %s", modsDir)
 		return make(map[string]*Mod), potentialProviders, []string{}, nil
 	}
 
@@ -69,13 +69,13 @@ func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrid
 
 	allMods := make(map[string]*Mod)
 	if err := resolveModConflicts(parsedFileResults, allMods, modsDir); err != nil {
-		logging.Errorf("Loader: Error during mod conflict resolution: %v. Proceeding with available mods.", err)
+		logging.Errorf("ModLoader: Error during mod conflict resolution: %v. Proceeding with available mods.", err)
 	}
 
 	if overrides != nil && len(overrides.Rules) > 0 {
-		logging.Info("Loader: Applying dependency overrides...")
+		logging.Info("ModLoader: Applying dependency overrides...")
 		s.applyOverridesToLoadedMods(allMods, overrides)
-		logging.Info("Loader: Dependency overrides applied.")
+		logging.Info("ModLoader: Dependency overrides applied.")
 	}
 
 	populateProviderMaps(allMods, potentialProviders)
@@ -86,7 +86,7 @@ func (s *ModLoaderService) LoadMods(modsDir string, overrides *DependencyOverrid
 	}
 	sort.Strings(sortedModIDs)
 
-	logging.Infof("Loader: Finished loading. Total %d mods loaded. %d potential capabilities provided.", len(allMods), len(potentialProviders))
+	logging.Infof("ModLoader: Finished loading. Total %d mods loaded. %d potential capabilities provided.", len(allMods), len(potentialProviders))
 
 	return allMods, potentialProviders, sortedModIDs, nil
 }
@@ -137,7 +137,7 @@ func (s *ModLoaderService) parseJarFilesConcurrently(filesToProcess []os.DirEntr
 	var collectedModFileResults []*parsedModFile
 	for res := range results {
 		if res.parseError != nil {
-			logging.Warnf("Loader: Failed to load mod metadata from file '%s.jar': %v", res.baseFileName, res.parseError)
+			logging.Warnf("ModLoader: Failed to load mod metadata from file '%s.jar': %v", res.baseFileName, res.parseError)
 			continue
 		}
 		if res.modData != nil {
@@ -153,7 +153,7 @@ func (s *ModLoaderService) logParsedFile(res processFileResult) {
 	currentMod := res.modData.mod
 	nestedMods := res.modData.nested
 
-	logging.Infof("Loader: ├─ Mod %s (%s v%s) from file '%s.jar'",
+	logging.Infof("ModLoader: ├─ Mod %s (%s v%s) from file '%s.jar'",
 		currentMod.FabricInfo.ID, currentMod.FriendlyName(), currentMod.FabricInfo.Version,
 		res.baseFileName)
 
@@ -162,7 +162,7 @@ func (s *ModLoaderService) logParsedFile(res processFileResult) {
 		if i == len(nestedMods)-1 {
 			treeSymbol = "└"
 		}
-		logging.Infof("Loader: │   %s─ Mod %s (%s v%s) provided by %s from '%s'.",
+		logging.Infof("ModLoader: │   %s─ Mod %s (%s v%s) provided by %s from '%s'.",
 			treeSymbol, nested.fmj.ID, nested.fmj.Name, nested.fmj.Version, currentMod.FabricInfo.ID, nested.pathInJar)
 	}
 }
@@ -234,7 +234,7 @@ func resolveModConflicts(parsedFileResults []*parsedModFile, allMods map[string]
 	}
 
 	if len(disabledDuplicates) > 0 {
-		logging.Infof("Loader: Disabled %d non-winning duplicate active files: %s", len(disabledDuplicates), strings.Join(disabledDuplicates, ", "))
+		logging.Infof("ModLoader: Disabled %d non-winning duplicate active files: %s", len(disabledDuplicates), strings.Join(disabledDuplicates, ", "))
 	}
 	if len(multiError) > 0 {
 		return fmt.Errorf("encountered errors during conflict resolution: %s", strings.Join(multiError, "; "))
@@ -248,7 +248,7 @@ func determineWinner(modID string, candidates []*parsedModFile) *parsedModFile {
 		return candidates[0]
 	}
 
-	logging.Warnf("Loader: Found %d conflicting files for mod %s. Determining winner by version...", len(candidates), modID)
+	logging.Warnf("ModLoader: Found %d conflicting files for mod %s. Determining winner by version...", len(candidates), modID)
 	winnerIdx := 0
 	for i := 1; i < len(candidates); i++ {
 		// Compare versions using the semantic versioning helper.
@@ -256,7 +256,7 @@ func determineWinner(modID string, candidates []*parsedModFile) *parsedModFile {
 			winnerIdx = i
 		}
 	}
-	logging.Infof("Loader: Winner for mod %s is v%s from file '%s'.",
+	logging.Infof("ModLoader: Winner for mod %s is v%s from file '%s'.",
 		modID, candidates[winnerIdx].mod.FabricInfo.Version, filepath.Base(candidates[winnerIdx].mod.Path))
 	return candidates[winnerIdx]
 }
@@ -274,7 +274,7 @@ func disableDuplicateFile(modsDir, baseFilename string) error {
 
 	// If a .disabled version already exists, remove it to allow rename.
 	if _, err := os.Stat(disabledPath); err == nil {
-		logging.Warnf("Loader: Removing existing disabled file '%s' before disabling '%s'.", filepath.Base(disabledPath), baseFilename)
+		logging.Warnf("ModLoader: Removing existing disabled file '%s' before disabling '%s'.", filepath.Base(disabledPath), baseFilename)
 		if remErr := os.Remove(disabledPath); remErr != nil {
 			return fmt.Errorf("remove existing %s: %w", disabledPath, remErr)
 		}
@@ -349,7 +349,7 @@ func sortAndLogProviders(allMods map[string]*Mod, potentialProviders PotentialPr
 	}
 
 	if len(providerLogMessages) > 0 {
-		logging.Infof("Loader: Populated dependency providers for non-trivial dependencies:\n%s", strings.Join(providerLogMessages, "\n"))
+		logging.Infof("ModLoader: Populated dependency providers for non-trivial dependencies:\n%s", strings.Join(providerLogMessages, "\n"))
 	}
 }
 
@@ -436,7 +436,7 @@ func compareVersions(v1Str, v2Str string) int {
 		return v1.Compare(v2)
 	}
 
-	logging.Warnf("Loader: Could not parse one or both versions ('%s', '%s'). Falling back to string comparison.", v1Str, v2Str)
+	logging.Warnf("ModLoader: Could not parse one or both versions ('%s', '%s'). Falling back to string comparison.", v1Str, v2Str)
 	if err1 == nil {
 		return 1
 	}
@@ -462,7 +462,7 @@ func (s *ModLoaderService) applyOverridesToLoadedMods(mods map[string]*Mod, over
 	for _, rule := range overrides.Rules {
 		targetMod, exists := mods[rule.Target()]
 		if !exists {
-			logging.Warnf("Loader: Override rule for unknown mod '%s'. Skipping.", rule.Target())
+			logging.Warnf("ModLoader: Override rule for unknown mod '%s'. Skipping.", rule.Target())
 			continue
 		}
 		rule.Apply(&targetMod.FabricInfo)

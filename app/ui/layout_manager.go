@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -80,27 +79,22 @@ func (lm *LayoutManager) SetErrorCounters(warnCount, errorCount int) {
 }
 
 // SetFooter updates the action hints flexbox.
-func (lm *LayoutManager) SetFooter(prompts map[string]string) {
+func (lm *LayoutManager) SetFooter(prompts []ActionPrompt) {
 	lm.footer.Clear()
 	if prompts == nil {
 		return
 	}
-	globalPrompts := map[string]string{"Ctrl+L": "Logs", "Ctrl+C": "Quit"}
-	var allPrompts []string
-	for key, desc := range globalPrompts {
-		allPrompts = append(allPrompts, fmt.Sprintf("[darkcyan::b]%s[-:-:-]: %s", key, desc))
+	globalPrompts := []ActionPrompt{{"Ctrl+C", "Quit"}, {"Ctrl+L", "Logs"}, {"Tab", "Cycle Focus"}}
+	allPrompts := append(globalPrompts, prompts...)
+
+	var sb strings.Builder
+	for i, prompt := range allPrompts {
+		sb.WriteString(fmt.Sprintf("[darkcyan::b]%s[-:-:-]: %s", prompt.Input, prompt.Action))
+		if i != len(allPrompts)-1 {
+			sb.WriteString(" | ")
+		}
 	}
-	var pageKeys []string
-	for key := range prompts {
-		pageKeys = append(pageKeys, key)
-	}
-	sort.Strings(pageKeys)
-	for _, key := range pageKeys {
-		desc := prompts[key]
-		allPrompts = append(allPrompts, fmt.Sprintf("[darkcyan::b]%s[-:-:-]: %s", key, desc))
-	}
-	fullText := " " + strings.Join(allPrompts, " | ")
-	lm.footer.AddItem(tview.NewTextView().SetDynamicColors(true).SetText(fullText), 0, 1, false)
+	lm.footer.AddItem(tview.NewTextView().SetDynamicColors(true).SetText(sb.String()), 0, 1, false)
 }
 
 // SetHeader updates the status bar

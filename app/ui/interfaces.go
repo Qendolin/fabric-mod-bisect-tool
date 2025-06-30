@@ -22,6 +22,7 @@ type BisectionViewModel struct {
 	ConflictSet        sets.Set
 	CandidateSet       sets.Set
 	ClearedSet         sets.Set
+	PendingAdditions   sets.Set
 	ActiveTestPlan     *imcs.TestPlan
 	NextTestPlan       *imcs.TestPlan
 	ExecutionLog       []imcs.CompletedTest
@@ -51,12 +52,17 @@ type AppInterface interface {
 	ResetSearch()
 }
 
+type ActionPrompt struct {
+	Input  string
+	Action string
+}
+
 // Page is an interface that all UI pages must implement.
 type Page interface {
 	tview.Primitive
 
 	// GetActionPrompts returns a map of key-to-description for the footer.
-	GetActionPrompts() map[string]string
+	GetActionPrompts() []ActionPrompt
 	// GetStatusPrimitive returns the page specific text view that displays the page's status
 	GetStatusPrimitive() *tview.TextView
 }

@@ -186,12 +186,12 @@ func (p *LogPage) updateStatus() {
 }
 
 // GetActionPrompts returns the key actions for the log page.
-func (p *LogPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"ESC/Ctrl+L": "Close",
-		"A/I/W/E":    "Filter All/Info/Warn/Error",
-		"R":          "Toggle Wrap",
-		"↑/↓":        "Scroll",
+func (p *LogPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"ESC/Ctrl+L", "Close"},
+		{"A/I/W/E", "Filter All/Info/Warn/Error"},
+		{"R", "Toggle Wrap"},
+		{"↑/↓", "Scroll"},
 	}
 }
 

@@ -127,10 +127,10 @@ func (p *ResultPage) formatContent(state imcs.SearchState, dependers []string) (
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ResultPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"Enter/ESC": "Close",
-		"↑/↓":       "Scroll Text",
+func (p *ResultPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"↑/↓", "Scroll Text"},
+		{"Enter/ESC", "Close"},
 	}
 }
 

@@ -13,8 +13,8 @@ func NewModalPage(modal *tview.Modal) *ModalPage {
 }
 
 // GetActionPrompts returns an empty map as modals have their own buttons.
-func (p *ModalPage) GetActionPrompts() map[string]string {
-	return nil
+func (p *ModalPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

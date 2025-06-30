@@ -12,8 +12,8 @@ import (
 
 const disabledExtension = ".disabled"
 
-// ModActivator manages the physical file state of mods (enabled/disabled).
-type ModActivator struct {
+// Activator manages the physical file state of mods (enabled/disabled).
+type Activator struct {
 	modsDir string
 	allMods map[string]*Mod
 	// currentActivations tracks the last known physical active state of each mod file.
@@ -24,13 +24,13 @@ type ModActivator struct {
 
 // NewModActivator creates a new activator.
 // It initializes the internal tracking based on the mod's initial active state.
-func NewModActivator(modsDir string, allMods map[string]*Mod) *ModActivator {
+func NewModActivator(modsDir string, allMods map[string]*Mod) *Activator {
 	activations := make(map[string]bool, len(allMods))
 	for id, mod := range allMods {
 		activations[id] = mod.IsInitiallyActive
 	}
 
-	return &ModActivator{
+	return &Activator{
 		modsDir:            modsDir,
 		allMods:            allMods,
 		currentActivations: activations,
@@ -47,8 +47,8 @@ type BatchStateChange struct {
 
 // Apply calculates and executes the necessary file renames to achieve the effectiveSet state.
 // It performs a batch of renames and returns the list of changes made.
-func (ma *ModActivator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error) {
-	changes := ma.calculateChanges(effectiveSet)
+func (a *Activator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error) {
+	changes := a.calculateChanges(effectiveSet)
 	if len(changes) == 0 {
 		return nil, nil
 	}
@@ -71,10 +71,10 @@ func (ma *ModActivator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error)
 	for _, change := range changes {
 		if err := os.Rename(change.OldPath, change.NewPath); err != nil {
 			// On failure, revert all changes made so far in this batch and report the error.
-			ma.Revert(appliedChanges)
+			a.Revert(appliedChanges)
 			return nil, fmt.Errorf("failed to rename %s to %s for mod %s: %w", change.OldPath, change.NewPath, change.ModID, err)
 		}
-		ma.currentActivations[change.ModID] = change.Activate
+		a.currentActivations[change.ModID] = change.Activate
 		appliedChanges = append(appliedChanges, change)
 	}
 
@@ -83,7 +83,7 @@ func (ma *ModActivator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error)
 
 // Revert applies a set of changes in reverse order to restore a previous state.
 // This is used for cleanup or undo operations.
-func (ma *ModActivator) Revert(changes []BatchStateChange) {
+func (a *Activator) Revert(changes []BatchStateChange) {
 	if len(changes) == 0 {
 		return
 	}
@@ -114,21 +114,21 @@ func (ma *ModActivator) Revert(changes []BatchStateChange) {
 			// Continue attempting to revert other files even if one fails.
 		} else {
 			// Update currentActivations based on the reverted state.
-			ma.currentActivations[change.ModID] = !change.Activate
+			a.currentActivations[change.ModID] = !change.Activate
 		}
 	}
 }
 
-func (ma *ModActivator) EnableAll() error {
+func (a *Activator) EnableAll() error {
 	logging.Info("Activator: Enabling all mods for a clean initial state.")
 
 	// Create a target set that includes all known mods
-	targetSet := make(sets.Set, len(ma.allMods))
-	for id := range ma.allMods {
+	targetSet := make(sets.Set, len(a.allMods))
+	for id := range a.allMods {
 		targetSet[id] = struct{}{}
 	}
 
-	_, err := ma.Apply(targetSet)
+	_, err := a.Apply(targetSet)
 	if err != nil {
 		return fmt.Errorf("failed during initial enabling of all mods: %w", err)
 	}
@@ -138,11 +138,11 @@ func (ma *ModActivator) EnableAll() error {
 
 // calculateChanges determines which files need to be renamed based on the desired effective set
 // and the current physical state of mod files on disk as tracked by the activator.
-func (ma *ModActivator) calculateChanges(effectiveSet sets.Set) []BatchStateChange {
+func (a *Activator) calculateChanges(effectiveSet sets.Set) []BatchStateChange {
 	var changes []BatchStateChange
-	for id, mod := range ma.allMods {
-		isCurrentlyActive := ma.currentActivations[id] // The physical state as tracked by activator
-		_, shouldBeActive := effectiveSet[id]          // The desired logical state from resolver
+	for id, mod := range a.allMods {
+		isCurrentlyActive := a.currentActivations[id] // The physical state as tracked by activator
+		_, shouldBeActive := effectiveSet[id]         // The desired logical state from resolver
 
 		if isCurrentlyActive == shouldBeActive {
 			continue // No change needed for this mod; its physical state matches the desired logical state.
@@ -152,17 +152,17 @@ func (ma *ModActivator) calculateChanges(effectiveSet sets.Set) []BatchStateChan
 		// `mod.BaseFilename` is the filename without the .jar or .disabled suffix (e.g., "mod-A-1.0").
 		var currentPhysicalPath string
 		if isCurrentlyActive {
-			currentPhysicalPath = filepath.Join(ma.modsDir, mod.BaseFilename+".jar")
+			currentPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
 		} else {
-			currentPhysicalPath = filepath.Join(ma.modsDir, mod.BaseFilename+".jar"+disabledExtension)
+			currentPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
 		}
 
 		// Determine the *target physical path* on disk based on `shouldBeActive`.
 		var newPhysicalPath string
 		if shouldBeActive { // Desired state is active
-			newPhysicalPath = filepath.Join(ma.modsDir, mod.BaseFilename+".jar")
+			newPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
 		} else { // Desired state is disabled
-			newPhysicalPath = filepath.Join(ma.modsDir, mod.BaseFilename+".jar"+disabledExtension)
+			newPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
 		}
 
 		// Although `isCurrentlyActive == shouldBeActive` should catch most redundant operations,

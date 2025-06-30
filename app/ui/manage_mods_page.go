@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -14,7 +15,8 @@ const PageManageModsID = "manage_mods"
 // ManageModsPage allows viewing and changing the state of all mods.
 type ManageModsPage struct {
 	*tview.Flex
-	app AppInterface
+	app     AppInterface
+	session *ManagementSession
 
 	modTable          *SearchableTable
 	forceEnabledList  *tview.TextView
@@ -63,7 +65,7 @@ func (p *ManageModsPage) setupLayout() {
 
 func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
-		if p.app.GetFocus() == p.modTable.table {
+		if p.modTable.table.HasFocus() {
 			// Handle state changes when table is focused
 			if p.handleTableInput(event) == nil {
 				return nil
@@ -71,11 +73,75 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 		}
 
 		if event.Key() == tcell.KeyEscape {
-			p.app.Navigation().GoBack()
+			if p.session == nil || !p.session.HasChanges() {
+				p.app.Navigation().GoBack() // No changes, just go back.
+				return nil
+			}
+
+			// There are changes, show the apply/discard dialog.
+			p.app.Dialogs().ShowQuestionDialog(
+				"You have unsaved changes. Apply them?",
+				func() {
+					p.commitChanges()
+				},
+				func() {
+					p.app.Navigation().GoBack()
+				},
+			)
 			return nil
 		}
 
 		return event
+	}
+}
+
+// NEW: commitChanges applies the session state to the real StateManager.
+func (p *ManageModsPage) commitChanges() {
+	if p.session == nil {
+		p.app.Navigation().GoBack()
+		return
+	}
+
+	stateMgr := p.app.GetStateManager()
+	enabled, disabled, omitted, normal := p.session.CalculateChanges()
+
+	var pendingAdditionsOnCommit []string
+	for _, id := range normal {
+		if p.session.isPendingAddition(id) {
+			pendingAdditionsOnCommit = append(pendingAdditionsOnCommit, id)
+		}
+	}
+
+	// Apply all changes in batches.
+	if len(enabled) > 0 {
+		stateMgr.SetForceEnabledBatch(enabled, true)
+	}
+	if len(disabled) > 0 {
+		stateMgr.SetForceDisabledBatch(disabled, true)
+	}
+	if len(omitted) > 0 {
+		stateMgr.SetOmittedBatch(omitted, true)
+	}
+	// For mods returning to a normal state, we must explicitly set all flags to false.
+	for _, id := range normal {
+		stateMgr.SetForceEnabled(id, false)
+		stateMgr.SetForceDisabled(id, false)
+		stateMgr.SetOmitted(id, false)
+	}
+
+	// Now, check if this commit resulted in pending additions and show the info dialog.
+	if len(pendingAdditionsOnCommit) > 0 {
+		p.app.Dialogs().ShowInfoDialog(
+			"Pending Changes",
+			"Some mods you have changed will only be added to the search pool at the start of the next bisection iteration.",
+			func() {
+				// Navigate back only after the user dismisses this second dialog.
+				p.app.Navigation().GoBack()
+			},
+		)
+	} else {
+		// If there were no pending additions, navigate back immediately.
+		p.app.Navigation().GoBack()
 	}
 }
 
@@ -99,81 +165,32 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 
 	switch event.Rune() {
 	case 'd', 'D':
-		p.toggleState(modID, shift, "Disabled", modState.SetForceDisabled)
-		return nil
+		p.session.ToggleForceDisable(modID, shift)
 	case 'e', 'E':
-		p.toggleState(modID, shift, "Enabled", modState.SetForceEnabled)
-		return nil
-	case 'g', 'G':
-		p.toggleState(modID, shift, "Good", modState.SetManuallyGood)
-		return nil
+		p.session.ToggleForceEnable(modID, shift)
+	case 'o', 'O':
+		p.session.ToggleOmitted(modID, shift)
 	}
+	p.RefreshState()
 
 	return event
 }
 
-// toggleState handles toggling a state for a single mod or all mods.
-func (p *ManageModsPage) toggleState(modID string, isBulk bool, stateType string, setter func(string, bool)) {
-	modState := p.app.GetStateManager()
-
-	if isBulk {
-		allIDs := modState.GetAllModIDs()
-		// Determine if the primary action should be to enable or disable the state for all.
-		// We check if *at least one* mod does NOT have the state. If so, our action is to turn it ON for everyone.
-		// If ALL mods already have the state, our action is to turn it OFF for everyone.
-		allCurrentlyTrue := true
-		for _, id := range allIDs {
-			status, _ := modState.GetModStatus(id)
-			var currentState bool
-			switch stateType {
-			case "Disabled":
-				currentState = status.ForceDisabled
-			case "Enabled":
-				currentState = status.ForceEnabled
-			case "Good":
-				currentState = status.ManuallyGood
-			}
-			if !currentState {
-				allCurrentlyTrue = false
-				break
-			}
-		}
-
-		newState := !allCurrentlyTrue
-
-		// UPDATED: Use the new, efficient batch methods for bulk updates.
-		switch stateType {
-		case "Disabled":
-			modState.SetForceDisabledBatch(allIDs, newState)
-		case "Enabled":
-			modState.SetForceEnabledBatch(allIDs, newState)
-		case "Good":
-			modState.SetManuallyGoodBatch(allIDs, newState)
-		}
-	} else {
-		// Single-item logic remains the same, using the passed setter function.
-		status, _ := modState.GetModStatus(modID)
-		var currentState bool
-		switch stateType {
-		case "Disabled":
-			currentState = status.ForceDisabled
-		case "Enabled":
-			currentState = status.ForceEnabled
-		case "Good":
-			currentState = status.ManuallyGood
-		}
-		setter(modID, !currentState)
-	}
-}
-
 func (p *ManageModsPage) OnPageActivated() {
+	vm := p.app.GetViewModel()
+	if vm.IsReady {
+		// Create a new session with the current true state.
+		p.session = NewManagementSession(p.app.GetStateManager())
+	} else {
+		p.session = nil
+	}
 	p.RefreshState()
 }
 
 // RefreshState updates the lists with the current mod states using the ViewModel.
 func (p *ManageModsPage) RefreshState() {
 	vm := p.app.GetViewModel()
-	if !vm.IsReady {
+	if !vm.IsReady || p.session == nil {
 		p.modTable.Clear()
 		p.forceEnabledList.SetText("")
 		p.forceDisabledList.SetText("")
@@ -195,21 +212,26 @@ func (p *ManageModsPage) RefreshState() {
 	}
 
 	for _, id := range allIDs {
-		status, _ := modState.GetModStatus(id)
+		status := p.session.workingStatuses[id]
 		mod := allMods[id]
 
+		_, isGloballyPending := vm.PendingAdditions[id]
+		isSessionPending := p.session.isPendingAddition(id)
+
 		var statusStr string
-		// Priority: Forced > Good > Problem > In Test > Inactive
-		if status.ForceEnabled {
-			statusStr = "[green]Enabled[-:-:-]"
+		// Priority: Forced > Omitted > Problem > In Test > Inactive
+		if isGloballyPending || isSessionPending {
+			statusStr = "[mediumpurple]Pending[-:-:-]"
+		} else if status.ForceEnabled {
+			statusStr = "[green]Forced[-:-:-]"
 			enabledIDs = append(enabledIDs, id)
 		} else if status.ForceDisabled {
-			statusStr = "[red]Disabled[-:-:-]"
+			statusStr = "[maroon]Disabled[-:-:-]"
 			disabledIDs = append(disabledIDs, id)
-		} else if status.ManuallyGood {
-			statusStr = "[green]Good[-:-:-]"
+		} else if status.Omitted {
+			statusStr = "[steelblue]Omitted[-:-:-]"
 		} else if _, ok := vm.ConflictSet[id]; ok {
-			statusStr = "[::b]Problem[-:-:-]"
+			statusStr = "[red::b]Problem[-:-:-]"
 		} else if _, ok := nextTestSet[id]; ok {
 			statusStr = "[white]In Test[-:-:-]"
 		} else {
@@ -235,9 +257,13 @@ func (p *ManageModsPage) RefreshState() {
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ManageModsPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"E": "Force Enable", "D": "Force Disable", "G": "Mark Good", "Shift+Key": "Toggle All", "ESC": "Back",
+func (p *ManageModsPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"E", "Force Enable"},
+		{"D", "Force Disable"},
+		{"O", "Omit"},
+		{"Shift+Key", "Toggle All"},
+		{"ESC", "Back"},
 	}
 }
 
@@ -258,4 +284,153 @@ func (p *ManageModsPage) GetFocusablePrimitives() []tview.Primitive {
 // RefreshSearchState implements the SearchStateObserver interface.
 func (p *ManageModsPage) RefreshSearchState() {
 	p.RefreshState()
+}
+
+// --- Session Management ---
+
+// ManagementSession holds a temporary, mutable copy of the mod statuses
+// for the duration of the user's visit to the ManageModsPage.
+type ManagementSession struct {
+	workingStatuses  map[string]*mods.ModStatus
+	originalStatuses map[string]mods.ModStatus
+}
+
+// NewManagementSession creates a new session initialized with the current state.
+func NewManagementSession(state *mods.StateManager) *ManagementSession {
+	originalSnapshot := state.GetModStatusesSnapshot()
+	workingCopy := make(map[string]*mods.ModStatus, len(originalSnapshot))
+	for id, status := range originalSnapshot {
+		sCopy := status
+		workingCopy[id] = &sCopy
+	}
+	return &ManagementSession{
+		originalStatuses: originalSnapshot,
+		workingStatuses:  workingCopy,
+	}
+}
+
+// HasChanges compares the session's state to the original state to see if anything changed.
+func (s *ManagementSession) HasChanges() bool {
+	for id, workingStatus := range s.workingStatuses {
+		originalStatus := s.originalStatuses[id]
+		if *workingStatus != originalStatus {
+			return true
+		}
+	}
+	return false
+}
+
+// CalculateChanges determines which mods changed state and returns them in categorized lists.
+func (s *ManagementSession) CalculateChanges() (enabled, disabled, omitted, normal []string) {
+	for id, workingStatus := range s.workingStatuses {
+		originalStatus := s.originalStatuses[id]
+		if *workingStatus != originalStatus {
+			if workingStatus.ForceEnabled {
+				enabled = append(enabled, id)
+			} else if workingStatus.ForceDisabled {
+				disabled = append(disabled, id)
+			} else if workingStatus.Omitted {
+				omitted = append(omitted, id)
+			} else {
+				normal = append(normal, id)
+			}
+		}
+	}
+	return
+}
+
+// determineBulkToggleState decides the goal for a bulk operation. If any item is not
+// in the target state, the goal is to set all items to that state. If all items
+// are already in the target state, the goal is to clear the state for all items.
+func (s *ManagementSession) determineBulkToggleState(modIDs []string, hasState func(*mods.ModStatus) bool) bool {
+	allHaveState := true
+	for _, id := range modIDs {
+		if !hasState(s.workingStatuses[id]) {
+			allHaveState = false
+			break
+		}
+	}
+	return !allHaveState
+}
+
+// setStatus sets the state for a single mod, ensuring mutual exclusivity.
+func (s *ManagementSession) setStatus(modID string, enabled, disabled, omitted bool) {
+	if status, ok := s.workingStatuses[modID]; ok {
+		status.ForceEnabled = enabled
+		status.ForceDisabled = disabled
+		status.Omitted = omitted
+	}
+}
+
+// ToggleForceEnable toggles the force-enabled state.
+func (s *ManagementSession) ToggleForceEnable(modID string, isBulk bool) {
+	if isBulk {
+		allIDs := s.getAllIDs()
+		shouldEnable := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.ForceEnabled })
+		for _, id := range allIDs {
+			s.setStatus(id, shouldEnable, false, false)
+		}
+	} else {
+		if s.workingStatuses[modID].ForceEnabled {
+			s.setStatus(modID, false, false, false) // Is enabled -> set to normal
+		} else {
+			s.setStatus(modID, true, false, false) // Is not enabled -> enable
+		}
+	}
+}
+
+// ToggleForceDisable toggles the force-disabled state.
+func (s *ManagementSession) ToggleForceDisable(modID string, isBulk bool) {
+	if isBulk {
+		allIDs := s.getAllIDs()
+		shouldDisable := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.ForceDisabled })
+		for _, id := range allIDs {
+			s.setStatus(id, false, shouldDisable, false)
+		}
+	} else {
+		if s.workingStatuses[modID].ForceDisabled {
+			s.setStatus(modID, false, false, false)
+		} else {
+			s.setStatus(modID, false, true, false)
+		}
+	}
+}
+
+// ToggleOmitted toggles the omitted state.
+func (s *ManagementSession) ToggleOmitted(modID string, isBulk bool) {
+	if isBulk {
+		allIDs := s.getAllIDs()
+		shouldOmit := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.Omitted })
+		for _, id := range allIDs {
+			s.setStatus(id, false, false, shouldOmit)
+		}
+	} else {
+		if s.workingStatuses[modID].Omitted {
+			s.setStatus(modID, false, false, false)
+		} else {
+			s.setStatus(modID, false, false, true)
+		}
+	}
+}
+
+func (s *ManagementSession) getAllIDs() []string {
+	ids := make([]string, 0, len(s.workingStatuses))
+	for id := range s.workingStatuses {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// isPendingAddition determines if a mod is being transitioned from a special
+// state back to a normal state within this session.
+func (s *ManagementSession) isPendingAddition(modID string) bool {
+	original := s.originalStatuses[modID]
+	working := s.workingStatuses[modID]
+
+	// Was it originally "special" (i.e., not a normal candidate)?
+	wasSpecial := original.ForceEnabled || original.ForceDisabled || original.Omitted
+	// Is its new staged state "normal"?
+	isNowNormal := !working.ForceEnabled && !working.ForceDisabled && !working.Omitted
+
+	return wasSpecial && isNowNormal
 }
