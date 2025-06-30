@@ -28,8 +28,8 @@ type MainPage struct {
 	// Tab Content
 	candidatesList       *SearchableList
 	candidatesTitle      *TitleFrame
-	knownGoodList        *SearchableList
-	knownGoodTitle       *TitleFrame
+	safeList             *SearchableList
+	safeTitle            *TitleFrame
 	testGroupList        *SearchableList
 	testGroupTitle       *TitleFrame
 	implicitDepsList     *SearchableList
@@ -98,15 +98,15 @@ func (p *MainPage) setupLayout() {
 // setupTabPanes populates the tabbed container with its pages.
 func (p *MainPage) setupTabPanes() {
 	p.candidatesList = NewSearchableList()
-	p.knownGoodList = NewSearchableList()
+	p.safeList = NewSearchableList()
 	p.candidatesTitle = NewTitleFrame(p.candidatesList, "Candidates (Being Searched)")
-	p.knownGoodTitle = NewTitleFrame(p.knownGoodList, "Known Good (For This Search)")
+	p.safeTitle = NewTitleFrame(p.safeList, "Known Safe (For This Search)")
 	searchPoolFlex := tview.NewFlex().
 		AddItem(p.candidatesTitle, 0, 1, true).
 		AddItem(nil, 1, 0, false).
-		AddItem(p.knownGoodTitle, 0, 1, true)
+		AddItem(p.safeTitle, 0, 1, true)
 	p.tabs.AddTab("Search Pool", NewFocusWrapper(searchPoolFlex, func() []tview.Primitive {
-		return []tview.Primitive{p.candidatesList, p.knownGoodList}
+		return []tview.Primitive{p.candidatesList, p.safeList}
 	}))
 
 	p.testGroupList = NewSearchableList()
@@ -191,9 +191,12 @@ func (p *MainPage) RefreshSearchState() {
 	p.updateOverviewWidget(&vm)
 }
 
-func (p *MainPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"S": "Step", "U": "Undo", "M": "Manage Mods", "R": "Reset", "Tab": "Next Element", "Arrows": "Navigate",
+func (p *MainPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"S", "Step"},
+		{"U", "Undo"},
+		{"M", "Manage Mods"},
+		{"R", "Reset"},
 	}
 }
 
@@ -244,13 +247,13 @@ func (p *MainPage) determineStatusAndButtonText(vm *BisectionViewModel) (status,
 	}
 }
 
-// updateModLists populates the Candidates, Known Good, and Problematic lists from the ViewModel.
+// updateModLists populates the Candidates, Known Safe, and Problematic lists from the ViewModel.
 func (p *MainPage) updateModLists(vm *BisectionViewModel) {
 	modCount := len(vm.AllModIDs)
 
 	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), "Candidates (Being Searched): %d / %d", modCount)
 	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.ConflictSet), "Problematic Mods: %d", 0)
-	p.updateList(p.knownGoodList, p.knownGoodTitle, sets.MakeSlice(vm.ClearedSet), "Cleared: %d", 0)
+	p.updateList(p.safeList, p.safeTitle, sets.MakeSlice(vm.ClearedSet), "Cleared: %d", 0)
 }
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.

@@ -34,7 +34,6 @@ func NewStateManager(allMods map[string]*Mod, potentialProviders PotentialProvid
 			Mod:           mod,
 			ForceEnabled:  false,
 			ForceDisabled: false,
-			ManuallyGood:  mod.ConfirmedGood,
 		}
 	}
 	return &StateManager{
@@ -83,13 +82,13 @@ func (sm *StateManager) SetForceDisabled(modID string, disabled bool) {
 	}
 }
 
-// SetManuallyGood updates the "manually confirmed good" state of a mod.
-func (sm *StateManager) SetManuallyGood(modID string, isGood bool) {
+// SetOmitted updates the "ignored in search" state of a mod.
+func (sm *StateManager) SetOmitted(modID string, isOmitted bool) {
 	if status, ok := sm.modStatuses[modID]; ok {
-		if status.ManuallyGood == isGood {
+		if status.Omitted == isOmitted {
 			return
 		}
-		status.ManuallyGood = isGood
+		status.Omitted = isOmitted
 		sm.notifyListeners()
 	}
 }
@@ -134,14 +133,14 @@ func (sm *StateManager) SetForceDisabledBatch(modIDs []string, disabled bool) {
 	}
 }
 
-// SetManuallyGoodBatch updates the "manually good" state for multiple mods at once.
+// SetOmittedBatch updates the "ignored in search" state for multiple mods at once.
 // It sends only a single notification after all changes are made.
-func (sm *StateManager) SetManuallyGoodBatch(modIDs []string, isGood bool) {
+func (sm *StateManager) SetOmittedBatch(modIDs []string, omitted bool) {
 	var changed bool
 	for _, modID := range modIDs {
 		if status, ok := sm.modStatuses[modID]; ok {
-			if status.ManuallyGood != isGood {
-				status.ManuallyGood = isGood
+			if status.Omitted != omitted {
+				status.Omitted = omitted
 				changed = true
 			}
 		}

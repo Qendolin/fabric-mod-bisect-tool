@@ -133,9 +133,11 @@ Please launch Minecraft and confirm the failure persists.`
 }
 
 // GetActionPrompts returns the key actions for the test page.
-func (p *TestPage) GetActionPrompts() map[string]string {
-	return map[string]string{
-		"ESC": "Back (Cancel Step)", "A": "Success", "D": "Failure",
+func (p *TestPage) GetActionPrompts() []ActionPrompt {
+	return []ActionPrompt{
+		{"ESC", "Back (Cancel Step)"},
+		{"A", "Success"},
+		{"D", "Failure"},
 	}
 }
 

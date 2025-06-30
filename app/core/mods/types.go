@@ -31,7 +31,6 @@ type Mod struct {
 	BaseFilename      string
 	FabricInfo        FabricModJson
 	IsInitiallyActive bool // Was the mod active (.jar) when first loaded?
-	ConfirmedGood     bool // Manually or programmatically marked as not causing issues.
 	NestedModules     []FabricModJson
 	EffectiveProvides map[string]string // Maps all unique IDs this mod provides to their version.
 }
@@ -53,7 +52,7 @@ type ModStatus struct {
 	Mod           *Mod
 	ForceEnabled  bool
 	ForceDisabled bool
-	ManuallyGood  bool
+	Omitted       bool // Previously called ManuallyGood
 }
 
 // ResolutionInfo stores details about why a mod is included in an effective set.

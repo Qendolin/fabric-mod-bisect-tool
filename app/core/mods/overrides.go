@@ -105,7 +105,7 @@ func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
 		}
 	}
 
-	logging.Debugf("Parsed %d applicable override rules.", len(parsedOverrides.Rules))
+	logging.Debugf("Overrides: Parsed %d applicable override rules.", len(parsedOverrides.Rules))
 	return parsedOverrides, nil
 }
 
@@ -155,7 +155,7 @@ func MergeDependencyOverrides(overrides ...*DependencyOverrides) *DependencyOver
 		}
 	}
 
-	logging.Infof("Merged %d override sets into a final set of %d rules.", len(overrides), len(finalOverrides.Rules))
+	logging.Infof("Overrides: Merged %d override sets into a final set of %d rules.", len(overrides), len(finalOverrides.Rules))
 	return finalOverrides
 }
 

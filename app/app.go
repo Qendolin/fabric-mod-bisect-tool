@@ -153,7 +153,12 @@ func (a *App) Step() {
 		if a.bisectSvc.GetCurrentState().IsComplete {
 			a.displayResults()
 		} else {
-			a.layoutManager.SetStatusText(err.Error())
+			logging.Errorf("App: Failed to execute test plan: %v", err)
+			userMessage := "Failed to apply mod file changes!\n" +
+				"Please ensure Minecraft is closed.\n\n" +
+				"For details see application log."
+			a.dialogManager.ShowErrorDialog("File Error", userMessage, nil)
+			return
 		}
 		return
 	}
@@ -168,8 +173,15 @@ func (a *App) Step() {
 
 func (a *App) Undo()        { a.bisectSvc.UndoLastStep() }
 func (a *App) ResetSearch() { a.bisectSvc.StartNewSearch() }
-func (a *App) Run() error   { a.navManager.SwitchTo(ui.PageSetupID); return a.Application.Run() }
-func (a *App) Stop()        { a.cancelApp(); a.shutdownWg.Wait(); a.Application.Stop() }
+func (a *App) Run() error {
+	a.navManager.SwitchTo(ui.PageSetupID)
+	return a.Application.Run()
+}
+func (a *App) Stop() {
+	a.cancelApp()
+	a.shutdownWg.Wait()
+	a.Application.Stop()
+}
 
 // displayResults shows the result page when the search is complete.
 func (a *App) displayResults() {
@@ -228,10 +240,10 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 		// A "not found" error is expected and should be ignored silently.
 		if !os.IsNotExist(err) {
 			// Any other error (e.g., malformed JSON, permissions) should be logged.
-			logging.Warnf("Could not load dependency overrides from '%s': %v", cwdPath, err)
+			logging.Warnf("App: Could not load dependency overrides from '%s': %v", cwdPath, err)
 		}
 	} else {
-		logging.Infof("Loaded dependency overrides from current directory.")
+		logging.Infof("App: Loaded dependency overrides from current directory.")
 		allOverrides = append(allOverrides, cwdOverrides)
 	}
 
@@ -239,10 +251,10 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 	configPath := filepath.Join(modsPath, "..", "config", "fabric_loader_dependencies.json")
 	if configOverrides, err := mods.LoadDependencyOverridesFromPath(configPath); err != nil {
 		if !os.IsNotExist(err) {
-			logging.Warnf("Could not load dependency overrides from '%s': %v", configPath, err)
+			logging.Warnf("App: Could not load dependency overrides from '%s': %v", configPath, err)
 		}
 	} else {
-		logging.Infof("Loaded dependency overrides from config directory.")
+		logging.Infof("App: Loaded dependency overrides from config directory.")
 		allOverrides = append(allOverrides, configOverrides)
 	}
 
@@ -250,9 +262,9 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 	if !a.cliArgs.NoEmbeddedOverrides {
 		if embedded, err := mods.LoadDependencyOverrides(bytes.NewReader(embeds.GetEmbeddedOverrides())); err != nil {
 			// This indicates a problem with the embedded file itself, which is a developer error.
-			logging.Errorf("Failed to load embedded dependency overrides: %v", err)
+			logging.Errorf("App: Failed to load embedded dependency overrides: %v", err)
 		} else {
-			logging.Infof("Loaded embedded dependency overrides.")
+			logging.Infof("App: Loaded embedded dependency overrides.")
 			allOverrides = append(allOverrides, embedded)
 		}
 	}
@@ -301,6 +313,7 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 		AllModIDs:          state.AllModIDs,
 		CandidateSet:       state.GetCandidateSet(),
 		ClearedSet:         state.GetClearedSet(),
+		PendingAdditions:   engine.GetPendingAdditions(),
 		ActiveTestPlan:     activePlan,
 		NextTestPlan:       nextPlan,
 		ExecutionLog:       engine.GetExecutionLog().GetEntries(),

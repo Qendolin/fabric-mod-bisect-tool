@@ -33,9 +33,9 @@ func (w *OverviewWidget) SetAllMods(allMods []string) {
 }
 
 // UpdateState provides the widget with the current sets to display.
-func (w *OverviewWidget) UpdateState(problemMods, goodMods, candidateMods, effectiveMods sets.Set) {
+func (w *OverviewWidget) UpdateState(problemMods, clearedMods, candidateMods, effectiveMods sets.Set) {
 	w.conflictSet = problemMods
-	w.clearedSet = goodMods
+	w.clearedSet = clearedMods
 	w.candidateSet = candidateMods
 	w.effectiveSet = effectiveMods
 }
@@ -136,7 +136,7 @@ func (w *OverviewWidget) drawContentCell(screen tcell.Screen, x, y, totalWidth, 
 
 // determineColor finds the dominant color for a slice of mod IDs.
 func (w *OverviewWidget) determineColor(modIDs []string) tcell.Color {
-	// Priority: 5: Conflict, 4: Good, 3: Unused, 2: Candidates, 1: Effective, 0: Rest
+	// Priority: 5: Conflict, 4: Cleared, 3: Unused, 2: Candidates, 1: Effective, 0: Rest
 	highestPriority := 0
 
 	for _, id := range modIDs {

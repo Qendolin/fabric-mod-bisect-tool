@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	logPath = "bisect-tool.log"
+	logPath = "fabric-mod-bisect-tool.log"
 )
 
 func main() {
@@ -45,10 +45,10 @@ func main() {
 	}()
 
 	// 5. Run the application
-	logging.Infof("Application starting up.")
+	logging.Infof("Main: Application starting up.")
 	if err := a.Run(); err != nil {
-		logging.Errorf("Application exited with error: %v", err)
+		logging.Errorf("Main: Application exited with error: %v", err)
 		os.Exit(1)
 	}
-	logging.Infof("Application exited gracefully.")
+	logging.Infof("Main: Application exited gracefully.")
 }
