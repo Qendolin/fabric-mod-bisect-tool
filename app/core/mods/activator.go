@@ -145,7 +145,8 @@ func (a *Activator) calculateChanges(effectiveSet sets.Set) []BatchStateChange {
 		_, shouldBeActive := effectiveSet[id]         // The desired logical state from resolver
 
 		if isCurrentlyActive == shouldBeActive {
-			continue // No change needed for this mod; its physical state matches the desired logical state.
+			logging.Debugf("Activator: Mod '%s' physical state matches desired state (active: %t). No change needed.", id, isCurrentlyActive)
+			continue
 		}
 
 		// Determine the *current physical path* on disk based on `isCurrentlyActive` and `mod.BaseFilename`.

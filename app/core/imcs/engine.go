@@ -122,7 +122,7 @@ func (e *Engine) SubmitTestResult(result TestResult) error {
 	e.activePlan = nil // Ready for the next test.
 
 	if e.state.IsComplete {
-		logging.Infof("IMCSEngine: Search is now complete. Final conflict set: %v", sets.MakeSlice(e.state.ConflictSet))
+		logging.Infof("IMCSEngine: Search is now complete. Final conflict set: %v", sets.FormatSet(e.state.ConflictSet))
 	}
 
 	// The merge logic for pending additions.
@@ -139,7 +139,7 @@ func (e *Engine) MergePendingAdditions() {
 	if len(e.pendingAdditions) == 0 {
 		return
 	}
-	logging.Infof("IMCSEngine: Merging %d pending item(s) into candidate pool.", len(e.pendingAdditions))
+	logging.Debugf("IMCSEngine: Merging pending items into candidate pool: %v", sets.FormatSet(e.pendingAdditions))
 	e.AddCandidates(e.pendingAdditions)
 	e.pendingAdditions = make(sets.Set) // Clear the pending list.
 }
@@ -149,6 +149,8 @@ func (e *Engine) MergePendingAdditions() {
 // invalid items from all parts of the current search state and defers the
 // addition of new items until the end of the current bisection iteration.
 func (e *Engine) Reconcile(validCandidates sets.Set) {
+	logging.Debugf("IMCSEngine.Reconcile: Received %d valid candidates: %v", len(validCandidates), sets.FormatSet(validCandidates))
+
 	// 1. Invalidate any active plan, as the underlying assumptions have changed.
 	e.InvalidateActivePlan()
 
@@ -162,14 +164,14 @@ func (e *Engine) Reconcile(validCandidates sets.Set) {
 
 	// 4. Immediately apply all removals.
 	if len(removals) > 0 {
-		logging.Infof("IMCSEngine: Reconcile removed %d item(s) from search.", len(removals))
+		logging.Debugf("IMCSEngine.Reconcile: Pruning %d item(s): %v", len(removals), sets.FormatSet(removals))
 		e.pendingAdditions = sets.Subtract(e.pendingAdditions, removals)
 		e.RemoveCandidates(removals)
 	}
 
 	// 5. Defer all additions.
 	if len(additions) > 0 {
-		logging.Infof("IMCSEngine: Reconcile deferred addition of %d item(s).", len(additions))
+		logging.Debugf("IMCSEngine.Reconcile: Deferring addition of %d item(s): %v", len(additions), sets.FormatSet(additions))
 		e.pendingAdditions = sets.Union(e.pendingAdditions, additions)
 	}
 }
@@ -178,6 +180,7 @@ func (e *Engine) Reconcile(validCandidates sets.Set) {
 // current search state, including the candidate list, conflict set, stable set,
 // and any in-progress bisection steps on the search stack.
 func (e *Engine) RemoveCandidates(removals sets.Set) {
+	logging.Debugf("IMCSEngine.RemoveCandidates: Removing from internal state: %v", sets.FormatSet(removals))
 	e.state.ConflictSet = sets.Subtract(e.state.ConflictSet, removals)
 	e.state.StableSet = sets.Subtract(e.state.StableSet, removals)
 	e.state.Candidates = sets.SubtractSlices(e.state.Candidates, sets.MakeSlice(removals))

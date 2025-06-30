@@ -1,4 +1,4 @@
-package ui
+package pages
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,7 +17,7 @@ const PageLogID = "log_page"
 // LogPage displays application logs with filtering capabilities.
 type LogPage struct {
 	*tview.Flex
-	app               AppInterface
+	app               ui.AppInterface
 	logView           *tview.TextView
 	statusText        *tview.TextView
 	currentFilter     logging.LogLevel
@@ -25,7 +27,7 @@ type LogPage struct {
 }
 
 // NewLogPage creates a new LogPage instance.
-func NewLogPage(app AppInterface) *LogPage {
+func NewLogPage(app ui.AppInterface) *LogPage {
 	logView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -34,7 +36,7 @@ func NewLogPage(app AppInterface) *LogPage {
 		SetWrap(true)
 
 	wrapper := tview.NewFlex().SetDirection(tview.FlexRow)
-	frame := NewTitleFrame(logView, "Log")
+	frame := widgets.NewTitleFrame(logView, "Log")
 	wrapper.AddItem(frame, 0, 1, true)
 
 	page := &LogPage{
@@ -144,7 +146,7 @@ func (p *LogPage) refreshLogs(forceScrollToEnd bool) {
 				message := entry.Message[prefixEndIndex+2:] // The rest of the message
 
 				builder.WriteString(fmt.Sprintf(
-					"[%s::b]%-5s[-:-:-] [darkcyan::b]%s[-:-:-] %s\n",
+					"[%s::b]%-5s[-:-:-] [blue::b]%s[-:-:-] %s\n",
 					levelColor,
 					entry.Level.String(),
 					tview.Escape(prefix),
@@ -186,12 +188,11 @@ func (p *LogPage) updateStatus() {
 }
 
 // GetActionPrompts returns the key actions for the log page.
-func (p *LogPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"ESC/Ctrl+L", "Close"},
-		{"A/I/W/E", "Filter All/Info/Warn/Error"},
-		{"R", "Toggle Wrap"},
-		{"↑/↓", "Scroll"},
+func (p *LogPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "A/I/W/E", Action: "Filter All/Info/Warn/Error"},
+		{Input: "R", Action: "Toggle Wrap"},
+		{Input: "↑/↓", Action: "Scroll"},
 	}
 }
 

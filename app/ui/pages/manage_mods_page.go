@@ -1,4 +1,4 @@
-package ui
+package pages
 
 import (
 	"path/filepath"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,17 +17,17 @@ const PageManageModsID = "manage_mods"
 // ManageModsPage allows viewing and changing the state of all mods.
 type ManageModsPage struct {
 	*tview.Flex
-	app     AppInterface
+	app     ui.AppInterface
 	session *ManagementSession
 
-	modTable          *SearchableTable
+	modTable          *widgets.SearchableTable
 	forceEnabledList  *tview.TextView
 	forceDisabledList *tview.TextView
 	statusText        *tview.TextView
 }
 
 // NewManageModsPage creates a new page for managing mod states.
-func NewManageModsPage(app AppInterface) *ManageModsPage {
+func NewManageModsPage(app ui.AppInterface) *ManageModsPage {
 	p := &ManageModsPage{
 		Flex:              tview.NewFlex(),
 		app:               app,
@@ -35,7 +37,7 @@ func NewManageModsPage(app AppInterface) *ManageModsPage {
 	}
 
 	headers := []string{"Status", "ID", "Name", "File"}
-	p.modTable = NewSearchableTable(headers, 1, 2) // Search on ID (col 1) and Name (col 2)
+	p.modTable = widgets.NewSearchableTable(headers, 1, 2) // Search on ID (col 1) and Name (col 2)
 	p.modTable.SetBorderPadding(0, 0, 1, 1)
 
 	p.forceDisabledList.SetBorderPadding(0, 0, 1, 1)
@@ -45,14 +47,14 @@ func NewManageModsPage(app AppInterface) *ManageModsPage {
 	p.SetInputCapture(p.inputHandler())
 	p.RefreshState() // Initial population
 
-	p.statusText.SetText("Manage individual mod states. Press [darkcyan::b]ESC[-:-:-] to return.")
+	p.statusText.SetText("Manage individual mod states.")
 	return p
 }
 
 func (p *ManageModsPage) setupLayout() {
-	mainListFrame := NewTitleFrame(p.modTable, "All Mods")
-	enabledFrame := NewTitleFrame(p.forceEnabledList, "Force Enabled")
-	disabledFrame := NewTitleFrame(p.forceDisabledList, "Force Disabled")
+	mainListFrame := widgets.NewTitleFrame(p.modTable, "All Mods")
+	enabledFrame := widgets.NewTitleFrame(p.forceEnabledList, "Force Enabled")
+	disabledFrame := widgets.NewTitleFrame(p.forceDisabledList, "Force Disabled")
 
 	sideBar := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(enabledFrame, 0, 1, false).
@@ -65,7 +67,7 @@ func (p *ManageModsPage) setupLayout() {
 
 func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
-		if p.modTable.table.HasFocus() {
+		if p.modTable.HasFocus() {
 			// Handle state changes when table is focused
 			if p.handleTableInput(event) == nil {
 				return nil
@@ -151,12 +153,12 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 		return event
 	}
 
-	row, _ := p.modTable.table.GetSelection()
+	row, _ := p.modTable.GetSelection()
 	if row <= 0 { // No selection or header selected
 		return event
 	}
 
-	cell := p.modTable.table.GetCell(row, 1)
+	cell := p.modTable.GetCell(row, 1)
 	if cell == nil {
 		return event
 	}
@@ -198,7 +200,7 @@ func (p *ManageModsPage) RefreshState() {
 	}
 	modState := p.app.GetStateManager()
 
-	row, _ := p.modTable.table.GetSelection() // Preserve selection
+	row, _ := p.modTable.GetSelection() // Preserve selection
 
 	allIDs := modState.GetAllModIDs()
 	allMods := modState.GetAllMods()
@@ -251,19 +253,18 @@ func (p *ManageModsPage) RefreshState() {
 	p.forceEnabledList.SetText(strings.Join(enabledIDs, "\n"))
 	p.forceDisabledList.SetText(strings.Join(disabledIDs, "\n"))
 
-	if row > 0 && row < p.modTable.table.GetRowCount() {
-		p.modTable.table.Select(row, 0) // Restore selection
+	if row > 0 && row < p.modTable.GetRowCount() {
+		p.modTable.Select(row, 0) // Restore selection
 	}
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ManageModsPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"E", "Force Enable"},
-		{"D", "Force Disable"},
-		{"O", "Omit"},
-		{"Shift+Key", "Toggle All"},
-		{"ESC", "Back"},
+func (p *ManageModsPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "E", Action: "Force Enable"},
+		{Input: "D", Action: "Force Disable"},
+		{Input: "O", Action: "Omit"},
+		{Input: "Shift+Key", Action: "Toggle All"},
 	}
 }
 
@@ -364,6 +365,9 @@ func (s *ManagementSession) setStatus(modID string, enabled, disabled, omitted b
 
 // ToggleForceEnable toggles the force-enabled state.
 func (s *ManagementSession) ToggleForceEnable(modID string, isBulk bool) {
+	if _, ok := s.workingStatuses[modID]; !ok {
+		return
+	}
 	if isBulk {
 		allIDs := s.getAllIDs()
 		shouldEnable := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.ForceEnabled })
@@ -381,6 +385,9 @@ func (s *ManagementSession) ToggleForceEnable(modID string, isBulk bool) {
 
 // ToggleForceDisable toggles the force-disabled state.
 func (s *ManagementSession) ToggleForceDisable(modID string, isBulk bool) {
+	if _, ok := s.workingStatuses[modID]; !ok {
+		return
+	}
 	if isBulk {
 		allIDs := s.getAllIDs()
 		shouldDisable := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.ForceDisabled })
@@ -398,6 +405,9 @@ func (s *ManagementSession) ToggleForceDisable(modID string, isBulk bool) {
 
 // ToggleOmitted toggles the omitted state.
 func (s *ManagementSession) ToggleOmitted(modID string, isBulk bool) {
+	if _, ok := s.workingStatuses[modID]; !ok {
+		return
+	}
 	if isBulk {
 		allIDs := s.getAllIDs()
 		shouldOmit := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.Omitted })

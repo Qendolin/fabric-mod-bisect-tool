@@ -1,10 +1,12 @@
-package ui
+package pages
 
 import (
 	"fmt"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,36 +17,36 @@ const PageMainID = "main_page"
 // MainPage is the primary view for the bisection process.
 type MainPage struct {
 	*tview.Flex
-	app AppInterface
+	app ui.AppInterface
 
 	// UI Components
 	overviewText   *tview.TextView
 	stepButton     *tview.Button
 	undoButton     *tview.Button
-	tabs           *TabbedPanes
+	tabs           *widgets.TabbedPanes
 	statusText     *tview.TextView
-	overviewWidget *OverviewWidget
+	overviewWidget *widgets.OverviewWidget
 
 	// Tab Content
-	candidatesList       *SearchableList
-	candidatesTitle      *TitleFrame
-	safeList             *SearchableList
-	safeTitle            *TitleFrame
-	testGroupList        *SearchableList
-	testGroupTitle       *TitleFrame
-	implicitDepsList     *SearchableList
-	implicitDepsTitle    *TitleFrame
-	problematicModsList  *SearchableList
-	problematicModsTitle *TitleFrame
+	candidatesList       *widgets.SearchableList
+	candidatesTitle      *widgets.TitleFrame
+	safeList             *widgets.SearchableList
+	safeTitle            *widgets.TitleFrame
+	testGroupList        *widgets.SearchableList
+	testGroupTitle       *widgets.TitleFrame
+	implicitDepsList     *widgets.SearchableList
+	implicitDepsTitle    *widgets.TitleFrame
+	problematicModsList  *widgets.SearchableList
+	problematicModsTitle *widgets.TitleFrame
 }
 
 // NewMainPage creates a new MainPage instance.
-func NewMainPage(app AppInterface) *MainPage {
+func NewMainPage(app ui.AppInterface) *MainPage {
 	p := &MainPage{
 		Flex:           tview.NewFlex().SetDirection(tview.FlexRow),
 		app:            app,
 		statusText:     tview.NewTextView().SetDynamicColors(true),
-		overviewWidget: NewOverviewWidget(nil),
+		overviewWidget: widgets.NewOverviewWidget(nil),
 	}
 	p.setupLayout()
 	p.SetInputCapture(p.inputHandler())
@@ -58,7 +60,7 @@ func (p *MainPage) setupLayout() {
 	// --- Overview Area ---
 	p.overviewText = tview.NewTextView().SetDynamicColors(true)
 	// Can't initialize it yet
-	p.overviewWidget = NewOverviewWidget(nil)
+	p.overviewWidget = widgets.NewOverviewWidget(nil)
 
 	// This new container holds the text and the visual widget.
 	overviewContentFlex := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -67,9 +69,9 @@ func (p *MainPage) setupLayout() {
 
 	// --- Action Buttons ---
 	p.stepButton = tview.NewButton("Start").SetSelectedFunc(p.app.Step)
-	DefaultStyleButton(p.stepButton)
+	widgets.DefaultStyleButton(p.stepButton)
 	p.undoButton = tview.NewButton("Undo").SetSelectedFunc(p.confirmUndo)
-	DefaultStyleButton(p.undoButton)
+	widgets.DefaultStyleButton(p.undoButton)
 	buttonFlex := tview.NewFlex().
 		AddItem(p.stepButton, 0, 1, true).
 		AddItem(nil, 1, 0, false).
@@ -80,50 +82,50 @@ func (p *MainPage) setupLayout() {
 	overviewFlex := tview.NewFlex().
 		AddItem(overviewContentFlex, 0, 1, false).
 		AddItem(tview.NewBox(), 1, 0, false).
-		AddItem(NewVerticalSeparator(tcell.ColorGray), 1, 0, false).
+		AddItem(widgets.NewVerticalSeparator(tcell.ColorGray), 1, 0, false).
 		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(buttonFlex, 31, 0, true)
 	overviewFlex.SetBorderPadding(0, 0, 1, 1)
 
 	// --- Tabs Setup ---
-	p.tabs = NewTabbedPanes()
+	p.tabs = widgets.NewTabbedPanes()
 	p.tabs.SetBorderPadding(0, 0, 1, 1)
 	p.setupTabPanes()
 
 	// --- Final Page Layout ---
-	p.AddItem(NewTitleFrame(overviewFlex, "Overview"), 6, 0, true).
-		AddItem(NewTitleFrame(p.tabs, "Sets"), 0, 1, false)
+	p.AddItem(widgets.NewTitleFrame(overviewFlex, "Overview"), 6, 0, true).
+		AddItem(widgets.NewTitleFrame(p.tabs, "Sets"), 0, 1, false)
 }
 
 // setupTabPanes populates the tabbed container with its pages.
 func (p *MainPage) setupTabPanes() {
-	p.candidatesList = NewSearchableList()
-	p.safeList = NewSearchableList()
-	p.candidatesTitle = NewTitleFrame(p.candidatesList, "Candidates (Being Searched)")
-	p.safeTitle = NewTitleFrame(p.safeList, "Known Safe (For This Search)")
+	p.candidatesList = widgets.NewSearchableList()
+	p.safeList = widgets.NewSearchableList()
+	p.candidatesTitle = widgets.NewTitleFrame(p.candidatesList, "Candidates (Being Searched)")
+	p.safeTitle = widgets.NewTitleFrame(p.safeList, "Known Safe (For This Search)")
 	searchPoolFlex := tview.NewFlex().
 		AddItem(p.candidatesTitle, 0, 1, true).
 		AddItem(nil, 1, 0, false).
 		AddItem(p.safeTitle, 0, 1, true)
-	p.tabs.AddTab("Search Pool", NewFocusWrapper(searchPoolFlex, func() []tview.Primitive {
+	p.tabs.AddTab("Search Pool", widgets.NewFocusWrapper(searchPoolFlex, func() []tview.Primitive {
 		return []tview.Primitive{p.candidatesList, p.safeList}
 	}))
 
-	p.testGroupList = NewSearchableList()
-	p.implicitDepsList = NewSearchableList()
-	p.testGroupTitle = NewTitleFrame(p.testGroupList, "Mods in Next Test Group")
-	p.implicitDepsTitle = NewTitleFrame(p.implicitDepsList, "Implicitly Included Dependencies")
+	p.testGroupList = widgets.NewSearchableList()
+	p.implicitDepsList = widgets.NewSearchableList()
+	p.testGroupTitle = widgets.NewTitleFrame(p.testGroupList, "Mods in Next Test Group")
+	p.implicitDepsTitle = widgets.NewTitleFrame(p.implicitDepsList, "Implicitly Included Dependencies")
 	testGroupFlex := tview.NewFlex().
 		AddItem(p.testGroupTitle, 0, 1, true).
 		AddItem(nil, 1, 0, false).
 		AddItem(p.implicitDepsTitle, 0, 1, true)
-	p.tabs.AddTab("Test Group", NewFocusWrapper(testGroupFlex, func() []tview.Primitive {
+	p.tabs.AddTab("Test Group", widgets.NewFocusWrapper(testGroupFlex, func() []tview.Primitive {
 		return []tview.Primitive{p.testGroupList, p.implicitDepsList}
 	}))
 
-	p.problematicModsList = NewSearchableList()
-	p.problematicModsTitle = NewTitleFrame(p.problematicModsList, "Problematic Mods")
-	p.tabs.AddTab("Problematic Mods", NewFocusWrapper(p.problematicModsTitle, func() []tview.Primitive {
+	p.problematicModsList = widgets.NewSearchableList()
+	p.problematicModsTitle = widgets.NewTitleFrame(p.problematicModsList, "Problematic Mods")
+	p.tabs.AddTab("Problematic Mods", widgets.NewFocusWrapper(p.problematicModsTitle, func() []tview.Primitive {
 		return []tview.Primitive{p.problematicModsList}
 	}))
 }
@@ -191,12 +193,12 @@ func (p *MainPage) RefreshSearchState() {
 	p.updateOverviewWidget(&vm)
 }
 
-func (p *MainPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"S", "Step"},
-		{"U", "Undo"},
-		{"M", "Manage Mods"},
-		{"R", "Reset"},
+func (p *MainPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "S", Action: "Step"},
+		{Input: "U", Action: "Undo"},
+		{Input: "M", Action: "Manage Mods"},
+		{Input: "R", Action: "Reset"},
 	}
 }
 
@@ -206,7 +208,7 @@ func (p *MainPage) GetStatusPrimitive() *tview.TextView {
 }
 
 // updateOverview updates the main status text and action buttons using the ViewModel.
-func (p *MainPage) updateOverview(vm *BisectionViewModel) {
+func (p *MainPage) updateOverview(vm *ui.BisectionViewModel) {
 	status, buttonText := p.determineStatusAndButtonText(vm)
 	p.statusText.SetText(status)
 	p.stepButton.SetLabel(buttonText)
@@ -229,7 +231,7 @@ func (p *MainPage) updateOverview(vm *BisectionViewModel) {
 }
 
 // determineStatusAndButtonText computes the user-facing status string and button label from the ViewModel.
-func (p *MainPage) determineStatusAndButtonText(vm *BisectionViewModel) (status, buttonText string) {
+func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (status, buttonText string) {
 	switch {
 	case vm.IsComplete:
 		return "Search Complete", "Results"
@@ -248,7 +250,7 @@ func (p *MainPage) determineStatusAndButtonText(vm *BisectionViewModel) (status,
 }
 
 // updateModLists populates the Candidates, Known Safe, and Problematic lists from the ViewModel.
-func (p *MainPage) updateModLists(vm *BisectionViewModel) {
+func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
 	modCount := len(vm.AllModIDs)
 
 	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), "Candidates (Being Searched): %d / %d", modCount)
@@ -257,7 +259,7 @@ func (p *MainPage) updateModLists(vm *BisectionViewModel) {
 }
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.
-func (p *MainPage) updateTestGroupTab(vm *BisectionViewModel) {
+func (p *MainPage) updateTestGroupTab(vm *ui.BisectionViewModel) {
 	if vm.NextTestPlan == nil {
 		p.updateList(p.testGroupList, p.testGroupTitle, nil, "Mods in Next Test Group: %d", 0)
 		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, "Implicitly Included Dependencies: %d", 0)
@@ -274,25 +276,26 @@ func (p *MainPage) updateTestGroupTab(vm *BisectionViewModel) {
 }
 
 // updateOverviewWidget updates the visual overview bar from the ViewModel.
-func (p *MainPage) updateOverviewWidget(vm *BisectionViewModel) {
+func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
 	p.overviewWidget.SetAllMods(vm.AllModIDs)
 
-	nextPlan := vm.NextTestPlan
-	if nextPlan == nil {
-		// If there is no next plan, show the current state of conflict/cleared mods.
-		p.overviewWidget.UpdateState(vm.ConflictSet, vm.ClearedSet, vm.CandidateSet, nil)
-		return
+	var effectiveSet sets.Set
+	if vm.NextTestPlan != nil {
+		// Calculate the full effective set for the test.
+		effectiveSet, _ = p.app.GetStateManager().ResolveEffectiveSet(vm.NextTestPlan.ModIDsToTest)
 	}
 
-	// Calculate the full effective set for the test.
-	testSet := nextPlan.ModIDsToTest
-	effective, _ := p.app.GetStateManager().ResolveEffectiveSet(testSet)
+	candidates := sets.Set{}
+	// This makes the display more intuitive
+	if !vm.IsVerificationStep {
+		candidates = vm.CandidateSet
+	}
 
-	p.overviewWidget.UpdateState(vm.ConflictSet, vm.ClearedSet, vm.CandidateSet, effective)
+	p.overviewWidget.UpdateState(vm.ConflictSet, vm.ClearedSet, candidates, effectiveSet)
 }
 
 // updateList is a helper to populate a SearchableList and its title.
-func (p *MainPage) updateList(list *SearchableList, titleFrame *TitleFrame, mods []string, titleFmt string, total int) {
+func (p *MainPage) updateList(list *widgets.SearchableList, titleFrame *widgets.TitleFrame, mods []string, titleFmt string, total int) {
 	if len(mods) > 0 {
 		list.SetItems(p.formatModList(mods))
 	} else {

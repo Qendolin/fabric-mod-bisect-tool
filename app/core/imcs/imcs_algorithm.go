@@ -28,11 +28,13 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 		currentStep := state.SearchStack[len(state.SearchStack)-1]
 		c1, _ := sets.Split(currentStep.Candidates)
 		testSet := sets.Union(currentStep.StableSet, sets.MakeSet(c1))
+		logging.Debugf("IMCSAlgorithm.PlanNextTest: Continuing bisection (stack depth %d). StableSet: %v, Candidates: %v. Testing first half: %v", len(state.SearchStack), sets.FormatSet(currentStep.StableSet), currentStep.Candidates, c1)
 		return &TestPlan{ModIDsToTest: testSet, IsVerificationStep: false}, nil
 	}
 
 	// Priority 2: No bisection, but we need to run the `test(ConflictSet)` optimization.
 	if state.IsVerifyingConflictSet {
+		logging.Debugf("IMCSAlgorithm.PlanNextTest: Planning verification test for ConflictSet: %v", sets.FormatSet(state.ConflictSet))
 		// This test only includes the conflict set itself, no other context.
 		return &TestPlan{ModIDsToTest: state.ConflictSet, IsVerificationStep: true}, nil
 	}
@@ -48,6 +50,9 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 	stableSet := state.ConflictSet
 	c1, _ := sets.Split(state.Candidates)
 	testSet := sets.Union(stableSet, sets.MakeSet(c1))
+
+	logging.Debugf("IMCSAlgorithm.PlanNextTest: Starting new bisection. StableSet: %v, All Candidates: %v. Testing first half: %v", sets.FormatSet(stableSet), state.Candidates, c1)
+
 	return &TestPlan{ModIDsToTest: testSet, IsVerificationStep: false}, nil
 }
 
@@ -80,7 +85,6 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 	} else {
 		// A bisection was in progress. The context is the top of the stack.
 		stepToProcess = state.SearchStack[len(state.SearchStack)-1]
-		newState.SearchStack = newState.SearchStack[:len(newState.SearchStack)-1] // Pop
 	}
 
 	c1, c2 := sets.Split(stepToProcess.Candidates)
@@ -106,9 +110,16 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 		}
 	} else { // GOOD
 		// The test on c1 + context passed. The conflict must be in c2.
+
+		// Pop the stack
+		if len(newState.SearchStack) > 0 {
+			newState.SearchStack = newState.SearchStack[:len(newState.SearchStack)-1]
+		}
+
 		if len(c2) > 0 {
 			// The next bisection step for c2 uses an expanded StableSet, including the "good" chunk c1.
 			newStableSetForNextStep := sets.Union(stepToProcess.StableSet, sets.MakeSet(c1))
+			logging.Debugf("IMCSAlgorithm.ApplyResult: Test was GOOD. Adding %v to stable set for next step.", c1)
 			newState.SearchStack = append(newState.SearchStack, newSearchStep(newStableSetForNextStep, c2))
 		} else {
 			// c2 is empty, meaning c1 was the last candidate(s) in this branch.
@@ -120,6 +131,8 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 			}
 		}
 	}
+
+	logging.Debugf("IMCSAlgorithm.ApplyResult: Applied result '%s'. New state: IsComplete=%t, ConflictSet=%v, StackDepth=%d", result, newState.IsComplete, sets.FormatSet(newState.ConflictSet), len(newState.SearchStack))
 
 	return newState, nil
 }

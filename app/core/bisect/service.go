@@ -35,6 +35,7 @@ func NewService(stateMgr *mods.StateManager, activator *mods.Activator, engine *
 
 // handleStateChange is called when a mod's forced status changes.
 func (s *Service) handleStateChange() {
+	logging.Debugf("BisectService: State change detected. Reconciling engine state.")
 	validCandidates := s.getValidCandidates()
 	s.engine.Reconcile(validCandidates)
 	if s.OnStateChange != nil {
@@ -70,7 +71,18 @@ func (s *Service) PlanAndExecuteTestStep() (changes []mods.BatchStateChange, pla
 		return nil, nil, err
 	}
 
+	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
+
 	effectiveSet, _ := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+
+	// Optional: Log the full resolution path for extreme detail.
+	// var resLog []string
+	// for _, info := range resolutionPath {
+	//     resLog = append(resLog, fmt.Sprintf("  - %s (%s)", info.ModID, info.Reason))
+	// }
+	// logging.Debugf("BisectService: Full resolution path:\n%s", strings.Join(resLog, "\n"))
+
+	logging.Debugf("BisectService: Effective set contains %d mods: %v", len(effectiveSet), sets.FormatSet(effectiveSet))
 
 	changes, err = s.activator.Apply(effectiveSet)
 	if err != nil {

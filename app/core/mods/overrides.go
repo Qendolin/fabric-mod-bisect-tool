@@ -184,6 +184,7 @@ func (r mapBasedRule) Target() string         { return r.TargetModID }
 func (r mapBasedRule) Field() string          { return r.RuleField }
 func (r mapBasedRule) Key() string            { return r.RuleKey }
 func (r mapBasedRule) Action() OverrideAction { return r.RuleAction }
+func (r mapBasedRule) Value() string          { return r.VersionMatch }
 func (r mapBasedRule) Apply(fmj *FabricModJson) {
 	var targetMap *map[string]interface{}
 	// Only handle "depends" as per the request.
@@ -212,6 +213,7 @@ func (r listBasedRule) Target() string         { return r.TargetModID }
 func (r listBasedRule) Field() string          { return r.RuleField }
 func (r listBasedRule) Key() string            { return r.Item }
 func (r listBasedRule) Action() OverrideAction { return r.RuleAction }
+func (r listBasedRule) Value() string          { return "" }
 func (r listBasedRule) Apply(fmj *FabricModJson) {
 	var targetSlice *[]string
 	// Only handle "provides" as per the request.

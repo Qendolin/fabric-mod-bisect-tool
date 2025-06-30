@@ -84,7 +84,7 @@ func (lm *LayoutManager) SetFooter(prompts []ActionPrompt) {
 	if prompts == nil {
 		return
 	}
-	globalPrompts := []ActionPrompt{{"Ctrl+C", "Quit"}, {"Ctrl+L", "Logs"}, {"Tab", "Cycle Focus"}}
+	globalPrompts := []ActionPrompt{{"Ctrl+C", "Quit"}, {"Ctrl+L", "Logs"}, {"Ctrl+H", "History"}, {"Tab", "Focus"}}
 	allPrompts := append(globalPrompts, prompts...)
 
 	var sb strings.Builder

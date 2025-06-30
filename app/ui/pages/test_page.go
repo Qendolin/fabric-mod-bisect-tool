@@ -1,8 +1,10 @@
-package ui
+package pages
 
 import (
 	"time"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -12,7 +14,7 @@ const PageTestID = "test_page"
 // TestPage instructs the user to perform a manual test.
 type TestPage struct {
 	*tview.Flex
-	app AppInterface
+	app ui.AppInterface
 
 	successBtn *tview.Button
 	failBtn    *tview.Button
@@ -26,7 +28,7 @@ type TestPage struct {
 }
 
 // NewTestPage creates a new TestPage.
-func NewTestPage(app AppInterface, isVerification bool, onSuccess, onFailure, onCancel func()) *TestPage {
+func NewTestPage(app ui.AppInterface, isVerification bool, onSuccess, onFailure, onCancel func()) *TestPage {
 	p := &TestPage{
 		Flex:       tview.NewFlex(),
 		app:        app,
@@ -61,24 +63,24 @@ Please launch Minecraft and confirm the failure persists.`
 		SetTextAlign(tview.AlignCenter).
 		SetText(message)
 
-	p.successBtn = tview.NewButton("Success (No Crash)").
+	p.successBtn = tview.NewButton("Success (Issue gone)").
 		SetSelectedFunc(p.onSuccess)
 	p.successBtn.SetDisabled(true)
-	p.successBtn.SetDisabledStyle(DefaultButtonDisabledStyle)
+	p.successBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorWhite))
 	p.successBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen).Underline(true))
 
-	p.failBtn = tview.NewButton("Failure (Crash)").
+	p.failBtn = tview.NewButton("Failure (Issue remains)").
 		SetSelectedFunc(p.onFailure)
 	p.failBtn.SetDisabled(true)
-	p.failBtn.SetDisabledStyle(DefaultButtonDisabledStyle)
+	p.failBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorWhite))
 	p.failBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorRed).Underline(true))
 
 	p.backBtn = tview.NewButton("Back (Cancel Step)").
 		SetSelectedFunc(p.onCancel)
 	p.backBtn.SetDisabled(true)
-	p.backBtn.SetDisabledStyle(DefaultButtonDisabledStyle)
+	p.backBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.backBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorBlue).Background(tcell.ColorWhite))
 	p.backBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorBlue).Underline(true))
 
@@ -103,7 +105,7 @@ Please launch Minecraft and confirm the failure persists.`
 		AddItem(tview.NewBox(), 0, 1, false) // Spacer
 
 	p.SetDirection(tview.FlexRow).
-		AddItem(NewHorizontalSeparator(tcell.ColorWhite), 1, 0, false).
+		AddItem(widgets.NewHorizontalSeparator(tcell.ColorWhite), 1, 0, false).
 		AddItem(tview.NewBox(), 0, 1, false).
 		AddItem(instructions, 0, 2, false).
 		AddItem(buttonFlex, 3, 0, true).
@@ -133,11 +135,11 @@ Please launch Minecraft and confirm the failure persists.`
 }
 
 // GetActionPrompts returns the key actions for the test page.
-func (p *TestPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"ESC", "Back (Cancel Step)"},
-		{"A", "Success"},
-		{"D", "Failure"},
+func (p *TestPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "ESC", Action: "Back (Cancel Step)"},
+		{Input: "A", Action: "Success"},
+		{Input: "D", Action: "Failure"},
 	}
 }
 

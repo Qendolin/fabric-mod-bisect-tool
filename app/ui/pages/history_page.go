@@ -1,4 +1,4 @@
-package ui
+package pages
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -19,12 +21,12 @@ const PageHistoryID = "history_page"
 // HistoryPage displays the bisection history in a master-detail view.
 type HistoryPage struct {
 	*tview.Flex
-	app AppInterface
+	app ui.AppInterface
 
-	masterList *FlexList
+	masterList *widgets.FlexList
 
 	detailPanel          *tview.Flex
-	detailOverviewWidget *OverviewWidget
+	detailOverviewWidget *widgets.OverviewWidget
 	detailSummaryText    *tview.TextView
 	detailSetsText       *tview.TextView
 
@@ -34,14 +36,14 @@ type HistoryPage struct {
 // TODO: Implement PageActivator, and make HistoryPage peristent, instead of a modal
 
 // NewHistoryPage creates a new page for viewing bisection history.
-func NewHistoryPage(app AppInterface) *HistoryPage {
+func NewHistoryPage(app ui.AppInterface) *HistoryPage {
 	p := &HistoryPage{
 		Flex: tview.NewFlex(),
 		app:  app,
 	}
 
 	// Master Pane
-	p.masterList = NewFlexList()
+	p.masterList = widgets.NewFlexList()
 	p.masterList.SetBorderPadding(0, 0, 1, 1)
 	p.masterList.SetChangedFunc(func(newIndex int) {
 		p.updateDetailView(newIndex)
@@ -52,11 +54,11 @@ func NewHistoryPage(app AppInterface) *HistoryPage {
 
 	// Create the overview widget with an empty list of mods initially.
 	// It will be updated with the real list when the page is shown.
-	p.detailOverviewWidget = NewOverviewWidget(nil)
+	p.detailOverviewWidget = widgets.NewOverviewWidget(nil)
 	p.detailSummaryText = tview.NewTextView().SetDynamicColors(true)
 	p.detailSetsText = tview.NewTextView().SetDynamicColors(true).SetWordWrap(true).SetRegions(true)
 
-	detailOverviewFrame := NewTitleFrame(p.detailOverviewWidget, "Overview")
+	detailOverviewFrame := widgets.NewTitleFrame(p.detailOverviewWidget, "Overview")
 	detailOverviewFrame.SetBorder(false) // Remove redundant border if parent has one
 
 	p.detailPanel.AddItem(p.detailSummaryText, 3, 0, false) // Height for summary
@@ -64,15 +66,19 @@ func NewHistoryPage(app AppInterface) *HistoryPage {
 	p.detailPanel.AddItem(p.detailSetsText, 0, 1, false)    // Remaining space for sets
 
 	// Main Layout
-	p.Flex.AddItem(NewTitleFrame(p.masterList, "History"), 0, 1, true).
+	p.Flex.AddItem(widgets.NewTitleFrame(p.masterList, "History"), 0, 1, true).
 		AddItem(tview.NewBox(), 1, 0, false).
-		AddItem(NewTitleFrame(p.detailPanel, "Details"), 0, 2, false)
+		AddItem(widgets.NewTitleFrame(p.detailPanel, "Details"), 0, 2, false)
 
 	p.setInputCapture()
 
 	p.refreshHistory()
 
 	return p
+}
+
+func (p *HistoryPage) OnPageActivated() {
+	p.refreshHistory()
 }
 
 // setInputCapture handles navigation within the page.
@@ -118,7 +124,7 @@ func (p *HistoryPage) refreshHistory() {
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
-		overview := NewOverviewWidget(allMods)
+		overview := widgets.NewOverviewWidget(allMods)
 		overview.SetBackgroundColor(tcell.ColorNone)
 		p.updateOverviewState(overview, &entry)
 
@@ -128,7 +134,7 @@ func (p *HistoryPage) refreshHistory() {
 			AddItem(overview, 1, 0, false)
 
 		if i != len(p.historyCache)-1 {
-			sep := NewHorizontalSeparator(tcell.ColorGray)
+			sep := widgets.NewHorizontalSeparator(tcell.ColorGray)
 			sep.SetBackgroundColor(tcell.ColorNone)
 			row.AddItem(sep, 1, 0, false)
 		}
@@ -145,7 +151,7 @@ func (p *HistoryPage) refreshHistory() {
 	}
 }
 
-func (p *HistoryPage) updateOverviewState(overview *OverviewWidget, entry *imcs.CompletedTest) {
+func (p *HistoryPage) updateOverviewState(overview *widgets.OverviewWidget, entry *imcs.CompletedTest) {
 	effective, _ := p.app.GetStateManager().ResolveEffectiveSet(entry.Plan.ModIDsToTest)
 
 	candidates := sets.Set{}
@@ -204,12 +210,9 @@ func (p *HistoryPage) updateDetailView(index int) {
 }
 
 // Page interface implementation
-func (p *HistoryPage) GetActionPrompts() []ActionPrompt {
-	return []ActionPrompt{
-		{"↑/↓", "Navigate History"},
-		{"PgUp/PgDn", "Scroll Page"},
-		{"Home/End", "Scroll Top/Bottom"},
-		{"ESC/Ctrl+H", "Close"},
+func (p *HistoryPage) GetActionPrompts() []ui.ActionPrompt {
+	return []ui.ActionPrompt{
+		{Input: "↑/↓", Action: "Navigate History"},
 	}
 }
 func (p *HistoryPage) GetStatusPrimitive() *tview.TextView { return nil }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
@@ -251,6 +252,7 @@ func determineWinner(modID string, candidates []*parsedModFile) *parsedModFile {
 	logging.Warnf("ModLoader: Found %d conflicting files for mod %s. Determining winner by version...", len(candidates), modID)
 	winnerIdx := 0
 	for i := 1; i < len(candidates); i++ {
+		logging.Debugf("ModLoader: Comparing candidate '%s' (v%s) with current winner '%s' (v%s).", candidates[i].mod.FabricInfo.ID, candidates[i].mod.FabricInfo.Version, candidates[winnerIdx].mod.FabricInfo.ID, candidates[winnerIdx].mod.FabricInfo.Version)
 		// Compare versions using the semantic versioning helper.
 		if compareVersions(candidates[i].mod.FabricInfo.Version, candidates[winnerIdx].mod.FabricInfo.Version) > 0 {
 			winnerIdx = i
@@ -459,12 +461,51 @@ func (s *ModLoaderService) applyOverridesToLoadedMods(mods map[string]*Mod, over
 		return
 	}
 
+	// Group rules by target mod ID for efficient lookup.
+	rulesByModID := make(map[string][]OverrideRule)
+	allRuleTargets := make(map[string]struct{})
 	for _, rule := range overrides.Rules {
-		targetMod, exists := mods[rule.Target()]
-		if !exists {
-			logging.Warnf("ModLoader: Override rule for unknown mod '%s'. Skipping.", rule.Target())
-			continue
+		targetID := rule.Target()
+		rulesByModID[targetID] = append(rulesByModID[targetID], rule)
+		allRuleTargets[targetID] = struct{}{}
+	}
+
+	// Track which targets we successfully found and applied rules to.
+	foundTargets := make(map[string]struct{})
+
+	// Iterate through all loaded top-level mods.
+	for topLevelID, mod := range mods {
+		// 1. Check if there are rules for the top-level mod itself.
+		if rules, ok := rulesByModID[topLevelID]; ok {
+			logging.Infof("ModLoader: Applying %d override rule(s) to top-level mod '%s'.", len(rules), topLevelID)
+			for _, rule := range rules {
+				rule.Apply(&mod.FabricInfo)
+				// NEW DEBUG LOGGING: Log each applied rule.
+				logging.Debugf("ModLoader:   - Applied rule: Target='%s', Field='%s', Key='%s', Action='%s', Value='%s'",
+					rule.Target(), rule.Field(), rule.Key(), rule.Action().String(), rule.Value())
+			}
+			foundTargets[topLevelID] = struct{}{}
 		}
-		rule.Apply(&targetMod.FabricInfo)
+
+		// 2. Iterate through all nested mods and check for applicable rules.
+		// We must use an index to get a pointer to the slice element for modification.
+		for i := range mod.NestedModules {
+			nestedMod := &mod.NestedModules[i]
+			if rules, ok := rulesByModID[nestedMod.ID]; ok {
+				logging.Infof("ModLoader: Applying %d override rule(s) to nested mod '%s' (within '%s').", len(rules), nestedMod.ID, topLevelID)
+				for _, rule := range rules {
+					rule.Apply(nestedMod)
+					logging.Debugf("ModLoader:   - Applied rule: Target='%s', Field='%s', Key='%s', Action='%s', Value='%s'",
+						rule.Target(), rule.Field(), rule.Key(), rule.Action().String(), rule.Value())
+				}
+				foundTargets[nestedMod.ID] = struct{}{}
+			}
+		}
+	}
+
+	// After checking all mods, report any rules for targets that were never found.
+	unappliedTargets := sets.Subtract(allRuleTargets, foundTargets)
+	if len(unappliedTargets) > 0 {
+		logging.Warnf("ModLoader: Skipping override rule(s) for unknown mod(s) not found in any top-level or nested JAR: %v", sets.FormatSet(unappliedTargets))
 	}
 }

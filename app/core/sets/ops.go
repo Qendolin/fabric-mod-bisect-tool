@@ -4,14 +4,6 @@ package sets
 
 import "sort"
 
-// Set represents a collection of unique string values.
-type Set map[string]struct{}
-
-// OrderedSet represents a slice of strings.
-// Note: This is a type alias and does not enforce uniqueness or order at compile time.
-// Functions that return an OrderedSet, like MakeSlice, guarantee the slice is sorted and unique.
-type OrderedSet []string
-
 // GetSplitIndex calculates the index at which to split a slice of a given length
 // into two halves. The first half will be larger if the length is odd.
 func GetSplitIndex(length int) int {
