@@ -13,7 +13,7 @@ type UndoFrame struct {
 	Plan  TestPlan
 }
 
-// UndoStack now manages a stack of UndoFrames.
+// UndoStack provides an undo/redo-style history for search states.
 type UndoStack struct {
 	frames []UndoFrame
 }
@@ -97,5 +97,6 @@ func deepCopyState(state SearchState) SearchState {
 		LastTestResult:         state.LastTestResult,
 		Round:                  state.Round,
 		Iteration:              state.Iteration,
+		Step:                   state.Step,
 	}
 }

@@ -1,15 +1,19 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
 // LayoutManager handles the overall visual structure of the application.
 type LayoutManager struct {
+	app        AppInterface
 	root       *tview.Flex
 	header     *tview.Flex
 	status     *tview.Flex
@@ -17,19 +21,25 @@ type LayoutManager struct {
 	footer     *tview.Flex
 	pages      *tview.Pages
 
-	errorCounters *tview.TextView
+	errorCounters    *tview.TextView
+	prevErrorCount   int
+	prevWarningCount int
 }
 
 // NewLayoutManager creates and initializes the UI layout manager.
-func NewLayoutManager() *LayoutManager {
+func NewLayoutManager(app AppInterface, ctx context.Context) *LayoutManager {
 	lm := &LayoutManager{
-		pages:         tview.NewPages(),
-		root:          tview.NewFlex().SetDirection(tview.FlexRow),
-		header:        tview.NewFlex(),
-		footer:        tview.NewFlex(),
-		errorCounters: tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignRight),
+		app:              app,
+		pages:            tview.NewPages(),
+		root:             tview.NewFlex().SetDirection(tview.FlexRow),
+		header:           tview.NewFlex(),
+		footer:           tview.NewFlex(),
+		errorCounters:    tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignRight),
+		prevErrorCount:   -1,
+		prevWarningCount: -1,
 	}
 	lm.setupLayout()
+	go lm.startErrorCounterPolling(ctx)
 	return lm
 }
 
@@ -51,7 +61,8 @@ func (lm *LayoutManager) setupLayout() {
 	lm.header.AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(lm.status, 0, 1, false).
 		AddItem(tview.NewBox(), 1, 0, false).
-		AddItem(lm.errorCounters, 0, 1, false)
+		AddItem(lm.errorCounters, 30, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false)
 
 	lm.root.SetBorder(true).
 		SetTitle(" Fabric Mod Bisect Tool ").
@@ -60,10 +71,66 @@ func (lm *LayoutManager) setupLayout() {
 	lm.root.AddItem(lm.header, 1, 0, false).
 		AddItem(lm.pages, 0, 1, true).
 		AddItem(lm.footer, 1, 0, false)
+
+	lm.SetErrorCounters(0, 0)
+}
+
+// startErrorCounterPolling starts a goroutine that periodically updates error/warning counters.
+// It gracefully stops when the application's context is canceled.
+func (lm *LayoutManager) startErrorCounterPolling(ctx context.Context) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Perform an initial update immediately
+	lm.updateErrorCounters()
+
+	for {
+		select {
+		case <-ticker.C:
+			lm.updateErrorCounters()
+		case <-ctx.Done():
+			logging.Debugf("LayoutManager: Stopping error counter polling.")
+			return
+		}
+	}
+}
+
+// updateErrorCounters fetches counts from the logger and updates the UI.
+func (lm *LayoutManager) updateErrorCounters() {
+	logger := lm.app.GetLogger()
+	if logger == nil {
+		return // Logger not set up yet.
+	}
+
+	entries := logger.Store().GetAll()
+	errorCount := 0
+	warningCount := 0
+
+	for _, entry := range entries {
+		switch entry.Level {
+		case logging.LevelError:
+			errorCount++
+		case logging.LevelWarn:
+			warningCount++
+		}
+	}
+
+	// prevent unnecessary draws
+	if lm.prevErrorCount != errorCount || lm.prevWarningCount != warningCount {
+		lm.app.QueueUpdateDraw(func() {
+			lm.SetErrorCounters(warningCount, errorCount)
+		})
+	}
 }
 
 // SetErrorCounters updates the error and warning counters.
 func (lm *LayoutManager) SetErrorCounters(warnCount, errorCount int) {
+	if lm.prevErrorCount == errorCount && lm.prevWarningCount == warnCount {
+		return
+	}
+	lm.prevErrorCount = errorCount
+	lm.prevWarningCount = warnCount
+
 	warnBgColor := tcell.ColorYellow
 	warnFgColor := tcell.ColorBlack
 	errorBgColor := tcell.ColorRed

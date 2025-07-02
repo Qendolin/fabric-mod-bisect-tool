@@ -8,10 +8,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
-// Struct for initial JSON parsing. The value is now json.RawMessage to allow deferred parsing.
+// Struct for initial JSON parsing.
 type rawDependencyOverrides struct {
 	Version   int                                   `json:"version"`
 	Overrides map[string]map[string]json.RawMessage `json:"overrides"`
@@ -19,11 +20,11 @@ type rawDependencyOverrides struct {
 
 // mapBasedRule handles overrides for dependency-like fields (map[string]string).
 type mapBasedRule struct {
-	TargetModID  string
-	RuleAction   OverrideAction
-	RuleField    string
-	RuleKey      string
-	VersionMatch string
+	TargetModID      string
+	RuleAction       OverrideAction
+	RuleField        string
+	RuleKey          string
+	VersionPredicate *version.VersionPredicate
 }
 
 // listBasedRule handles overrides for list-based fields (e.g., "provides").
@@ -35,12 +36,11 @@ type listBasedRule struct {
 }
 
 // LoadDependencyOverridesFromPath loads overrides from a specific file path.
-// It gracefully handles cases where the file does not exist.
 func LoadDependencyOverridesFromPath(path string) (*DependencyOverrides, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, err // Return error so the caller knows it wasn't found.
+			return nil, err
 		}
 		return nil, fmt.Errorf("reading override file '%s': %w", path, err)
 	}
@@ -69,21 +69,23 @@ func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
 			fieldName, prefix := parseOverrideRuleKey(rawKey)
 			action := parseAction(prefix)
 
-			// Determine if the field is map-based or list-based.
-			// "recommends", "suggests", "conflicts", "breaks" are not implemented
 			switch fieldName {
-			case "depends":
+			case "depends", "recommends", "suggests", "conflicts", "breaks":
 				var depMap map[string]string
 				if err := json.Unmarshal(rawValue, &depMap); err != nil {
 					return nil, fmt.Errorf("invalid format for '%s' on mod '%s': %w", fieldName, targetModID, err)
 				}
 				for key, value := range depMap {
+					pred, err := version.ParseVersionPredicate(value)
+					if err != nil {
+						return nil, fmt.Errorf("parsing override for '%s':'%s', invalid predicate '%s': %w", targetModID, key, value, err)
+					}
 					rule := mapBasedRule{
-						TargetModID:  targetModID,
-						RuleAction:   action,
-						RuleField:    fieldName,
-						RuleKey:      key,
-						VersionMatch: value,
+						TargetModID:      targetModID,
+						RuleAction:       action,
+						RuleField:        fieldName,
+						RuleKey:          key,
+						VersionPredicate: pred,
 					}
 					parsedOverrides.Rules = append(parsedOverrides.Rules, rule)
 				}
@@ -110,19 +112,13 @@ func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
 }
 
 // MergeDependencyOverrides combines multiple DependencyOverrides objects.
-// Overrides are applied in order, with earlier objects in the slice taking precedence.
-// A "replace" action on a field will invalidate all subsequent adds/removes for that same field.
 func MergeDependencyOverrides(overrides ...*DependencyOverrides) *DependencyOverrides {
 	if len(overrides) == 0 {
 		return &DependencyOverrides{}
 	}
 
 	finalOverrides := &DependencyOverrides{Rules: []OverrideRule{}}
-	// Tracks fields that have been completely replaced by a higher-priority rule.
-	// Key format: "TargetModID:Field" (e.g., "mod_a:depends")
 	replacedFields := make(map[string]bool)
-	// Tracks individual items that have been handled by a higher-priority rule.
-	// Key format: "TargetModID:Field:Key" (e.g., "mod_a:depends:minecraft")
 	processedItems := make(map[string]bool)
 
 	for _, overrideSet := range overrides {
@@ -133,22 +129,16 @@ func MergeDependencyOverrides(overrides ...*DependencyOverrides) *DependencyOver
 			fieldKey := fmt.Sprintf("%s:%s", rule.Target(), rule.Field())
 			itemKey := fmt.Sprintf("%s:%s", fieldKey, rule.Key())
 
-			// If the entire field was replaced by a higher-priority rule, skip.
 			if replacedFields[fieldKey] {
 				continue
 			}
-
-			// If this specific item was handled by a higher-priority rule, skip.
 			if processedItems[itemKey] {
 				continue
 			}
 
-			// This is the highest-priority rule for this specific item. Add it.
 			finalOverrides.Rules = append(finalOverrides.Rules, rule)
 			processedItems[itemKey] = true
 
-			// If this rule was a full replacement, mark the entire field as such
-			// to block all subsequent lower-priority rules for this field.
 			if rule.Action() == ActionReplace {
 				replacedFields[fieldKey] = true
 			}
@@ -184,26 +174,39 @@ func (r mapBasedRule) Target() string         { return r.TargetModID }
 func (r mapBasedRule) Field() string          { return r.RuleField }
 func (r mapBasedRule) Key() string            { return r.RuleKey }
 func (r mapBasedRule) Action() OverrideAction { return r.RuleAction }
-func (r mapBasedRule) Value() string          { return r.VersionMatch }
+func (r mapBasedRule) Value() string {
+	if r.VersionPredicate == nil {
+		return ""
+	}
+	return r.VersionPredicate.String()
+}
 func (r mapBasedRule) Apply(fmj *FabricModJson) {
-	var targetMap *map[string]interface{}
-	// Only handle "depends" as per the request.
-	if r.RuleField == "depends" {
+	var targetMap *VersionRanges
+
+	switch r.RuleField {
+	case "depends":
 		targetMap = &fmj.Depends
-	} else {
+	case "breaks":
+		targetMap = &fmj.Breaks
+	case "recommends":
+		targetMap = &fmj.Recommends
+	case "suggests":
+		targetMap = &fmj.Suggests
+	case "conflicts":
+		targetMap = &fmj.Conflicts
+	default:
 		return
 	}
 
 	if *targetMap == nil {
-		*targetMap = make(map[string]interface{})
+		*targetMap = make(VersionRanges)
 	}
 
 	switch r.RuleAction {
 	case ActionReplace:
-		// A replace on a single item effectively means replacing the whole map with just this item.
-		*targetMap = map[string]interface{}{r.RuleKey: r.VersionMatch}
+		*targetMap = VersionRanges{r.RuleKey: []*version.VersionPredicate{r.VersionPredicate}}
 	case ActionAdd:
-		(*targetMap)[r.RuleKey] = r.VersionMatch
+		(*targetMap)[r.RuleKey] = []*version.VersionPredicate{r.VersionPredicate}
 	case ActionRemove:
 		delete(*targetMap, r.RuleKey)
 	}
@@ -216,7 +219,6 @@ func (r listBasedRule) Action() OverrideAction { return r.RuleAction }
 func (r listBasedRule) Value() string          { return "" }
 func (r listBasedRule) Apply(fmj *FabricModJson) {
 	var targetSlice *[]string
-	// Only handle "provides" as per the request.
 	if r.RuleField == "provides" {
 		targetSlice = &fmj.Provides
 	} else {
@@ -229,7 +231,7 @@ func (r listBasedRule) Apply(fmj *FabricModJson) {
 	case ActionAdd:
 		for _, p := range *targetSlice {
 			if p == r.Item {
-				return // Already exists
+				return
 			}
 		}
 		*targetSlice = append(*targetSlice, r.Item)

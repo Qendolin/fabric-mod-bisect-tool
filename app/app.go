@@ -62,7 +62,7 @@ func NewApp(logger *logging.Logger, cliArgs *CLIArgs) *App {
 		cliArgs:     *cliArgs,
 	}
 
-	a.layoutManager = ui.NewLayoutManager()
+	a.layoutManager = ui.NewLayoutManager(a, a.appCtx)
 	a.navManager = ui.NewNavigationManager(a, a.layoutManager.Pages())
 	a.dialogManager = ui.NewDialogManager(a)
 	a.focusManager = ui.NewFocusManager(a)
@@ -145,7 +145,7 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 }
 
 func (a *App) handleCoreStateChange() {
-	if obs, ok := a.navManager.GetCurrentPage().(ui.SearchStateObserver); ok {
+	if obs, ok := a.navManager.GetCurrentPage(true).(ui.SearchStateObserver); ok {
 		go a.QueueUpdateDraw(func() { obs.RefreshSearchState() })
 	}
 }
@@ -155,7 +155,7 @@ func (a *App) Step() {
 	if !a.IsBisectionReady() {
 		return
 	}
-	plan, changes, err := a.bisectSvc.AdvanceToNextTest()
+	plan, changes, err := a.bisectSvc.PlanAndApplyNextTest()
 	if err != nil {
 		a.bisectSvc.Engine().InvalidateActivePlan()
 		a.handleStepError(err)
@@ -230,12 +230,12 @@ func (a *App) displayResults() {
 func (a *App) setupGlobalInputCapture() {
 	a.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab {
-			if a.focusManager.Cycle(a.navManager.GetCurrentPage(), true) {
+			if a.focusManager.Cycle(a.navManager.GetCurrentPage(true), true) {
 				return nil
 			}
 		}
 		if event.Key() == tcell.KeyBacktab {
-			if a.focusManager.Cycle(a.navManager.GetCurrentPage(), false) {
+			if a.focusManager.Cycle(a.navManager.GetCurrentPage(true), false) {
 				return nil
 			}
 		}
@@ -243,14 +243,18 @@ func (a *App) setupGlobalInputCapture() {
 		if event.Modifiers()&tcell.ModCtrl != 0 {
 			switch event.Key() {
 			case tcell.KeyCtrlL:
-				go a.QueueUpdateDraw(a.navManager.ToggleLogPage)
-				return nil
+				if a.navManager.GetCurrentPageID(false) != ui.PageLogID {
+					a.navManager.SwitchTo(ui.PageLogID)
+					return nil
+				}
 			case tcell.KeyCtrlC:
 				go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
 				return nil
 			case tcell.KeyCtrlH:
-				go a.QueueUpdateDraw(a.navManager.ToggleHistoryPage)
-				return nil
+				if a.navManager.GetCurrentPageID(false) != ui.PageHistoryID {
+					a.navManager.SwitchTo(ui.PageHistoryID)
+					return nil
+				}
 			}
 		}
 		return event

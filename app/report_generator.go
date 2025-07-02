@@ -21,6 +21,7 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 			// Extract all necessary context from the state *before* the test was run.
 			round := entry.StateBeforeTest.Round
 			iteration := entry.StateBeforeTest.Iteration
+			step := entry.StateBeforeTest.Step
 			isVerification := entry.Plan.IsVerificationStep
 			numModsInTest := len(entry.Plan.ModIDsToTest)
 			result := entry.Result
@@ -32,12 +33,13 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 			}
 
 			builder.WriteString(fmt.Sprintf(
-				"Step %-3d | Round %d, Iter %d%s | Test(%d mods) -> %s\n",
+				"#%-3d: Step %-3d | Round %d, Iter %d | Test(%d mods)%s -> %s\n",
 				i+1,
+				step,
 				round,
 				iteration,
-				verificationTag,
 				numModsInTest,
+				verificationTag,
 				result,
 			))
 		}

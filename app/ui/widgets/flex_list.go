@@ -85,7 +85,8 @@ func (fl *FlexList) SetCurrentItem(index int) {
 	}
 
 	fl.selectedIndex = index
-	fl.ensureVisible()
+	_, _, _, height := fl.GetInnerRect()
+	fl.ensureVisible(height)
 
 	if fl.changedFunc != nil {
 		fl.changedFunc(index)
@@ -93,21 +94,46 @@ func (fl *FlexList) SetCurrentItem(index int) {
 }
 
 // ensureVisible adjusts offsetY to make the selected item visible.
-func (fl *FlexList) ensureVisible() {
-	if fl.selectedIndex < 0 {
+func (fl *FlexList) ensureVisible(viewHeight int) {
+	if fl.selectedIndex < 0 || viewHeight <= 0 {
 		return
 	}
-	_, _, _, height := fl.GetInnerRect()
+
+	// Calculate the top and bottom Y-coordinates of the selected item on the "infinite canvas".
 	itemTopY := 0
 	for i := 0; i < fl.selectedIndex; i++ {
 		itemTopY += fl.itemHeights[i]
 	}
 	itemBottomY := itemTopY + fl.itemHeights[fl.selectedIndex]
+
+	// If the item's top edge is above the current viewport, scroll up to show it at the top.
 	if itemTopY < fl.offsetY {
 		fl.offsetY = itemTopY
+		return // We've made a decision, so we can exit.
 	}
-	if itemBottomY > fl.offsetY+height {
-		fl.offsetY = itemBottomY - height
+
+	// If the item's bottom edge is below the current viewport, scroll down to show it at the bottom.
+	if itemBottomY > fl.offsetY+viewHeight {
+		fl.offsetY = itemBottomY - viewHeight
+		return // We've made a decision, so we can exit.
+	}
+
+	// Item is visible but is not scrolled to the bottom
+	totalContentHeight := 0
+	for _, h := range fl.itemHeights {
+		totalContentHeight += h
+	}
+
+	// `maxOffsetY` is the furthest we can scroll down.
+	maxOffsetY := totalContentHeight - viewHeight
+	if maxOffsetY < 0 {
+		maxOffsetY = 0
+	}
+
+	// If our current offset is greater than the maximum possible offset (which can happen
+	// after a resize that makes the viewport taller), clamp it down.
+	if fl.offsetY > maxOffsetY {
+		fl.offsetY = maxOffsetY
 	}
 }
 
@@ -115,6 +141,8 @@ func (fl *FlexList) ensureVisible() {
 func (fl *FlexList) Draw(screen tcell.Screen) {
 	fl.Box.Draw(screen) // Draw the box and border first.
 	x, y, width, height := fl.GetInnerRect()
+
+	fl.ensureVisible(height)
 
 	// This is the y-coordinate on the "infinite canvas" of all items.
 	// We will iterate through items and advance this cursor.
@@ -203,6 +231,6 @@ func (fl *FlexList) Focus(delegate func(p tview.Primitive)) {
 }
 
 // HasFocus returns whether this primitive has focus.
-func (sf *FlexList) HasFocus() bool {
-	return sf.flex.HasFocus()
+func (fl *FlexList) HasFocus() bool {
+	return fl.flex.HasFocus()
 }

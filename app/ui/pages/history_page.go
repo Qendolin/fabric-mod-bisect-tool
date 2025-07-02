@@ -33,8 +33,6 @@ type HistoryPage struct {
 	historyCache []imcs.CompletedTest
 }
 
-// TODO: Implement PageActivator, and make HistoryPage peristent, instead of a modal
-
 // NewHistoryPage creates a new page for viewing bisection history.
 func NewHistoryPage(app ui.AppInterface) *HistoryPage {
 	p := &HistoryPage{
@@ -79,6 +77,8 @@ func NewHistoryPage(app ui.AppInterface) *HistoryPage {
 
 func (p *HistoryPage) OnPageActivated() {
 	p.refreshHistory()
+	// need to re-focus
+	p.app.SetFocus(p.masterList)
 }
 
 // setInputCapture handles navigation within the page.
@@ -86,7 +86,7 @@ func (p *HistoryPage) setInputCapture() {
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 
 		if event.Key() == tcell.KeyEscape || (event.Key() == tcell.KeyCtrlH && event.Modifiers()&tcell.ModCtrl != 0) {
-			p.app.Navigation().CloseModal()
+			p.app.Navigation().GoBack()
 			return nil
 		}
 
@@ -117,9 +117,10 @@ func (p *HistoryPage) refreshHistory() {
 	}
 
 	for i, entry := range p.historyCache {
-		step := i + 1
-		summary := fmt.Sprintf("Round %d - Iter %d - Step %d: [yellow]%s[-]",
-			entry.StateBeforeTest.Round, entry.StateBeforeTest.Iteration, step, entry.Result)
+		number := i + 1
+		state := entry.StateBeforeTest
+		summary := fmt.Sprintf("#%d: Round %d - Iter %d - Step %d: [yellow]%s[-]",
+			number, state.Round, state.Iteration, state.Step, entry.Result)
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
@@ -176,28 +177,29 @@ func (p *HistoryPage) updateDetailView(index int) {
 	p.updateOverviewState(p.detailOverviewWidget, &entry)
 
 	// Derive summary text
-	step := index + 1
+	number := index + 1
+	state := entry.StateBeforeTest
 	numTested := len(entry.Plan.ModIDsToTest)
-	numCandidates := len(entry.StateBeforeTest.Candidates)
+	numCandidates := len(state.Candidates)
 
 	// Generate StateDescription on the fly for display
 	stateDesc := ""
 	if entry.Plan.IsVerificationStep {
 		stateDesc = "This was a verification test of the current conflict set."
-	} else if len(entry.StateBeforeTest.SearchStack) > 0 {
+	} else if len(state.SearchStack) > 0 {
 		stateDesc = "This was a bisection step within a candidate set."
 	} else {
 		stateDesc = "This was the initial test of a candidate set."
 	}
 
-	summary := fmt.Sprintf("Round %d - Iteration %d - Step %d\nResult: [yellow]%s[-]\n%s\nTested: %d mods, Candidates: %d mods remaining",
-		entry.StateBeforeTest.Round, entry.StateBeforeTest.Iteration, step, entry.Result, stateDesc, numTested, numCandidates)
+	summary := fmt.Sprintf("#%d: Round %d - Iteration %d - Step %d\nResult: [yellow]%s[-]\n%s\nTested: %d mods, Candidates: %d mods remaining",
+		number, state.Round, state.Iteration, state.Step, entry.Result, stateDesc, numTested, numCandidates)
 	p.detailSummaryText.SetText(summary)
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
-	problematicList := sets.MakeSlice(entry.StateBeforeTest.ConflictSet)
+	problematicList := sets.MakeSlice(state.ConflictSet)
 	testSetList := sets.MakeSlice(entry.Plan.ModIDsToTest)
-	clearedList := sets.MakeSlice(entry.StateBeforeTest.GetClearedSet())
+	clearedList := sets.MakeSlice(state.GetClearedSet())
 
 	sets := fmt.Sprintf("[::b]Problematic Mods[-:-:-] (%d):\n%s\n\n[::b]Mods Tested[-:-:-] (%d):\n%s\n\n[::b]Cleared Mods[-:-:-] (%d):\n%s",
 		len(problematicList), strings.Join(problematicList, "\n"),

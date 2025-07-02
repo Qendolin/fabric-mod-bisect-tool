@@ -113,19 +113,21 @@ func (n *NavigationManager) CloseModal() {
 	n.pages.RemovePage(modalID)
 
 	// Update UI for the page that is now in front
-	currentPage := n.GetCurrentPage()
+	currentPage := n.GetCurrentPage(true)
 	n.updateUIForPage(currentPage)
 
 	// Does not cause OnPageActivated invocations
 }
 
 // GetCurrentPage returns the Page interface of the front-most primitive.
-func (n *NavigationManager) GetCurrentPage() Page {
-	if len(n.modalStack) > 0 {
-		modalID := n.modalStack[len(n.modalStack)-1]
-		_, primitive := n.pages.GetFrontPage()
-		if p, ok := primitive.(Page); ok && modalID != "" {
-			return p
+func (n *NavigationManager) GetCurrentPage(includeModal bool) Page {
+	if includeModal {
+		if len(n.modalStack) > 0 {
+			modalID := n.modalStack[len(n.modalStack)-1]
+			_, primitive := n.pages.GetFrontPage()
+			if p, ok := primitive.(Page); ok && modalID != "" {
+				return p
+			}
 		}
 	}
 
@@ -138,21 +140,17 @@ func (n *NavigationManager) GetCurrentPage() Page {
 	return nil
 }
 
-// ToggleLogPage either switches to the log page or goes back if already there.
-func (n *NavigationManager) ToggleLogPage() {
-	currentID, _ := n.pages.GetFrontPage()
-	if currentID == PageLogID {
-		n.GoBack()
-	} else {
-		n.SwitchTo(PageLogID)
+// GetCurrentPageID returns the page id of the front-most primitive.
+func (n *NavigationManager) GetCurrentPageID(includeModal bool) string {
+	if includeModal {
+		if len(n.modalStack) > 0 {
+			modalID := n.modalStack[len(n.modalStack)-1]
+			if modalID != "" {
+				return modalID
+			}
+		}
 	}
-}
 
-func (n *NavigationManager) ToggleHistoryPage() {
-	currentID, _ := n.pages.GetFrontPage()
-	if currentID == PageHistoryID {
-		n.GoBack()
-	} else {
-		n.SwitchTo(PageHistoryID)
-	}
+	pageID, _ := n.pages.GetFrontPage()
+	return pageID
 }

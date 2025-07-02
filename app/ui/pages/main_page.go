@@ -30,8 +30,8 @@ type MainPage struct {
 	// Tab Content
 	candidatesList       *widgets.SearchableList
 	candidatesTitle      *widgets.TitleFrame
-	safeList             *widgets.SearchableList
-	safeTitle            *widgets.TitleFrame
+	clearedList          *widgets.SearchableList
+	clearedTitle         *widgets.TitleFrame
 	testGroupList        *widgets.SearchableList
 	testGroupTitle       *widgets.TitleFrame
 	implicitDepsList     *widgets.SearchableList
@@ -100,15 +100,15 @@ func (p *MainPage) setupLayout() {
 // setupTabPanes populates the tabbed container with its pages.
 func (p *MainPage) setupTabPanes() {
 	p.candidatesList = widgets.NewSearchableList()
-	p.safeList = widgets.NewSearchableList()
+	p.clearedList = widgets.NewSearchableList()
 	p.candidatesTitle = widgets.NewTitleFrame(p.candidatesList, "Candidates (Being Searched)")
-	p.safeTitle = widgets.NewTitleFrame(p.safeList, "Known Safe (For This Search)")
+	p.clearedTitle = widgets.NewTitleFrame(p.clearedList, "Cleared")
 	searchPoolFlex := tview.NewFlex().
 		AddItem(p.candidatesTitle, 0, 1, true).
 		AddItem(nil, 1, 0, false).
-		AddItem(p.safeTitle, 0, 1, true)
+		AddItem(p.clearedTitle, 0, 1, true)
 	p.tabs.AddTab("Search Pool", widgets.NewFocusWrapper(searchPoolFlex, func() []tview.Primitive {
-		return []tview.Primitive{p.candidatesList, p.safeList}
+		return []tview.Primitive{p.candidatesList, p.clearedList}
 	}))
 
 	p.testGroupList = widgets.NewSearchableList()
@@ -254,7 +254,7 @@ func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
 
 	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), fmt.Sprintf("Candidates: %d / %d", len(vm.CandidateSet), modCount))
 	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), fmt.Sprintf("Problematic Mods: %d", len(vm.CurrentConflictSet)))
-	p.updateList(p.safeList, p.safeTitle, sets.MakeSlice(vm.ClearedSet), fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
+	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.ClearedSet), fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
 }
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.

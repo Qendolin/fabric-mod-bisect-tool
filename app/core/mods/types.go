@@ -1,13 +1,100 @@
 package mods
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods/version"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
+	"github.com/titanous/json5"
+)
+
+// VersionField is a wrapper for version.Version that handles JSON unmarshaling
+// from a string, ensuring the version is parsed and valid at load time.
+type VersionField struct {
+	version.Version
+}
+
+func (vf *VersionField) String() string {
+	if vf.Version == nil {
+		return "<invalid>"
+	}
+	return vf.Version.String()
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (vf *VersionField) UnmarshalJSON(data []byte) error {
+	var versionStr string
+	if err := json.Unmarshal(data, &versionStr); err != nil {
+		logging.Debugf("VersionField: Unmarshal to string failed: %v", err) // DEBUG
+		return fmt.Errorf("version field is not a string: %w", err)
+	}
+
+	parsed, err := version.Parse(versionStr, false)
+	if err != nil {
+		logging.Debugf("VersionField: version.Parse failed for '%s': %v", versionStr, err) // DEBUG
+		return fmt.Errorf("parsing version string '%s': %w", versionStr, err)
+	}
+
+	logging.Debugf("VersionField: Successfully parsed '%s'", versionStr) // DEBUG
+	vf.Version = parsed
+	return nil
+}
+
+// VersionRanges is a custom type for dependency maps that handles parsing
+// of version predicate strings into a slice of VersionPredicate objects.
+// A dependency can be satisfied if ANY of the predicates in the slice are met (OR relationship).
+type VersionRanges map[string][]*version.VersionPredicate
+
+// UnmarshalJSON implements the json.Unmarshaler interface, allowing us to parse
+// the complex "string or array of strings" format for version ranges.
+func (vr *VersionRanges) UnmarshalJSON(data []byte) error {
+	var raw map[string]interface{}
+	if err := json5.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing dependency block: %w", err)
+	}
+
+	parsed := make(VersionRanges)
+
+	for depID, value := range raw {
+		var predicateStrings []string
+
+		switch v := value.(type) {
+		case string:
+			predicateStrings = append(predicateStrings, v)
+		case []interface{}:
+			for i, item := range v {
+				str, ok := item.(string)
+				if !ok {
+					return fmt.Errorf("dependency '%s' has a non-string element at index %d in its version range array", depID, i)
+				}
+				predicateStrings = append(predicateStrings, str)
+			}
+		default:
+			return fmt.Errorf("dependency '%s' has an invalid version range format (must be string or array of strings)", depID)
+		}
+
+		predicates := make([]*version.VersionPredicate, len(predicateStrings))
+		for i, pStr := range predicateStrings {
+			p, err := version.ParseVersionPredicate(pStr)
+			if err != nil {
+				return fmt.Errorf("parsing version predicate '%s' for dependency '%s': %w", pStr, depID, err)
+			}
+			predicates[i] = p
+		}
+		parsed[depID] = predicates
+	}
+
+	*vr = parsed
+	return nil
+}
 
 // ProviderInfo describes a mod that can satisfy a dependency.
 type ProviderInfo struct {
 	TopLevelModID         string
-	VersionOfProvidedItem string
+	VersionOfProvidedItem version.Version
 	IsDirectProvide       bool
-	TopLevelModVersion    string
+	TopLevelModVersion    version.Version
 }
 
 // PotentialProvidersMap maps a dependency ID to a list of ProviderInfo structs.
@@ -15,12 +102,16 @@ type PotentialProvidersMap map[string][]ProviderInfo
 
 // FabricModJson represents the structure of a fabric.mod.json file.
 type FabricModJson struct {
-	ID       string                 `json:"id"`
-	Name     string                 `json:"name"`
-	Version  string                 `json:"version"`
-	Provides []string               `json:"provides"`
-	Depends  map[string]interface{} `json:"depends"`
-	Jars     []struct {
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Version    VersionField  `json:"version"`
+	Provides   []string      `json:"provides"`
+	Depends    VersionRanges `json:"depends"`
+	Breaks     VersionRanges `json:"breaks"`
+	Recommends VersionRanges `json:"recommends"`
+	Suggests   VersionRanges `json:"suggests"`
+	Conflicts  VersionRanges `json:"conflicts"`
+	Jars       []struct {
 		File string `json:"file"`
 	} `json:"jars"`
 }
@@ -32,7 +123,7 @@ type Mod struct {
 	FabricInfo        FabricModJson
 	IsInitiallyActive bool // Was the mod active (.jar) when first loaded?
 	NestedModules     []FabricModJson
-	EffectiveProvides map[string]string // Maps all unique IDs this mod provides to their version.
+	EffectiveProvides map[string]version.Version // Maps all unique IDs this mod provides to their version.
 }
 
 // FriendlyName returns a human-readable name for the mod.
@@ -66,16 +157,14 @@ func (s ModStatus) IsActivatable() bool {
 
 // ResolutionInfo stores details about why a mod is included in an effective set.
 type ResolutionInfo struct {
-	ModID            string        // ID of the top-level mod resolved.
-	Reason           string        // "Target", "Forced", or "Dependency".
-	NeededFor        []string      // Mod IDs that required this mod.
-	SatisfiedDep     string        // The dependency ID this mod satisfies for the needers.
-	SelectedProvider *ProviderInfo // How this mod was chosen as a provider, if applicable.
+	ModID            string
+	Reason           string
+	NeededFor        []string
+	SatisfiedDep     string
+	SelectedProvider *ProviderInfo
 }
 
 // IsImplicitMod checks if a dependency ID is for an implicit (non-mod) dependency.
-// These are common implicit dependencies for Fabric mods that don't correspond to actual JARs.
-// For example, "java", "minecraft", "fabricloader" are usually provided by the game/environment.
 func IsImplicitMod(depID string) bool {
 	switch depID {
 	case "java", "minecraft", "fabricloader", "quilt_loader":
@@ -122,7 +211,6 @@ type DependencyOverrides struct {
 }
 
 // FileMissingError represents an error for a single missing mod file.
-// The primary subject is the file path itself.
 type FileMissingError struct {
 	ModID    string
 	FilePath string
@@ -133,7 +221,6 @@ func (e *FileMissingError) Error() string {
 }
 
 // MissingFilesError is a wrapper error that contains one or more FileMissingError instances.
-// This allows an operation to report all missing files at once.
 type MissingFilesError struct {
 	Errors []*FileMissingError
 }
