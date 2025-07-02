@@ -73,7 +73,7 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 			builder.WriteString(fmt.Sprintf("  - %s %s\n", id, modInfo))
 		}
 
-		unresolvable := stateMgr.Resolver().CalculateUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
+		unresolvable := stateMgr.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
 		if len(unresolvable) > 0 {
 			builder.WriteString("    └ Dependent mods that may also need disabling:\n")
 			for _, modID := range sets.MakeSlice(unresolvable) {

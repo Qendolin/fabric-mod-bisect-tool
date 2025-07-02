@@ -103,6 +103,14 @@ func NewResultPage(app ui.AppInterface) *ResultPage {
 
 // formatContent generates the appropriate text based on the bisection ViewModel.
 func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, explanation string) {
+
+	if !vm.IsReady {
+		title = "Search In Progress"
+		message = "No results yet."
+		explanation = "You haven't started the bisection yet."
+		return
+	}
+
 	modState := p.app.GetStateManager()
 	mods := modState.GetAllMods()
 
@@ -139,7 +147,7 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 				}
 
 				allModsSet := sets.MakeSet(modState.GetAllModIDs())
-				unresolvable := modState.Resolver().CalculateUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
+				unresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
 
 				if len(unresolvable) > 0 {
 					messageBuilder.WriteString("    [gray]└ Disabling this set would also require disabling:\n")
@@ -188,6 +196,10 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 		}
 
 		explanation = "The last test isolated a new conflict, but the bisection is not yet complete.\nPress '[::b]S[-:-:-]' on the main page to continue the search."
+	} else {
+		title = "Search In Progress"
+		messageBuilder.WriteString("No results yet.")
+		explanation = "You haven't completed a bisection iteration.\nPress '[::b]S[-:-:-]' on the main page to continue the search."
 	}
 
 	message = messageBuilder.String()

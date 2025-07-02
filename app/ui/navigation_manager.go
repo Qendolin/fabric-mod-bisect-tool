@@ -97,7 +97,7 @@ func (n *NavigationManager) GoBack() {
 func (n *NavigationManager) ShowModal(pageID string, page Page) {
 	n.pages.AddPage(pageID, page, true, true)
 	n.modalStack = append(n.modalStack, pageID)
-	// Don't call updateUIForPage here
+	n.updateUIForPage(page)
 	n.app.SetFocus(page)
 }
 

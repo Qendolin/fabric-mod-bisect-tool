@@ -90,6 +90,12 @@ func (p *HistoryPage) setInputCapture() {
 			return nil
 		}
 
+		switch event.Rune() {
+		case 'r', 'R':
+			resultPage := NewResultPage(p.app)
+			p.app.Navigation().ShowModal(ui.PageResultID, resultPage)
+		}
+
 		return event
 	})
 }
@@ -173,6 +179,8 @@ func (p *HistoryPage) updateDetailView(index int) {
 		return
 	}
 
+	vm := p.app.GetViewModel()
+
 	entry := p.historyCache[index]
 	p.updateOverviewState(p.detailOverviewWidget, &entry)
 
@@ -197,7 +205,11 @@ func (p *HistoryPage) updateDetailView(index int) {
 	p.detailSummaryText.SetText(summary)
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
-	problematicList := sets.MakeSlice(state.ConflictSet)
+	combinedConflictSets := sets.Copy(state.ConflictSet)
+	for _, conflictSet := range vm.AllConflictSets {
+		combinedConflictSets = sets.AddInPlace(combinedConflictSets, conflictSet)
+	}
+	problematicList := sets.MakeSlice(combinedConflictSets)
 	testSetList := sets.MakeSlice(entry.Plan.ModIDsToTest)
 	clearedList := sets.MakeSlice(state.GetClearedSet())
 
@@ -212,6 +224,7 @@ func (p *HistoryPage) updateDetailView(index int) {
 func (p *HistoryPage) GetActionPrompts() []ui.ActionPrompt {
 	return []ui.ActionPrompt{
 		{Input: "↑/↓", Action: "Navigate History"},
+		{Input: "R", Action: "Show Results"},
 	}
 }
 func (p *HistoryPage) GetStatusPrimitive() *tview.TextView { return nil }
