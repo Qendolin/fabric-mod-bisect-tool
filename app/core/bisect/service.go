@@ -52,10 +52,11 @@ func NewService(stateMgr *mods.StateManager, activator *mods.Activator) (*Servic
 func (s *Service) handleStateChange() {
 	logging.Debugf("BisectService: State change detected. Reconciling system state.")
 	// 1. Reconcile the engine based on user-driven changes (Omit, Force Enable, etc.).
-	s.engine.Reconcile(s.getValidCandidates())
+	validCandidates := s.getValidCandidates()
+	s.engine.Reconcile(validCandidates)
 
 	// 2. Explicitly reconcile and disable any mods that became unresolvable as a result.
-	s.reconcileAndDisableUnresolvable()
+	s.reconcileAndDisableUnresolvable(validCandidates)
 
 	// 3. Notify the UI of the final, consistent state.
 	if s.OnStateChange != nil {
@@ -76,49 +77,35 @@ func (s *Service) GetCurrentState() imcs.SearchState {
 	return s.engine.GetCurrentState()
 }
 
-// AdvanceToNextTest is the single entry point for the UI's "Step" action.
-// It will fast-forward through any cached test results.
-func (s *Service) AdvanceToNextTest() (plan *imcs.TestPlan, changes []mods.BatchStateChange, err error) {
-	for {
-		// 1. Plan the very next logical test.
-		plan, err = s.engine.PlanNextTest()
-		if err != nil {
-			return nil, nil, err // Search is complete or cannot proceed.
-		}
-
-		logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
-
-		// 2. Check if we already know the answer.
-		// Do not fast-forward verification steps
-		if result, found := s.enumState.KnowledgeBase.Get(plan.ModIDsToTest); found && !plan.IsVerificationStep {
-			logging.Infof("BisectService: Found cached result for test plan: %s. Applying automatically.", result)
-			// If cached, submit the result and loop immediately to the next plan.
-			if err := s.engine.SubmitTestResult(result); err != nil {
-				return nil, nil, err
-			}
-			continue
-		}
-
-		// 3. Not cached. We must perform the test manually.
-		// Break the loop and return the plan and file changes to the UI.
-		effectiveSet, _ := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
-
-		statuses := s.state.GetModStatusesSnapshot()
-		finalEffectiveSet := s.finalizeEffectiveSet(effectiveSet, statuses)
-
-		logging.Debugf("BisectService: Final effective set contains %d mods: %v", len(finalEffectiveSet), sets.FormatSet(finalEffectiveSet))
-
-		changes, err = s.activator.Apply(finalEffectiveSet, statuses)
-
-		// Optional: Log the full resolution path for extreme detail.
-		// var resLog []string
-		// for _, info := range resolutionPath {
-		//     resLog = append(resLog, fmt.Sprintf("  - %s (%s)", info.ModID, info.Reason))
-		// }
-		// logging.Debugf("BisectService: Full resolution path:\n%s", strings.Join(resLog, "\n"))
-
-		return plan, changes, err
+// PlanAndApplyNextTest is the single entry point for the UI's "Step" action.
+func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.BatchStateChange, err error) {
+	// 1. Plan the very next logical test.
+	plan, err = s.engine.PlanNextTest()
+	if err != nil {
+		return nil, nil, err // Search is complete or cannot proceed.
 	}
+
+	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
+
+	// 3. Not cached. We must perform the test manually.
+	// Break the loop and return the plan and file changes to the UI.
+	effectiveSet, _ := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+
+	statuses := s.state.GetModStatusesSnapshot()
+	finalEffectiveSet := s.finalizeEffectiveSet(effectiveSet, statuses)
+
+	logging.Debugf("BisectService: Final effective set contains %d mods: %v", len(finalEffectiveSet), sets.FormatSet(finalEffectiveSet))
+
+	changes, err = s.activator.Apply(finalEffectiveSet, statuses)
+
+	// Optional: Log the full resolution path for extreme detail.
+	// var resLog []string
+	// for _, info := range resolutionPath {
+	//     resLog = append(resLog, fmt.Sprintf("  - %s (%s)", info.ModID, info.Reason))
+	// }
+	// logging.Debugf("BisectService: Full resolution path:\n%s", strings.Join(resLog, "\n"))
+
+	return plan, changes, err
 }
 
 // finalizeEffectiveSet takes the resolver's proposed set and applies manual overrides.
@@ -146,8 +133,6 @@ func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchS
 		logging.Error("BisectService: Attempted to submit result without an active plan.")
 		return
 	}
-	// Store the new knowledge before submitting to the engine.
-	s.enumState.KnowledgeBase.Store(plan.ModIDsToTest, result)
 
 	if err := s.engine.SubmitTestResult(result); err != nil {
 		logging.Errorf("BisectService: Failed to submit test result to engine: %v", err)
@@ -157,28 +142,20 @@ func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchS
 	}
 }
 
-// UndoLastStep orchestrates a complete undo operation. It reverts the bisection
-// engine to its previous state and removes the knowledge gained from the last
-// test from all relevant historical records, including the knowledge base.
+// UndoLastStep orchestrates a complete undo operation. It reverts the bisection engine to its previous state.
 // It returns true if the undo operation was successful
 func (s *Service) UndoLastStep() bool {
 	if s.engine == nil {
 		return false
 	}
 
-	// 1. Tell the engine to perform its internal undo. This returns the undone action.
 	undoneFrame, ok := s.engine.Undo()
 	if !ok {
 		logging.Warnf("BisectService: Undo failed. Engine could not revert its state.")
 		return false
 	}
+	logging.Infof("BisectService: Undone frame: Round %d, Iteration %d, Step %d.", undoneFrame.State.Round, undoneFrame.State.Iteration, undoneFrame.State.Step)
 
-	// 2. Use the plan from the undone frame to remove the now-stale
-	// knowledge from the master KnowledgeBase.
-	s.enumState.KnowledgeBase.Remove(undoneFrame.Plan.ModIDsToTest)
-	logging.Infof("BisectService: Removed test result for set %v from knowledge base.", sets.MakeSlice(undoneFrame.Plan.ModIDsToTest))
-
-	// 3. Notify the UI that the state has changed.
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
@@ -189,14 +166,9 @@ func (s *Service) UndoLastStep() bool {
 // reconcileAndDisableUnresolvable iteratively finds and disables any mods that have
 // become unresolvable given the current set of available mods. It is the single
 // source of truth for enforcing dependency consistency.
-func (s *Service) reconcileAndDisableUnresolvable() sets.Set {
-	// Start with the set of all mods that are currently considered activatable.
-	currentlyAvailable := sets.MakeSet(s.state.GetAllModIDs())
-	for id, status := range s.state.GetModStatusesSnapshot() {
-		if !status.IsActivatable() {
-			delete(currentlyAvailable, id)
-		}
-	}
+func (s *Service) reconcileAndDisableUnresolvable(initialCandidates sets.Set) sets.Set {
+	// Start with a copy of the provided universe of candidates.
+	currentlyAvailable := sets.Copy(initialCandidates)
 
 	allNewlyDisabled := make(sets.Set)
 
@@ -238,10 +210,11 @@ func (s *Service) ContinueSearch() *ContinueSearchResult {
 	// --- Phase 1: Archive previous results ---
 	// This action modifies s.enumState.MasterCandidateSet by removing the found conflict.
 	s.enumState.AddFoundConflictSet(lastFoundConflictSet)
+	s.enumState.AppendLog(lastEngine.GetExecutionLog())
 
 	// --- Phase 2: Reconcile and disable unresolvable mods ---
 	// This is a direct action with observable consequences.
-	newlyDisabled := s.reconcileAndDisableUnresolvable()
+	newlyDisabled := s.reconcileAndDisableUnresolvable(s.enumState.MasterCandidateSet)
 	if len(newlyDisabled) > 0 {
 		result.NewlyDisabledMods = sets.MakeSlice(newlyDisabled)
 	}
@@ -331,7 +304,8 @@ func (s *Service) GetCombinedExecutionLog() []imcs.CompletedTest {
 	return combinedEntries
 }
 
-// getValidCandidates now uses the term "Omitted".
+// getValidCandidates identifies and returns the set of mods that are currently
+// considered active participants (candidates) in the bisection search.
 func (s *Service) getValidCandidates() sets.Set {
 	validCandidates := make(sets.Set)
 	for id, status := range s.state.GetModStatusesSnapshot() {

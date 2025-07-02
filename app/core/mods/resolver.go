@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
@@ -24,15 +26,17 @@ type resolutionSession struct {
 	potentialProviders PotentialProvidersMap
 
 	// Per-call dynamic data
-	modStatuses         map[string]ModStatus
-	currentEffectiveSet map[string]bool
-	resolutionPath      map[string]ResolutionInfo
-	processing          map[string]bool   // DFS stack tracker for cycle detection
-	dependencySatisfied map[string]string // Maps a dependencyID to the TopLevelModID that satisfies it
+	modStatuses      map[string]ModStatus
+	effectiveSet     map[string]*Mod
+	resolutionPath   map[string]ResolutionInfo
+	dfsStack         map[string]bool
+	cachedProviders  map[string]*ProviderInfo
+	unresolvableDeps map[string]bool
+	resolutionFailed bool
+	failureReason    string
 }
 
 // NewDependencyResolver creates a new DependencyResolver service.
-// It should be initialized once with the complete set of mods and providers.
 func NewDependencyResolver(allMods map[string]*Mod, potentialProviders PotentialProvidersMap) *DependencyResolver {
 	return &DependencyResolver{
 		allMods:            allMods,
@@ -42,141 +46,308 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 
 // ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
 func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, []ResolutionInfo) {
-	// Create a new session for this resolution attempt.
+	startTime := time.Now()
+	logging.Info("Resolver: Starting dependency resolution...")
+
 	s := &resolutionSession{
-		allMods:             dr.allMods,
-		potentialProviders:  dr.potentialProviders,
-		modStatuses:         modStatuses,
-		currentEffectiveSet: make(map[string]bool),
-		resolutionPath:      make(map[string]ResolutionInfo),
-		processing:          make(map[string]bool),
-		dependencySatisfied: make(map[string]string),
+		allMods:            dr.allMods,
+		potentialProviders: dr.potentialProviders,
+		modStatuses:        modStatuses,
+		effectiveSet:       make(map[string]*Mod),
+		resolutionPath:     make(map[string]ResolutionInfo),
+		dfsStack:           make(map[string]bool),
+		cachedProviders:    make(map[string]*ProviderInfo),
+		unresolvableDeps:   make(map[string]bool),
 	}
 
-	// Process initial targets
-	for modID := range targetSet {
-		if status, ok := s.modStatuses[modID]; ok && !status.IsActivatable() {
-			continue
-		}
-		if _, isDirectMod := s.allMods[modID]; isDirectMod {
-			s.ensureModActive(modID, "System (Initial Set)", "Target", modID)
-		} else if !IsImplicitMod(modID) {
-			s.resolveDependency(modID, "System (Initial Target)")
-		}
-	}
-
-	// Process force-enabled mods
+	initialActivationSet := sets.Copy(targetSet)
 	for modID, status := range s.modStatuses {
 		if status.ForceEnabled {
-			if !status.IsActivatable() { // Should not happen with StateManager logic, but good practice
-				continue
-			}
-			if _, isDirectMod := s.allMods[modID]; isDirectMod {
-				s.ensureModActive(modID, "System (Initial Set)", "Forced", modID)
-			} else if !IsImplicitMod(modID) {
-				s.resolveDependency(modID, "System (Forced)")
-			}
+			initialActivationSet[modID] = struct{}{}
 		}
 	}
 
-	finalEffectiveSet := make(sets.Set)
-	var effectiveModIDs []string // For logging the final set
-	for modID, isActive := range s.currentEffectiveSet {
-		if isActive {
-			finalEffectiveSet[modID] = struct{}{}
-			effectiveModIDs = append(effectiveModIDs, modID)
+	for modID := range initialActivationSet {
+		// If a previous activation attempt resulted in a fatal error, stop processing.
+		if s.resolutionFailed {
+			break
 		}
+		status := s.modStatuses[modID]
+		reason := "Target"
+		if status.ForceEnabled {
+			reason = "Forced"
+		}
+		s.ensureModActive(modID, "System (Initial Set)", reason, modID)
 	}
-	sort.Strings(effectiveModIDs)
-	logging.Infof("Resolver: Resolution complete. Effective set (%d mods): %v", len(effectiveModIDs), effectiveModIDs)
+	duration := time.Since(startTime)
+	if s.resolutionFailed {
+		logging.Warnf("Resolver: Resolution failed in %v. Reason: %s", duration, s.failureReason)
+		return make(sets.Set), nil
+	}
 
-	return finalEffectiveSet, s.collectResolutionPath()
+	if err := s.validateBreaks(); err != nil {
+		s.resolutionFailed = true
+		s.failureReason = err.Error()
+		logging.Warnf("Resolver: Resolution failed 'breaks' validation in %v. Reason: %s", duration, s.failureReason)
+		return make(sets.Set), nil
+	}
+
+	finalSet := make(sets.Set, len(s.effectiveSet))
+	effectiveIDs := make([]string, 0, len(s.effectiveSet))
+	for id := range s.effectiveSet {
+		finalSet[id] = struct{}{}
+		effectiveIDs = append(effectiveIDs, id)
+	}
+	sort.Strings(effectiveIDs)
+	logging.Infof("Resolver: Resolution complete in %v. Effective set (%d mods): %v", duration, len(effectiveIDs), effectiveIDs)
+
+	return finalSet, s.collectResolutionPath()
 }
 
-// ensureModActive attempts to activate a mod and its dependencies.
-// Returns true if modToActivateID and all its hard (non-optional, non-implicit) dependencies were successfully activated.
-func (s *resolutionSession) ensureModActive(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied string) bool {
-	if status, ok := s.modStatuses[modToActivateID]; ok && !status.IsActivatable() {
-		logging.Debugf("Resolver: Mod '%s' cannot be activated due to its state (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
+// ensureModActive is the main recursive function. It attempts to activate a mod and its dependencies.
+func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDep string) bool {
+	if s.resolutionFailed {
 		return false
 	}
-
-	if _, ok := s.currentEffectiveSet[modToActivateID]; ok {
-		logging.Debugf("Resolver: Mod '%s' is already in the effective set. Skipping activation.", modToActivateID)
-		s.updateNeededForList(modToActivateID, neededByModID)
+	if _, isActive := s.effectiveSet[modID]; isActive {
+		s.updateNeededForList(modID, neededBy)
 		return true
 	}
-
-	if _, ok := s.processing[modToActivateID]; ok {
-		logging.Warnf("Resolver: Cycle detected involving '%s' (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
+	// The IsActivatable check correctly uses the global modStatuses map, which is what we want.
+	// It allows the resolver to pull in any mod that isn't explicitly force-disabled by the user.
+	if status, ok := s.modStatuses[modID]; ok && !status.IsActivatable() {
+		return false
+	}
+	if s.dfsStack[modID] {
+		s.resolutionFailed = true
+		s.failureReason = fmt.Sprintf("circular dependency detected involving '%s'", modID)
+		logging.Error("Resolver: " + s.failureReason)
 		return false
 	}
 
-	mod, exists := s.allMods[modToActivateID]
+	mod, exists := s.allMods[modID]
 	if !exists {
-		logging.Errorf("Resolver: Cannot activate '%s': Mod not found (dependency '%s' for '%s' unfulfilled).", modToActivateID, dependencyIDSatisfied, neededByModID)
+		// This can happen if a dependency points to a modID that doesn't exist in any file.
 		return false
 	}
 
-	s.processing[modToActivateID] = true
+	s.dfsStack[modID] = true
+	logging.Debugf("Resolver: > Attempting to activate '%s' (for '%s')", modID, neededBy)
 
-	allDependenciesSuccessfullyResolved := true
-	var unmetDependencies []string
-	for depID := range mod.FabricInfo.Depends {
+	// Tentatively add the mod to the set for this recursive path.
+	originalState := s.copyState()
+	s.effectiveSet[modID] = mod
+
+	allDepsOK := true
+	for depID, predicates := range mod.FabricInfo.Depends {
 		if IsImplicitMod(depID) {
 			continue
 		}
-
-		if !s.resolveDependency(depID, modToActivateID) {
-			allDependenciesSuccessfullyResolved = false
-			unmetDependencies = append(unmetDependencies, depID)
+		if !s.resolveDependency(depID, predicates, modID) {
+			allDepsOK = false
+			break
 		}
 	}
 
-	delete(s.processing, modToActivateID)
+	s.dfsStack[modID] = false // Pop from the virtual stack.
 
-	if !allDependenciesSuccessfullyResolved {
-		sort.Strings(unmetDependencies)
-		logging.Warnf("Resolver: Mod '%s' cannot be activated due to unmet dependencies: %v.", modToActivateID, unmetDependencies)
+	if allDepsOK {
+		logging.Debugf("Resolver: < Successfully activated '%s'", modID)
+		s.updateResolutionPath(modID, neededBy, reason, satisfiedDep)
+		return true
+	} else {
+		// Backtrack: The dependencies for this mod could not be resolved.
+		// Restore the state to before we tried activating this mod.
+		s.restoreState(originalState)
+		// Refined log message for clarity during backtracking.
+		logging.Debugf("Resolver: < Backtracking from '%s'; could not satisfy its dependencies.", modID)
+		return false
+	}
+}
+
+// resolveDependency finds a valid provider for a dependency and activates it. This is the heart of the backtracking logic.
+func (s *resolutionSession) resolveDependency(depID string, predicates []*version.VersionPredicate, requiringModID string) bool {
+	if s.unresolvableDeps[depID] {
 		return false
 	}
 
-	s.currentEffectiveSet[modToActivateID] = true
-	s.updateResolutionPath(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied)
-	return true
+	if cachedProvider, isCached := s.cachedProviders[depID]; isCached {
+		for _, p := range predicates {
+			if !p.Test(cachedProvider.VersionOfProvidedItem) {
+				s.resolutionFailed = true
+				s.failureReason = fmt.Sprintf("dependency conflict for '%s'. Mod '%s' requires '%s', but mod '%s' (v%s) was already chosen.",
+					depID, requiringModID, p, cachedProvider.TopLevelModID, cachedProvider.VersionOfProvidedItem)
+				logging.Warn("Resolver: " + s.failureReason)
+				return false
+			}
+		}
+		// The cached provider is compatible, ensure it's active. This will handle cycles correctly.
+		return s.ensureModActive(cachedProvider.TopLevelModID, requiringModID, "Dependency", depID)
+	}
+
+	candidates := s.findBestProviders(depID, predicates)
+	predicateStr := formatPredicates(predicates)
+
+	if logging.IsDebugEnabled() {
+		var candidateNames []string
+		for _, c := range candidates {
+			candidateNames = append(candidateNames, fmt.Sprintf("%s v%s", c.TopLevelModID, c.VersionOfProvidedItem))
+		}
+		logging.Debugf("Resolver:  ? Trying to satisfy '%s %s' for '%s'. Found %d valid candidates: %v", depID, predicateStr, requiringModID, len(candidates), candidateNames)
+	}
+
+	originalState := s.copyState()
+	for _, provider := range candidates {
+		logging.Debugf("Resolver:    - Trying candidate: %s (v%s)", provider.TopLevelModID, provider.VersionOfProvidedItem)
+		if s.ensureModActive(provider.TopLevelModID, requiringModID, "Dependency", depID) {
+			s.cachedProviders[depID] = provider
+			return true
+		}
+
+		if s.resolutionFailed {
+			return false
+		}
+
+		logging.Debugf("Resolver:    - Candidate %s failed. Backtracking.", provider.TopLevelModID)
+		s.restoreState(originalState)
+	}
+
+	s.unresolvableDeps[depID] = true
+	// Only set the failure reason if one hasn't already been set by a deeper, more specific error.
+	if !s.resolutionFailed {
+		s.failureReason = fmt.Sprintf("failed to resolve dependency '%s %s' for mod '%s'", depID, predicateStr, requiringModID)
+	}
+	logging.Errorf("Resolver: Could not resolve dependency '%s %s' for mod '%s': no valid providers could be activated.", depID, predicateStr, requiringModID)
+	return false
 }
 
-// updateNeededForList adds neededByModID to the ResolutionInfo's NeededFor list if not already present.
+// findBestProviders finds all activatable mods that provide a given dependency and satisfy the version predicates.
+func (s *resolutionSession) findBestProviders(depID string, predicates []*version.VersionPredicate) []*ProviderInfo {
+	providerCandidates, ok := s.potentialProviders[depID]
+	if !ok || len(providerCandidates) == 0 {
+		return nil
+	}
+
+	// First, filter the list to only providers that are activatable and meet the version requirements.
+	var validProviders []*ProviderInfo
+	for i := range providerCandidates {
+		candidate := &providerCandidates[i]
+
+		if status, ok := s.modStatuses[candidate.TopLevelModID]; ok && !status.IsActivatable() {
+			continue
+		}
+
+		versionIsSatisfactory := true
+		for _, p := range predicates {
+			if !p.Test(candidate.VersionOfProvidedItem) {
+				versionIsSatisfactory = false
+				break
+			}
+		}
+		if !versionIsSatisfactory {
+			continue
+		}
+
+		validProviders = append(validProviders, candidate)
+	}
+
+	// Second, sort the list of valid providers by priority. This is crucial for making
+	// the best choices first during the backtracking search.
+	sort.Slice(validProviders, func(i, j int) bool {
+		a := validProviders[i]
+		b := validProviders[j]
+
+		// Priority 1: Higher version of the provided item is better.
+		versionCmp := a.VersionOfProvidedItem.Compare(b.VersionOfProvidedItem)
+		if versionCmp != 0 {
+			return versionCmp > 0 // descending order
+		}
+
+		// Priority 2: A direct provide is better than a nested provide.
+		if a.IsDirectProvide != b.IsDirectProvide {
+			return a.IsDirectProvide // true comes before false
+		}
+
+		// Priority 3 (Tie-breaker): Alphabetical ID for determinism.
+		return a.TopLevelModID < b.TopLevelModID
+	})
+
+	return validProviders
+}
+
+// validateBreaks performs a final check on the successful resolution set.
+func (s *resolutionSession) validateBreaks() error {
+	for modID, mod := range s.effectiveSet {
+		if mod.FabricInfo.Breaks == nil {
+			continue
+		}
+		for brokenDepID, predicates := range mod.FabricInfo.Breaks {
+			provider, isProvided := s.cachedProviders[brokenDepID]
+			if !isProvided {
+				continue
+			}
+			for _, p := range predicates {
+				if p.Test(provider.VersionOfProvidedItem) {
+					predicateStr := formatPredicates(predicates)
+					return fmt.Errorf("mod '%s' (v%s) breaks '%s' (provided by '%s' v%s) due to rule '%s %s'",
+						modID, mod.FabricInfo.Version.Version, brokenDepID, provider.TopLevelModID, provider.VersionOfProvidedItem, brokenDepID, predicateStr)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// --- State Management and Logging Helpers ---
+
+// formatPredicates creates a readable string representation of version predicates.
+func formatPredicates(predicates []*version.VersionPredicate) string {
+	if len(predicates) == 0 {
+		return "*"
+	}
+	var parts []string
+	for _, p := range predicates {
+		parts = append(parts, p.String())
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (s *resolutionSession) copyState() map[string]*Mod {
+	stateCopy := make(map[string]*Mod, len(s.effectiveSet))
+	for k, v := range s.effectiveSet {
+		stateCopy[k] = v
+	}
+	return stateCopy
+}
+
+func (s *resolutionSession) restoreState(state map[string]*Mod) {
+	s.effectiveSet = state
+}
+
 func (s *resolutionSession) updateNeededForList(modID, neededByModID string) {
 	if neededByModID == "System (Initial Set)" {
 		return
 	}
 	info, ok := s.resolutionPath[modID]
 	if !ok {
-		logging.Errorf("Resolver: Mod '%s' active but no resolution path found to update NeededFor.", modID)
 		return
 	}
-
 	for _, existingNeeder := range info.NeededFor {
 		if existingNeeder == neededByModID {
-			return // Already present
+			return
 		}
 	}
-
 	info.NeededFor = append(info.NeededFor, neededByModID)
 	sort.Strings(info.NeededFor)
 	s.resolutionPath[modID] = info
 }
 
-// updateResolutionPath creates or updates the ResolutionInfo for a successfully activated mod.
 func (s *resolutionSession) updateResolutionPath(modID, neededBy, reason, satisfiedDep string) {
 	existingInfo, entryExists := s.resolutionPath[modID]
-
 	finalReason := reason
 	if entryExists && (existingInfo.Reason == "Target" || existingInfo.Reason == "Forced") {
 		finalReason = existingInfo.Reason
 	}
-
 	neededForSet := make(sets.Set)
 	if entryExists {
 		for _, n := range existingInfo.NeededFor {
@@ -186,177 +357,56 @@ func (s *resolutionSession) updateResolutionPath(modID, neededBy, reason, satisf
 	if neededBy != "System (Initial Set)" {
 		neededForSet[neededBy] = struct{}{}
 	}
+	neededForList := sets.MakeSlice(neededForSet)
 
-	neededForList := make([]string, 0, len(neededForSet))
-	for n := range neededForSet {
-		neededForList = append(neededForList, n)
+	s.resolutionPath[modID] = ResolutionInfo{
+		ModID:            modID,
+		Reason:           finalReason,
+		NeededFor:        neededForList,
+		SatisfiedDep:     satisfiedDep,
+		SelectedProvider: s.cachedProviders[satisfiedDep],
 	}
-	sort.Strings(neededForList)
-
-	resInfo := ResolutionInfo{
-		ModID:        modID,
-		Reason:       finalReason,
-		NeededFor:    neededForList,
-		SatisfiedDep: satisfiedDep,
-	}
-
-	if provider, found := s.getSelectedProviderForDep(satisfiedDep, modID); found {
-		resInfo.SelectedProvider = provider
-	} else if entryExists && existingInfo.SelectedProvider != nil {
-		resInfo.SelectedProvider = existingInfo.SelectedProvider
-	}
-	s.resolutionPath[modID] = resInfo
 }
 
-// resolveDependency attempts to find a provider for a dependency and ensure it's active.
-// Returns true if the dependency was successfully resolved.
-func (s *resolutionSession) resolveDependency(dependencyToSatisfy, requiringModID string) bool {
-	if providerModID, isSatisfied := s.dependencySatisfied[dependencyToSatisfy]; isSatisfied {
-		logging.Debugf("Resolver: Dependency '%s' (for '%s') already satisfied by '%s'.", dependencyToSatisfy, requiringModID, providerModID)
-		s.updateNeededForList(providerModID, requiringModID)
-		if _, ok := s.currentEffectiveSet[providerModID]; ok {
-			return true
-		}
-		// This indicates a logic error where a dependency was marked satisfied by an inactive mod.
-		logging.Errorf("Resolver: Dependency '%s' satisfied by '%s' but mod is not active.", dependencyToSatisfy, providerModID)
-		return false
-	}
-
-	chosenProvider := s.findBestProvider(dependencyToSatisfy)
-	if chosenProvider == nil {
-		logging.Warnf("Resolver: No provider found for dependency '%s' (required by '%s').", dependencyToSatisfy, requiringModID)
-		return false
-	}
-
-	providerTopLevelID := chosenProvider.TopLevelModID
-
-	// A mod can satisfy its own dependency requirement, which is not a cycle.
-	if providerTopLevelID == requiringModID {
-		logging.Debugf("Resolver: Dependency '%s' is self-provided by '%s'.", dependencyToSatisfy, requiringModID)
-		return true // The dependency is satisfied contingent on the requiring mod's activation.
-	}
-
-	if s.ensureModActive(providerTopLevelID, requiringModID, "Dependency", dependencyToSatisfy) {
-		s.dependencySatisfied[dependencyToSatisfy] = providerTopLevelID
-		logging.Debugf("Resolver: Dependency '%s' (for '%s') satisfied by activating '%s'.", dependencyToSatisfy, requiringModID, providerTopLevelID)
-		return true
-	}
-
-	logging.Warnf("Resolver: Failed to activate provider '%s' for dependency '%s' (required by '%s').", providerTopLevelID, dependencyToSatisfy, requiringModID)
-	return false
-}
-
-// findBestProvider selects the best available provider for a given dependencyID.
-// It prioritizes any valid, already-active mod over any inactive mod.
-func (s *resolutionSession) findBestProvider(depID string) *ProviderInfo {
-	providerCandidates, ok := s.potentialProviders[depID]
-	logging.Debugf("Resolver: Finding provider for '%s'. Candidates: %v", depID, providerCandidates)
-	if !ok || len(providerCandidates) == 0 {
-		return nil
-	}
-
-	var firstValidOverallCandidate *ProviderInfo
-	var firstValidActiveCandidate *ProviderInfo
-
-	// The providerCandidates list is pre-sorted by version, from best to worst.
-	for i := range providerCandidates {
-		candidate := &providerCandidates[i]
-
-		if status, ok := s.modStatuses[candidate.TopLevelModID]; ok && !status.IsActivatable() {
-			continue
-		}
-		if _, modExists := s.allMods[candidate.TopLevelModID]; !modExists {
-			logging.Errorf("Resolver: Provider '%s' for dependency '%s' not found. This indicates an inconsistent state.", candidate.TopLevelModID, depID)
-			continue
-		}
-
-		// This is the first valid (non-disabled) provider we've encountered in the sorted list.
-		if firstValidOverallCandidate == nil {
-			firstValidOverallCandidate = candidate
-		}
-
-		if _, isActive := s.currentEffectiveSet[candidate.TopLevelModID]; isActive {
-			firstValidActiveCandidate = candidate
-			break // Active provider found, it's the best choice.
-		}
-	}
-
-	if firstValidActiveCandidate != nil {
-		logging.Debugf("Resolver: Dependency '%s' will be satisfied by already-active mod '%s'.", depID, firstValidActiveCandidate.TopLevelModID)
-		return firstValidActiveCandidate
-	}
-
-	if firstValidOverallCandidate != nil {
-		logging.Debugf("Resolver: Dependency '%s' will be satisfied by activating external mod '%s'.", depID, firstValidOverallCandidate.TopLevelModID)
-		return firstValidOverallCandidate
-	}
-
-	return nil
-}
-
-// getSelectedProviderForDep checks if modToActivateID is a known provider for dependencyIDSatisfied.
-// Used to correctly populate ResolutionInfo.SelectedProvider.
-func (s *resolutionSession) getSelectedProviderForDep(dependencyIDSatisfied, modToActivateID string) (*ProviderInfo, bool) {
-	candidates, ok := s.potentialProviders[dependencyIDSatisfied]
-	if !ok {
-		return nil, false
-	}
-
-	for i := range candidates {
-		candidate := &candidates[i]
-		if candidate.TopLevelModID == modToActivateID {
-			if status, ok := s.modStatuses[modToActivateID]; ok && !status.IsActivatable() {
-				return nil, false // This provider cannot be activated.
-			}
-			return candidate, true
-		}
-	}
-	return nil, false
-}
-
-// collectResolutionPath gathers ResolutionInfo for all mods in the currentEffectiveSet.
 func (s *resolutionSession) collectResolutionPath() []ResolutionInfo {
-	resolvedModIDs := make([]string, 0, len(s.currentEffectiveSet))
-	for modID := range s.currentEffectiveSet {
-		resolvedModIDs = append(resolvedModIDs, modID)
-	}
-	sort.Strings(resolvedModIDs)
-
-	pathSlice := make([]ResolutionInfo, 0, len(resolvedModIDs))
-	for _, modID := range resolvedModIDs {
-		if info, ok := s.resolutionPath[modID]; ok {
+	pathSlice := make([]ResolutionInfo, 0, len(s.effectiveSet))
+	for _, mod := range s.effectiveSet {
+		if info, ok := s.resolutionPath[mod.FabricInfo.ID]; ok {
 			pathSlice = append(pathSlice, info)
 		} else {
-			logging.Errorf("Resolver: Mod '%s' in effective set but missing resolution path.", modID)
-			pathSlice = append(pathSlice, ResolutionInfo{ModID: modID, Reason: "Error: Path Undefined"})
+			logging.Errorf("Resolver: Mod '%s' in effective set but missing resolution path.", mod.FabricInfo.ID)
+			pathSlice = append(pathSlice, ResolutionInfo{ModID: mod.FabricInfo.ID, Reason: "Error: Path Undefined"})
 		}
 	}
+	sort.Slice(pathSlice, func(i, j int) bool {
+		return pathSlice[i].ModID < pathSlice[j].ModID
+	})
 
 	var depLogMessages []string
-	if len(pathSlice) > 0 {
-		depLogMessages = append(depLogMessages, "Resolver: Dependency activation paths:")
-		for _, info := range pathSlice {
-			if info.Reason != "Dependency" {
-				continue
-			}
-			neededForStr := strings.Join(info.NeededFor, ", ")
-			providerStr := ""
-			if info.SelectedProvider != nil {
-				providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.TopLevelModVersion)
-			}
-			depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
-				info.ModID, info.SatisfiedDep, providerStr, neededForStr))
+	for _, info := range pathSlice {
+		if info.Reason != "Dependency" {
+			continue
 		}
-		if len(depLogMessages) > 1 { // Only log if there are actual dependency messages
-			logging.Info(strings.Join(depLogMessages, "\n"))
+		if len(depLogMessages) == 0 {
+			depLogMessages = append(depLogMessages, "Resolver: Dependency activation paths:")
 		}
+		neededForStr := strings.Join(info.NeededFor, ", ")
+		providerStr := ""
+		if info.SelectedProvider != nil {
+			providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.VersionOfProvidedItem)
+		}
+		depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
+			info.ModID, info.SatisfiedDep, providerStr, neededForStr))
+	}
+	if len(depLogMessages) > 0 {
+		logging.Info(strings.Join(depLogMessages, "\n"))
 	}
 	return pathSlice
 }
 
-// TODO: Remove maybe
 // FindTransitiveDependersOf calculates the complete set of mods that depend,
 // directly or indirectly, on any mod in the initial target set.
+// This function operates on dependency IDs and does not evaluate versions.
 func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.Set {
 	if len(targets) == 0 {
 		return nil
@@ -401,7 +451,7 @@ func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.S
 
 // CalculateUnresolvableMods determines which mods from a given set of candidates
 // cannot have their dependencies met if the only available providers are also
-// within that same set.
+// within that same set. This function now respects version predicates.
 func (dr *DependencyResolver) CalculateUnresolvableMods(availableMods sets.Set) sets.Set {
 	unresolvable := make(sets.Set)
 
@@ -411,28 +461,45 @@ func (dr *DependencyResolver) CalculateUnresolvableMods(availableMods sets.Set) 
 	for _, modID := range sortedCandidates {
 		mod, ok := dr.allMods[modID]
 		if !ok {
-			continue // Should not happen
+			continue // Should not happen with a correctly constructed set
 		}
 
-		for depID := range mod.FabricInfo.Depends {
+		// Check each 'depends' entry for the mod.
+	dependencyLoop:
+		for depID, predicates := range mod.FabricInfo.Depends {
 			if IsImplicitMod(depID) {
 				continue
 			}
 
 			// Check if a valid provider for this dependency exists *within the available set*.
-			hasProvider := false
+			hasValidProviderInSet := false
 			if providerCandidates, found := dr.potentialProviders[depID]; found {
 				for _, provider := range providerCandidates {
-					if _, providerIsAvailable := availableMods[provider.TopLevelModID]; providerIsAvailable {
-						hasProvider = true
-						break
+					// Condition 1: The provider's top-level mod must be in our available set.
+					if _, providerIsAvailable := availableMods[provider.TopLevelModID]; !providerIsAvailable {
+						continue
+					}
+
+					// Condition 2: The provider's version must satisfy all predicates for this dependency.
+					versionIsSatisfactory := true
+					for _, p := range predicates {
+						if !p.Test(provider.VersionOfProvidedItem) {
+							versionIsSatisfactory = false
+							break
+						}
+					}
+
+					if versionIsSatisfactory {
+						// We found at least one valid provider within the set.
+						hasValidProviderInSet = true
+						break // No need to check other providers for this dependency.
 					}
 				}
 			}
 
-			if !hasProvider {
+			if !hasValidProviderInSet {
 				unresolvable[modID] = struct{}{}
-				break // This mod is unresolvable, no need to check its other dependencies.
+				break dependencyLoop // This mod is unresolvable, move to the next mod.
 			}
 		}
 	}

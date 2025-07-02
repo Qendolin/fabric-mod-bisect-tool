@@ -23,7 +23,7 @@ const (
 // Each step contains the local context (StableSet and Candidates) relevant
 // to that specific recursive call, pushed onto the SearchState's SearchStack.
 type SearchStep struct {
-	// A set of components known to be safe (not part of the conflict) in the current search context.
+	// A set of components known to be stable (not cause an issue by themselves) in the current search context.
 	StableSet sets.Set
 	// Mods currently being searched within for this specific bisection step.
 	// It is the union of C_1 and C_2.
@@ -52,9 +52,13 @@ type SearchState struct {
 
 	// --- Fields representing the state of the "FindNextConflictElement" bisection ---
 
+	// Step counts tests within the current FindNextConflictElement (bisection) run.
+	// It resets at the start of each new FindNextConflictElement iteration.
+	Step int
+
 	// SearchStack is an iterative implementation of the recursive "FindNextConflictElement"
 	// procedure. Each SearchStep on the stack is a snapshot of a recursive call's arguments
-	// (the local safe set and local candidates for that bisection).
+	// (the local stable set and local candidates for that bisection).
 	SearchStack []SearchStep
 
 	// --- Global Metadata and Flags ---
@@ -95,6 +99,7 @@ func NewInitialState() SearchState {
 		LastTestResult:         "",
 		Round:                  1,
 		Iteration:              1,
+		Step:                   1,
 	}
 }
 

@@ -1,8 +1,6 @@
 package app_test
 
 import (
-	"archive/zip"
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,65 +15,6 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
-
-const testDir = "testdata"
-
-// modSpec defines the structure for creating a dummy mod.
-type modSpec struct {
-	JSONContent string
-	NestedJars  map[string]modSpec
-}
-
-// setupDummyMods creates a temporary mods directory and files.
-func setupDummyMods(t *testing.T, modsDir string, specs map[string]modSpec) {
-	t.Helper()
-	if err := os.MkdirAll(modsDir, 0755); err != nil {
-		t.Fatalf("failed to create mods dir '%s': %v", modsDir, err)
-	}
-	for filename, spec := range specs {
-		jarPath := filepath.Join(modsDir, filename)
-		jarBytes, err := createJarFromSpec(t, spec)
-		if err != nil {
-			t.Fatalf("failed to create JAR data for %s: %v", filename, err)
-		}
-		if err := os.WriteFile(jarPath, jarBytes, 0644); err != nil {
-			t.Fatalf("failed to write dummy mod file %s: %v", jarPath, err)
-		}
-	}
-}
-
-// createJarFromSpec is a recursive helper to build a JAR file from a spec.
-func createJarFromSpec(t *testing.T, spec modSpec) ([]byte, error) {
-	t.Helper()
-	zipBuf := new(bytes.Buffer)
-	zipWriter := zip.NewWriter(zipBuf)
-	if spec.JSONContent != "" {
-		modJsonFile, err := zipWriter.Create("fabric.mod.json")
-		if err != nil {
-			return nil, err
-		}
-		if _, err = modJsonFile.Write([]byte(spec.JSONContent)); err != nil {
-			return nil, err
-		}
-	}
-	for nestedFilename, nestedSpec := range spec.NestedJars {
-		nestedJarBytes, err := createJarFromSpec(t, nestedSpec)
-		if err != nil {
-			return nil, err
-		}
-		nestedJarFile, err := zipWriter.Create(nestedFilename)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := nestedJarFile.Write(nestedJarBytes); err != nil {
-			return nil, err
-		}
-	}
-	if err := zipWriter.Close(); err != nil {
-		return nil, err
-	}
-	return zipBuf.Bytes(), nil
-}
 
 // runBisectionTest is a test harness that executes the full bisection process.
 func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mods.Mod, problematicSets []sets.Set) sets.Set {
@@ -128,7 +67,8 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 
 // TestBisectService_Integration runs a full integration test of the bisect service.
 func TestBisectService_Integration(t *testing.T) {
-	setupLogger(t)
+	logFile := setupLogger(t)
+	defer logFile.Close()
 
 	baseModSpecs := make(map[string]modSpec)
 	for i := 0; i < 26; i++ {
@@ -161,7 +101,7 @@ func TestBisectService_Integration(t *testing.T) {
 			name: "2-Mod Dependent Conflict",
 			modSpecs: func() map[string]modSpec {
 				specs := deepCopySpecs(baseModSpecs)
-				specs["mod-c-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_c", "depends": {"mod_j": ">=1.0"}}`}
+				specs["mod-c-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_c", "version": "1.0", "depends": {"mod_j": ">=1.0"}}`}
 				return specs
 			}(),
 			problematicSet:      sets.MakeSet([]string{"mod_j"}),
@@ -171,8 +111,8 @@ func TestBisectService_Integration(t *testing.T) {
 			name: "Dependency Provider Conflict",
 			modSpecs: func() map[string]modSpec {
 				specs := deepCopySpecs(baseModSpecs)
-				specs["mod-a-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_a", "depends": {"api": "1.0"}}`}
-				specs["mod-b-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_b", "provides": ["api"]}`}
+				specs["mod-a-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_a", "version": "1.0", "depends": {"api": "1.0"}}`}
+				specs["mod-b-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_b", "version": "1.0", "provides": ["api"]}`}
 				return specs
 			}(),
 			problematicSet:      sets.MakeSet([]string{"mod_b"}),
@@ -183,7 +123,7 @@ func TestBisectService_Integration(t *testing.T) {
 			modSpecs: func() map[string]modSpec {
 				specs := deepCopySpecs(baseModSpecs)
 				specs["mod-a-1.0.jar"] = modSpec{
-					JSONContent: `{"id": "mod_a", "jars": [{"file": "libs/nested.jar"}]}`,
+					JSONContent: `{"id": "mod_a", "version": "1.0", "jars": [{"file": "libs/nested.jar"}]}`,
 					NestedJars: map[string]modSpec{
 						"libs/nested.jar": {JSONContent: `{"id": "nested_b", "version": "1.0"}`},
 					},
@@ -203,7 +143,7 @@ func TestBisectService_Integration(t *testing.T) {
 			name: "Unresolvable Dependency Prevents Conflict",
 			modSpecs: func() map[string]modSpec {
 				specs := deepCopySpecs(baseModSpecs)
-				specs["mod-x-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_x", "depends": {"non_existent": "1.0"}}`}
+				specs["mod-x-1.0.jar"] = modSpec{JSONContent: `{"id": "mod_x", "version": "1.0", "depends": {"non_existent": "1.0"}}`}
 				return specs
 			}(),
 			problematicSet:      sets.MakeSet([]string{"mod_x"}),
@@ -222,6 +162,7 @@ func TestBisectService_Integration(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			logging.Infof("Test: Running test case %q", t.Name())
 			modsDir := filepath.Join(testDir, strings.ReplaceAll(tc.name, " ", "_"))
 			if err := os.RemoveAll(modsDir); err != nil && !os.IsNotExist(err) {
 				t.Fatalf("failed to clean mods dir: %v", err)
@@ -260,7 +201,8 @@ func TestBisectService_Integration(t *testing.T) {
 // TestBisectService_Enumeration verifies that the service can find multiple
 // independent conflict sets by using the ContinueSearch workflow.
 func TestBisectService_Enumeration(t *testing.T) {
-	setupLogger(t)
+	logFile := setupLogger(t)
+	defer logFile.Close()
 
 	// Setup: Create a base set of mods.
 	baseModSpecs := make(map[string]modSpec)
@@ -357,32 +299,4 @@ func TestBisectService_Enumeration(t *testing.T) {
 	}
 
 	t.Log("Enumeration test successful.")
-}
-
-func setupLogger(t *testing.T) {
-	mainLogger := logging.NewLogger()
-	mainLogger.SetDebug(true)
-	logFile, err := os.OpenFile(filepath.Join(testDir, "test.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		t.Fatalf("Failed to open log file: %v", err)
-	}
-	defer logFile.Close()
-	mainLogger.SetWriter(logFile)
-	logging.SetDefault(mainLogger)
-}
-
-func copySets(original []sets.Set) []sets.Set {
-	setsCopy := make([]sets.Set, len(original))
-	for i, s := range original {
-		setsCopy[i] = sets.Copy(s)
-	}
-	return setsCopy
-}
-
-func deepCopySpecs(original map[string]modSpec) map[string]modSpec {
-	cpy := make(map[string]modSpec)
-	for k, v := range original {
-		cpy[k] = v // This is a shallow copy of the inner map, but sufficient for these tests
-	}
-	return cpy
 }

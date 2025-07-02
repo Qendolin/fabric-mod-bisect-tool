@@ -381,7 +381,8 @@ func (s *ManagementSession) ToggleForceEnable(modID string, isBulk bool) {
 		for _, id := range allIDs {
 			s.setStatus(id, shouldEnable, false, false)
 		}
-	} else {
+	} else if !s.workingStatuses[modID].IsMissing {
+		// Missing mods can't have their status changed, except by bulk operations
 		if s.workingStatuses[modID].ForceEnabled {
 			s.setStatus(modID, false, false, false) // Is enabled -> set to normal
 		} else {
@@ -401,7 +402,7 @@ func (s *ManagementSession) ToggleForceDisable(modID string, isBulk bool) {
 		for _, id := range allIDs {
 			s.setStatus(id, false, shouldDisable, false)
 		}
-	} else {
+	} else if !s.workingStatuses[modID].IsMissing {
 		if s.workingStatuses[modID].ForceDisabled {
 			s.setStatus(modID, false, false, false)
 		} else {
@@ -421,7 +422,7 @@ func (s *ManagementSession) ToggleOmitted(modID string, isBulk bool) {
 		for _, id := range allIDs {
 			s.setStatus(id, false, false, shouldOmit)
 		}
-	} else {
+	} else if !s.workingStatuses[modID].IsMissing {
 		if s.workingStatuses[modID].Omitted {
 			s.setStatus(modID, false, false, false)
 		} else {

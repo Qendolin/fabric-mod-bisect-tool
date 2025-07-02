@@ -60,9 +60,11 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 	newState := deepCopyState(state)
 	newState.LastTestResult = result
 	newState.IsVerifyingConflictSet = false // Flag is consumed after one use.
+	newState.Step++
 
 	// --- Handle Verification Step Result ---
 	if plan.IsVerificationStep {
+		newState.Step = 0
 		if result == TestResultFail {
 			// The current ConflictSet is sufficient to cause a crash. We are done.
 			logging.Info("IMCSAlgorithm: Verification PASSED. ConflictSet is minimal.")

@@ -22,7 +22,8 @@ type LogPage struct {
 	statusText        *tview.TextView
 	currentFilter     logging.LogLevel
 	lastLogCount      int
-	stopPolling       chan struct{}
+	stopPollingSignal chan struct{}
+	isPolling         bool
 	isWordWrapEnabled bool
 }
 
@@ -45,21 +46,24 @@ func NewLogPage(app ui.AppInterface) *LogPage {
 		logView:           logView,
 		statusText:        tview.NewTextView().SetDynamicColors(true),
 		currentFilter:     logging.LevelInfo, // Default filter
-		stopPolling:       make(chan struct{}),
+		stopPollingSignal: make(chan struct{}),
 		isWordWrapEnabled: true,
 	}
 
 	page.setKeybindings()
 	page.refreshLogs(true) // Initial population of the log view
-	page.startPolling()
 
 	return page
 }
 
 // startPolling starts a goroutine that checks for new logs periodically.
 func (p *LogPage) startPolling() {
-	ticker := time.NewTicker(250 * time.Millisecond)
+	if p.isPolling {
+		return
+	}
+	p.isPolling = true
 
+	ticker := time.NewTicker(250 * time.Millisecond)
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -71,11 +75,21 @@ func (p *LogPage) startPolling() {
 						p.refreshLogs(false)
 					})
 				}
-			case <-p.stopPolling:
+			case <-p.stopPollingSignal:
+				p.stopPollingSignal <- struct{}{}
 				return
 			}
 		}
 	}()
+}
+
+func (p *LogPage) stopPolling() {
+	if !p.isPolling {
+		return
+	}
+	p.isPolling = false
+	p.stopPollingSignal <- struct{}{}
+	<-p.stopPollingSignal
 }
 
 // setKeybindings configures the input handling for the log page.
@@ -107,8 +121,8 @@ func (p *LogPage) setKeybindings() {
 
 		// Handle navigation keys.
 		if event.Key() == tcell.KeyEscape || (event.Key() == tcell.KeyCtrlL && event.Modifiers()&tcell.ModCtrl != 0) {
-			close(p.stopPolling) // Stop the poller goroutine
-			go p.app.QueueUpdateDraw(p.app.Navigation().GoBack)
+			p.stopPolling()
+			p.app.Navigation().GoBack()
 			return nil
 		}
 
@@ -199,4 +213,8 @@ func (p *LogPage) GetActionPrompts() []ui.ActionPrompt {
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status.
 func (p *LogPage) GetStatusPrimitive() *tview.TextView {
 	return p.statusText
+}
+
+func (p *LogPage) OnPageActivated() {
+	p.startPolling()
 }
