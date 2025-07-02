@@ -6,6 +6,7 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
 	"github.com/gdamore/tcell/v2"
@@ -118,6 +119,9 @@ func (p *ManageModsPage) commitChanges() {
 			pendingAdditionsOnCommit = append(pendingAdditionsOnCommit, id)
 		}
 	}
+
+	logging.Infof("ManageModsPage: Committing changes. Enabled: %d, Disabled: %d, Omitted: %d, Normal: %d, Pending: %d",
+		len(enabled), len(disabled), len(omitted), len(normal), len(pendingAdditionsOnCommit))
 
 	// Apply all changes in batches.
 	if len(enabled) > 0 {

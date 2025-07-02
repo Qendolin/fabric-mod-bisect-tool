@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"path"
 	"path/filepath"
 	"regexp"
 
@@ -24,7 +25,7 @@ type ModParser struct {
 }
 
 // ExtractModMetadata opens a JAR and extracts its top-level and nested fabric.mod.json files.
-func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (FabricModJson, []FabricModJson, error) {
+func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (FabricModJson, []NestedModule, error) {
 	zr, err := zip.OpenReader(jarPath)
 	if err != nil {
 		return FabricModJson{}, nil, fmt.Errorf("opening JAR %s as zip: %w", jarPath, err)
@@ -36,14 +37,14 @@ func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (Fa
 		return FabricModJson{}, nil, fmt.Errorf("parsing top-level fabric.mod.json for %s: %w", jarPath, err)
 	}
 
-	var allNestedMods []FabricModJson
+	var allNestedMods []NestedModule
 	for _, nestedJarEntry := range topLevelFmj.Jars {
 		if nestedJarEntry.File == "" {
 			logBuffer.add(logging.LevelWarn, "ModLoader: Top-level mod '%s' has a nested JAR entry with an empty 'file' path. Skipping.", topLevelFmj.ID)
 			continue
 		}
 
-		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, logBuffer)
+		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, "", logBuffer)
 		if err != nil {
 			logBuffer.add(logging.LevelWarn, "ModLoader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry.File, filepath.Base(jarPath), err)
 			continue
@@ -54,7 +55,7 @@ func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (Fa
 }
 
 // recursivelyParseNestedJar parses a nested JAR and any of its own nested JARs.
-func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent string, logBuffer *logBuffer) ([]FabricModJson, error) {
+func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, currentPathPrefix string, logBuffer *logBuffer) ([]NestedModule, error) {
 	var nestedZipFile *zip.File
 	for _, f := range parentZipReader.File {
 		if f.Name == pathInParent {
@@ -88,13 +89,14 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 		return nil, fmt.Errorf("parsing metadata from '%s': %w", pathInParent, err)
 	}
 
-	allFoundMods := []FabricModJson{currentFmj}
+	fullPathInJar := path.Join(currentPathPrefix, pathInParent)
+	allFoundMods := []NestedModule{{Info: currentFmj, PathInJar: fullPathInJar}}
 
 	for _, deeperJarEntry := range currentFmj.Jars {
 		if deeperJarEntry.File == "" {
 			continue
 		}
-		deeperNestedMods, err := p.recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, logBuffer)
+		deeperNestedMods, err := p.recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, fullPathInJar, logBuffer)
 		if err != nil {
 			logBuffer.add(logging.LevelWarn, "ModLoader: Skipping deeper nested JAR '%s' within '%s': %v", deeperJarEntry.File, pathInParent, err)
 			continue

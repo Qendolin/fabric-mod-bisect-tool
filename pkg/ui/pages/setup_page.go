@@ -41,7 +41,8 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 		SetLabel("Mods Directory Path: ").
 		SetFieldWidth(0)
 	p.inputField.SetPlaceholder("C:\\Users\\Example\\.minecraft\\mods").
-		SetFieldTextColor(tcell.ColorBlack)
+		SetFieldTextColor(tcell.ColorBlack).
+		SetPlaceholderTextColor(tcell.ColorGray)
 	p.inputField.SetFocusFunc(func() {
 		p.inputField.SetFieldBackgroundColor(tcell.ColorBlue)
 	})

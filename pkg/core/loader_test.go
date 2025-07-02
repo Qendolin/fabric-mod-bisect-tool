@@ -141,7 +141,7 @@ func TestModLoader(t *testing.T) {
 		loadedMods, providers := loadAndCheck(t, modsDir, []string{"main_mod"}, 4+2, false)
 		if loadedMods != nil {
 			mainMod := loadedMods["main_mod"]
-			if len(mainMod.NestedModules) != 1 || mainMod.NestedModules[0].ID != "nested_lib" {
+			if len(mainMod.NestedModules) != 1 || mainMod.NestedModules[0].Info.ID != "nested_lib" {
 				t.Errorf("Expected nested_lib to be loaded as a nested module of main_mod")
 			}
 			if _, ok := mainMod.EffectiveProvides["nested_lib"]; !ok {

@@ -211,7 +211,7 @@ func (sm *StateManager) GetAllMods() map[string]*Mod {
 
 // ResolveEffectiveSet calculates the set of active top-level mods based on the
 // given target set and the current mod statuses managed by the StateManager.
-func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) (sets.Set, []ResolutionInfo) {
+func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) (sets.Set, ResolutionPath) {
 	return sm.resolver.ResolveEffectiveSet(targetSet, sm.GetModStatusesSnapshot())
 }
 

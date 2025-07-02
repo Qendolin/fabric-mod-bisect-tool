@@ -3,6 +3,7 @@ package mods
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
@@ -15,7 +16,7 @@ type VersionField struct {
 	version.Version
 }
 
-func (vf *VersionField) String() string {
+func (vf VersionField) String() string {
 	if vf.Version == nil {
 		return "<invalid>"
 	}
@@ -116,13 +117,20 @@ type FabricModJson struct {
 	} `json:"jars"`
 }
 
+// NestedModule holds metadata for a mod found inside another JAR file,
+// including its full path within the parent archive.
+type NestedModule struct {
+	Info      FabricModJson
+	PathInJar string
+}
+
 // Mod represents a single discovered mod and its metadata.
 type Mod struct {
 	Path              string
 	BaseFilename      string
 	FabricInfo        FabricModJson
 	IsInitiallyActive bool // Was the mod active (.jar) when first loaded?
-	NestedModules     []FabricModJson
+	NestedModules     []NestedModule
 	EffectiveProvides map[string]version.Version // Maps all unique IDs this mod provides to their version.
 }
 
@@ -162,6 +170,39 @@ type ResolutionInfo struct {
 	NeededFor        []string
 	SatisfiedDep     string
 	SelectedProvider *ProviderInfo
+}
+
+// ResolutionPath is a slice of ResolutionInfo that provides a custom string
+// representation for logging the dependency activation paths.
+type ResolutionPath []ResolutionInfo
+
+// String implements the fmt.Stringer interface for ResolutionPath.
+func (rp ResolutionPath) String() string {
+	var depLogMessages []string
+	for _, info := range rp {
+		// We only want to log mods that were pulled in as dependencies.
+		if info.Reason != "Dependency" {
+			continue
+		}
+
+		// Add a header only if we find at least one dependency to log.
+		if len(depLogMessages) == 0 {
+			depLogMessages = append(depLogMessages, "Dependency activation paths:")
+		}
+
+		neededForStr := strings.Join(info.NeededFor, ", ")
+		providerStr := ""
+		if info.SelectedProvider != nil {
+			providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.VersionOfProvidedItem)
+		}
+		depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
+			info.ModID, info.SatisfiedDep, providerStr, neededForStr))
+	}
+
+	if len(depLogMessages) == 0 {
+		return "No cross-mod dependencies were activated."
+	}
+	return strings.Join(depLogMessages, "\n")
 }
 
 // IsImplicitMod checks if a dependency ID is for an implicit (non-mod) dependency.

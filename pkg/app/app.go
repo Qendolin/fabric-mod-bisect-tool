@@ -113,13 +113,15 @@ func (a *App) StartLoadingProcess(modsPath string, quiltSupport bool) {
 // onLoadingComplete handles the result of the mod loading process.
 func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, providers mods.PotentialProvidersMap, err error) {
 	if err != nil {
+		logging.Errorf("App: Failed to load mods: %v", err)
 		a.dialogManager.ShowErrorDialog("Loading Error", "Failed to load mods!", err, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
 		return
 	}
 	if len(allMods) == 0 {
-		a.dialogManager.ShowErrorDialog("Information", "No mods were found in the specified directory.\nPlease ensure that you've entered the path correctly.", nil, func() {
+		logging.Errorf("App: No mods were found in '%s'.", modsPath)
+		a.dialogManager.ShowErrorDialog("Information", fmt.Sprintf("No mods were found in '%s'.\nPlease ensure that you've entered the path correctly.", modsPath), nil, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
 		return
@@ -131,6 +133,7 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {
+		logging.Errorf("App: Failed to initialize the bisection service: %v", err)
 		a.dialogManager.ShowErrorDialog("Initialization Error", "Failed to initialize the bisection!", err, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
@@ -310,11 +313,14 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 func (a *App) handleStepError(err error) {
 	// Check if the error is the specific "search complete" signal.
 	if errors.Is(err, imcs.ErrSearchComplete) {
+		logging.Infof("App: Step error, bisection complete: %s", err)
 		a.displayResults()
 		return
 	}
 
 	if missingErr, ok := err.(*mods.MissingFilesError); ok {
+		logging.Warnf("App: Step error, missing files: %v", missingErr)
+
 		vm := a.GetViewModel()
 
 		allKnownConflicts := sets.Copy(vm.CurrentConflictSet)
@@ -368,6 +374,8 @@ func (a *App) handleStepError(err error) {
 		}
 		return
 	}
+
+	logging.Errorf("App: Step error: %v", err)
 
 	a.dialogManager.ShowErrorDialog("Bisection Error", `An error occurred and the next step could not be prepared.
 If another program, like Minecraft, is currently acessing your mods, please close it.

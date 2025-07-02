@@ -45,9 +45,9 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 }
 
 // ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
-func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, []ResolutionInfo) {
+func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, ResolutionPath) {
 	startTime := time.Now()
-	logging.Info("Resolver: Starting dependency resolution...")
+	logging.Infof("Resolver: Resolving effective set for %d mods.", len(targetSet))
 
 	s := &resolutionSession{
 		allMods:            dr.allMods,
@@ -368,7 +368,7 @@ func (s *resolutionSession) updateResolutionPath(modID, neededBy, reason, satisf
 	}
 }
 
-func (s *resolutionSession) collectResolutionPath() []ResolutionInfo {
+func (s *resolutionSession) collectResolutionPath() ResolutionPath {
 	pathSlice := make([]ResolutionInfo, 0, len(s.effectiveSet))
 	for _, mod := range s.effectiveSet {
 		if info, ok := s.resolutionPath[mod.FabricInfo.ID]; ok {
@@ -382,26 +382,7 @@ func (s *resolutionSession) collectResolutionPath() []ResolutionInfo {
 		return pathSlice[i].ModID < pathSlice[j].ModID
 	})
 
-	var depLogMessages []string
-	for _, info := range pathSlice {
-		if info.Reason != "Dependency" {
-			continue
-		}
-		if len(depLogMessages) == 0 {
-			depLogMessages = append(depLogMessages, "Resolver: Dependency activation paths:")
-		}
-		neededForStr := strings.Join(info.NeededFor, ", ")
-		providerStr := ""
-		if info.SelectedProvider != nil {
-			providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.VersionOfProvidedItem)
-		}
-		depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
-			info.ModID, info.SatisfiedDep, providerStr, neededForStr))
-	}
-	if len(depLogMessages) > 0 {
-		logging.Info(strings.Join(depLogMessages, "\n"))
-	}
-	return pathSlice
+	return ResolutionPath(pathSlice)
 }
 
 // FindTransitiveDependersOf calculates the complete set of mods that depend,
