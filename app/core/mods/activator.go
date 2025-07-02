@@ -47,8 +47,8 @@ type BatchStateChange struct {
 
 // Apply calculates and executes the necessary file renames to achieve the effectiveSet state.
 // It performs a batch of renames and returns the list of changes made.
-func (a *Activator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error) {
-	changes := a.calculateChanges(effectiveSet)
+func (a *Activator) Apply(effectiveSet sets.Set, statuses map[string]ModStatus) ([]BatchStateChange, error) {
+	changes := a.calculateChanges(effectiveSet, statuses)
 	if len(changes) == 0 {
 		return nil, nil
 	}
@@ -68,14 +68,35 @@ func (a *Activator) Apply(effectiveSet sets.Set) ([]BatchStateChange, error) {
 	logging.Infof("Activator: Applying changes to %d mod files. Enabling: %v, Disabling: %v", len(changes), enabledMods, disabledMods)
 
 	appliedChanges := make([]BatchStateChange, 0, len(changes))
+	var missingFileErrors []*FileMissingError
+
 	for _, change := range changes {
-		if err := os.Rename(change.OldPath, change.NewPath); err != nil {
-			// On failure, revert all changes made so far in this batch and report the error.
-			a.Revert(appliedChanges)
-			return nil, fmt.Errorf("failed to rename %s to %s for mod %s: %w", change.OldPath, change.NewPath, change.ModID, err)
+		if _, err := os.Stat(change.OldPath); os.IsNotExist(err) {
+			// Check if the file is already in the target state (e.g., already disabled).
+			if _, err := os.Stat(change.NewPath); !os.IsNotExist(err) {
+				a.currentActivations[change.ModID] = change.Activate
+				continue // File already in correct state. Not an error.
+			}
+			// The file is truly missing from the filesystem.
+			logging.Warnf("Activator: Source file for mod '%s' is missing: %s", change.ModID, change.OldPath)
+			missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: change.ModID, FilePath: change.OldPath})
+			continue // Continue processing other files.
 		}
+
+		if err := os.Rename(change.OldPath, change.NewPath); err != nil {
+			// A hard I/O error (e.g., permissions). This is fatal for this operation.
+			logging.Errorf("Activator: A hard I/O error occurred: %v", err)
+			a.Revert(appliedChanges) // Revert what we've done so far.
+			return nil, fmt.Errorf("failed to rename '%s' for mod '%s': %w", filepath.Base(change.OldPath), change.ModID, err)
+		}
+
 		a.currentActivations[change.ModID] = change.Activate
 		appliedChanges = append(appliedChanges, change)
+	}
+
+	if len(missingFileErrors) > 0 {
+		a.Revert(appliedChanges)
+		return nil, &MissingFilesError{Errors: missingFileErrors}
 	}
 
 	return appliedChanges, nil
@@ -119,16 +140,16 @@ func (a *Activator) Revert(changes []BatchStateChange) {
 	}
 }
 
-func (a *Activator) EnableAll() error {
-	logging.Info("Activator: Enabling all mods for a clean initial state.")
-
-	// Create a target set that includes all known mods
+func (a *Activator) EnableAll(statuses map[string]ModStatus) error {
+	logging.Info("Activator: Enabling all non-missing mods for a clean initial state.")
 	targetSet := make(sets.Set, len(a.allMods))
-	for id := range a.allMods {
-		targetSet[id] = struct{}{}
+	for id, status := range statuses {
+		if !status.IsMissing {
+			targetSet[id] = struct{}{}
+		}
 	}
 
-	_, err := a.Apply(targetSet)
+	_, err := a.Apply(targetSet, statuses)
 	if err != nil {
 		return fmt.Errorf("failed during initial enabling of all mods: %w", err)
 	}
@@ -138,9 +159,14 @@ func (a *Activator) EnableAll() error {
 
 // calculateChanges determines which files need to be renamed based on the desired effective set
 // and the current physical state of mod files on disk as tracked by the activator.
-func (a *Activator) calculateChanges(effectiveSet sets.Set) []BatchStateChange {
+func (a *Activator) calculateChanges(effectiveSet sets.Set, statuses map[string]ModStatus) []BatchStateChange {
 	var changes []BatchStateChange
 	for id, mod := range a.allMods {
+		status, ok := statuses[id]
+		if !ok || status.IsMissing {
+			continue // Skip missing mods entirely.
+		}
+
 		isCurrentlyActive := a.currentActivations[id] // The physical state as tracked by activator
 		_, shouldBeActive := effectiveSet[id]         // The desired logical state from resolver
 

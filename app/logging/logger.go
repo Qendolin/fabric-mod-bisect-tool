@@ -65,6 +65,10 @@ func (l *Logger) SetDebug(enable bool) {
 	l.debug = enable
 }
 
+func (l *Logger) IsDebugEnabled() bool {
+	return l.debug
+}
+
 // log is the internal handler for variadic logging.
 func (l *Logger) log(level LogLevel, v ...interface{}) {
 	if level == LevelDebug && !l.debug {
@@ -152,12 +156,16 @@ func SetDefault(logger *Logger) {
 	}
 }
 
+func IsDebugEnabled() bool {
+	return defaultLogger.debug
+}
+
 // Info logs an informational message using the default logger.
 func Info(v ...interface{}) {
 	defaultLogger.Info(v...)
 }
 
-// Infof ...
+// Infof logs a formatted informational message using the default logger.
 func Infof(format string, v ...interface{}) {
 	defaultLogger.Infof(format, v...)
 }
@@ -167,7 +175,7 @@ func Warn(v ...interface{}) {
 	defaultLogger.Warn(v...)
 }
 
-// Warnf ...
+// Warnf logs a formatted warning message using the default logger.
 func Warnf(format string, v ...interface{}) {
 	defaultLogger.Warnf(format, v...)
 }
@@ -177,7 +185,7 @@ func Error(v ...interface{}) {
 	defaultLogger.Error(v...)
 }
 
-// Errorf ...
+// Errorf logs a formatted error message using the default logger.
 func Errorf(format string, v ...interface{}) {
 	defaultLogger.Errorf(format, v...)
 }
@@ -187,7 +195,7 @@ func Debug(v ...interface{}) {
 	defaultLogger.Debug(v...)
 }
 
-// Debugf ...
+// Debugf logs a formatted debug message using the default logger.
 func Debugf(format string, v ...interface{}) {
 	defaultLogger.Debugf(format, v...)
 }

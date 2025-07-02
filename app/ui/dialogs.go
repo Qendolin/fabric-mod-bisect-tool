@@ -1,7 +1,12 @@
 package ui
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,9 +20,9 @@ func NewDialogManager(app AppInterface) *DialogManager {
 }
 
 // ShowErrorDialog displays a modal dialog with an error message.
-func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func()) {
-	modal := tview.NewModal().
-		SetText(message).
+func (m *DialogManager) ShowErrorDialog(title, message string, err error, onDismiss func()) {
+	modal := widgets.NewRichModal().
+		SetCenteredText(message).
 		AddButtons([]string{"Dismiss"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			go m.app.QueueUpdateDraw(func() {
@@ -27,9 +32,12 @@ func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func())
 				}
 			})
 		})
+	if err != nil {
+		modal.SetDetailsText(formatErrorChain(err))
+	}
 	modal.SetTextColor(tcell.ColorWhite).
-		SetTitleColor(tcell.ColorWhite).
 		SetBackgroundColor(tcell.ColorDarkRed).
+		SetTitleColor(tcell.ColorWhite).
 		SetBorderColor(tcell.ColorWhite)
 	modal.Box.SetBackgroundColor(tcell.ColorDarkRed)
 	modal.SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
@@ -38,8 +46,8 @@ func (m *DialogManager) ShowErrorDialog(title, message string, onDismiss func())
 
 // ShowQuitDialog displays a confirmation dialog before quitting.
 func (m *DialogManager) ShowQuitDialog() {
-	modal := tview.NewModal().
-		SetText("Are you sure you want to quit?").
+	modal := widgets.NewRichModal().
+		SetCenteredText("Are you sure you want to quit?").
 		AddButtons([]string{"Cancel", "Quit"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			go m.app.QueueUpdateDraw(func() {
@@ -59,9 +67,9 @@ func (m *DialogManager) ShowQuitDialog() {
 	m.app.Navigation().ShowModal("quit_dialog", NewModalPage(modal))
 }
 
-func (m *DialogManager) ShowQuestionDialog(question string, onYes func(), onNo func()) {
-	modal := tview.NewModal().
-		SetText(question).
+func (m *DialogManager) ShowQuestionDialog(title string, question string, onYes func(), onNo func()) {
+	modal := widgets.NewRichModal().
+		SetCenteredText(question).
 		AddButtons([]string{"No", "Yes"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			go m.app.QueueUpdateDraw(func() {
@@ -81,14 +89,14 @@ func (m *DialogManager) ShowQuestionDialog(question string, onYes func(), onNo f
 	modal.SetTextColor(tcell.ColorBlack).
 		SetTitleColor(tcell.ColorBlack).
 		SetBorderColor(tcell.ColorWhite)
-	modal.SetTitle(" Confirm ").SetTitleAlign(tview.AlignLeft)
+	modal.SetTitle(" " + title + " ").SetTitleAlign(tview.AlignLeft)
 	m.app.Navigation().ShowModal("yes_no_dialog", NewModalPage(modal))
 }
 
 // ShowInfoDialog displays a modal dialog with a neutral informational message.
 func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) {
-	modal := tview.NewModal().
-		SetText(message).
+	modal := widgets.NewRichModal().
+		SetCenteredText(message).
 		AddButtons([]string{"Dismiss"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			go m.app.QueueUpdateDraw(func() {
@@ -107,12 +115,12 @@ func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) 
 
 // ModalPage is a simple wrapper around a tview.Modal to conform to the Page interface.
 type ModalPage struct {
-	*tview.Modal
+	*widgets.RichModal
 }
 
 // NewModalPage creates a new ModalPage.
-func NewModalPage(modal *tview.Modal) *ModalPage {
-	return &ModalPage{Modal: modal}
+func NewModalPage(modal *widgets.RichModal) *ModalPage {
+	return &ModalPage{RichModal: modal}
 }
 
 // GetActionPrompts returns an empty map as modals have their own buttons.
@@ -123,4 +131,30 @@ func (p *ModalPage) GetActionPrompts() []ActionPrompt {
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status
 func (p *ModalPage) GetStatusPrimitive() *tview.TextView {
 	return nil
+}
+
+// formatErrorChain unwraps a chain of Go errors and formats them
+// into a multi-line string, with each level of the error on a new line.
+// This is ideal for displaying detailed error messages in a UI.
+func formatErrorChain(err error) string {
+	var b strings.Builder
+	indent := ""
+	for err != nil {
+		next := errors.Unwrap(err)
+		msg := err.Error()
+		if next != nil {
+			nextMsg := next.Error()
+			if i := strings.LastIndex(msg, nextMsg); i > 0 {
+				msg = strings.TrimSpace(msg[:i])
+			}
+		}
+		fmt.Fprintf(&b, "%s- %s", indent, msg)
+		if next != nil {
+			b.WriteRune('\n')
+		}
+		indent += " "
+		err = next
+	}
+
+	return b.String()
 }

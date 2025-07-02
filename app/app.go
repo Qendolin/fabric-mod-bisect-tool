@@ -13,6 +13,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/bisect"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/embeds"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/ui"
@@ -87,14 +88,14 @@ func NewApp(logger *logging.Logger, cliArgs *CLIArgs) *App {
 }
 
 // StartLoadingProcess is called by the SetupPage to begin loading mods.
-func (a *App) StartLoadingProcess(modsPath string) {
+func (a *App) StartLoadingProcess(modsPath string, quiltSupport bool) {
 	a.navManager.SwitchTo(ui.PageLoadingID)
 	a.loadingPage.StartLoading(modsPath)
 
 	go func() {
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: a.cliArgs.QuiltSupport}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport}}
 		logging.Infof("App: Loading mods from '%s', Quilt Support: %v", modsPath, a.cliArgs.QuiltSupport)
 		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, func(fileName string) {
 			a.QueueUpdateDraw(func() {
@@ -112,13 +113,13 @@ func (a *App) StartLoadingProcess(modsPath string) {
 // onLoadingComplete handles the result of the mod loading process.
 func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, providers mods.PotentialProvidersMap, err error) {
 	if err != nil {
-		a.dialogManager.ShowErrorDialog("Loading Error", fmt.Sprintf("Failed to load mods: %v", err), func() {
+		a.dialogManager.ShowErrorDialog("Loading Error", "Failed to load mods!", err, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
 		return
 	}
 	if len(allMods) == 0 {
-		a.dialogManager.ShowErrorDialog("Information", "No mods were found in the specified directory.", func() {
+		a.dialogManager.ShowErrorDialog("Information", "No mods were found in the specified directory.\nPlease ensure that you've entered the path correctly.", nil, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
 		return
@@ -130,7 +131,7 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {
-		a.dialogManager.ShowErrorDialog("Initialization Error", err.Error(), func() {
+		a.dialogManager.ShowErrorDialog("Initialization Error", "Failed to initialize the bisection!", err, func() {
 			a.navManager.SwitchTo(ui.PageSetupID)
 		})
 		return
@@ -151,11 +152,12 @@ func (a *App) handleCoreStateChange() {
 
 // Step orchestrates the next bisection test.
 func (a *App) Step() {
-	if a.bisectSvc == nil {
+	if !a.IsBisectionReady() {
 		return
 	}
 	plan, changes, err := a.bisectSvc.AdvanceToNextTest()
 	if err != nil {
+		a.bisectSvc.Engine().InvalidateActivePlan()
 		a.handleStepError(err)
 		return
 	}
@@ -169,7 +171,7 @@ func (a *App) Step() {
 }
 
 func (a *App) ContinueSearch() {
-	if a.bisectSvc == nil {
+	if !a.IsBisectionReady() {
 		return
 	}
 	logging.Debugf("App: ContinueSearch action triggered.")
@@ -187,9 +189,9 @@ func (a *App) ContinueSearch() {
 	}
 }
 
-func (a *App) Undo() {
+func (a *App) Undo() bool {
 	logging.Debugf("App: Undo action triggered.")
-	a.bisectSvc.UndoLastStep()
+	return a.bisectSvc.UndoLastStep()
 }
 
 func (a *App) ResetSearch() {
@@ -208,9 +210,13 @@ func (a *App) Stop() {
 	a.Application.Stop()
 }
 
+func (a *App) IsBisectionReady() bool {
+	return a.bisectSvc != nil
+}
+
 // displayResults shows the result page when the search is coplete.
 func (a *App) displayResults() {
-	if a.bisectSvc == nil {
+	if !a.IsBisectionReady() {
 		return
 	}
 	state := a.bisectSvc.GetCurrentState()
@@ -304,10 +310,65 @@ func (a *App) handleStepError(err error) {
 		return
 	}
 
+	if missingErr, ok := err.(*mods.MissingFilesError); ok {
+		vm := a.GetViewModel()
+
+		allKnownConflicts := sets.Copy(vm.CurrentConflictSet)
+		for _, s := range vm.AllConflictSets {
+			allKnownConflicts = sets.Union(allKnownConflicts, s)
+		}
+
+		var unexpectedDeletions []string
+		var expectedDeletions []string
+		var missingIDs []string
+
+		for _, e := range missingErr.Errors {
+			missingIDs = append(missingIDs, e.ModID)
+			if _, isProblem := allKnownConflicts[e.ModID]; isProblem {
+				expectedDeletions = append(expectedDeletions, e.ModID)
+			} else {
+				unexpectedDeletions = append(unexpectedDeletions, e.ModID)
+			}
+		}
+
+		// Case 1: Unexpected deletions occurred. Give the user a choice.
+		if len(unexpectedDeletions) > 0 {
+			message := fmt.Sprintf(
+				"The following mod files were unexpectedly missing:\n[yellow]%s[-]\n\nDo you want to continue the search without them?",
+				strings.Join(unexpectedDeletions, "\n"),
+			)
+			a.dialogManager.ShowQuestionDialog(
+				"Missing Mod Files Detected",
+				message,
+				func() {
+					logging.Infof("App: Disabling %d mods that are undexpectedly missing: %v", len(missingIDs), missingIDs)
+					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
+					a.Step()
+				},
+				nil,
+			)
+		} else { // Case 2: Only expected deletions. Inform the user.
+			message := fmt.Sprintf(
+				"The following mod(s), which were part of a known conflict set, have been detected as missing:\n[yellow]%s[-]\n\nThis is expected. The search will now proceed with the updated mod list.",
+				strings.Join(expectedDeletions, "\n"),
+			)
+			a.dialogManager.ShowInfoDialog(
+				"Known Conflict Mod(s) Removed",
+				message,
+				func() {
+					logging.Infof("App: Disabling %d mods that are expectedly missing: %v", len(missingIDs), missingIDs)
+					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
+					a.Step()
+				},
+			)
+		}
+		return
+	}
+
 	a.dialogManager.ShowErrorDialog("Bisection Error", `An error occurred and the next step could not be prepared.
 If another program, like Minecraft, is currently acessing your mods, please close it.
 
-Please check the application log for details.`, nil)
+Please check the application log for details.`, nil, nil)
 }
 
 // --- AppInterface Implementation ---
@@ -319,7 +380,7 @@ func (a *App) Layout() *ui.LayoutManager         { return a.layoutManager }
 func (a *App) GetLogger() *logging.Logger        { return a.logger }
 
 func (a *App) GetViewModel() ui.BisectionViewModel {
-	if a.bisectSvc == nil {
+	if !a.IsBisectionReady() {
 		return ui.BisectionViewModel{IsReady: false}
 	}
 
@@ -348,6 +409,7 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 		PendingAdditions:   engine.GetPendingAdditions(),
 		CurrentTestPlan:    currentPlan,
 		ExecutionLog:       a.bisectSvc.GetCombinedExecutionLog(),
+		QuiltSupport:       a.cliArgs.QuiltSupport,
 	}
 }
 

@@ -28,6 +28,7 @@ type BisectionViewModel struct {
 	PendingAdditions   sets.Set
 	CurrentTestPlan    *imcs.TestPlan
 	ExecutionLog       []imcs.CompletedTest
+	QuiltSupport       bool
 }
 
 // AppInterface defines methods the UI layer needs to access from the main App struct.
@@ -44,13 +45,13 @@ type AppInterface interface {
 	SetFocus(tview.Primitive)
 
 	// --- Core Logic ---
-	StartLoadingProcess(modsPath string)
+	StartLoadingProcess(modsPath string, quiltSupport bool)
 	GetViewModel() BisectionViewModel
 	GetStateManager() *mods.StateManager // StateManager is still needed for detailed mod info.
 
 	// --- Actions ---
 	Step()
-	Undo()
+	Undo() bool
 	ResetSearch()
 	ContinueSearch()
 }
