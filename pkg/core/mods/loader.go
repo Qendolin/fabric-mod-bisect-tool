@@ -177,7 +177,7 @@ func (ml *ModLoader) logParsedFile(res processFileResult) {
 	nestedMods := res.mod.NestedModules
 
 	logging.Infof("ModLoader: ├─ Mod %s (%s v%s) from file '%s.jar'",
-		currentMod.FabricInfo.ID, currentMod.FriendlyName(), currentMod.FabricInfo.Version.Version,
+		currentMod.FabricInfo.ID, currentMod.FriendlyName(), currentMod.FabricInfo.Version,
 		res.baseFileName)
 
 	for i, nested := range nestedMods {
@@ -185,8 +185,8 @@ func (ml *ModLoader) logParsedFile(res processFileResult) {
 		if i == len(nestedMods)-1 {
 			treeSymbol = "└"
 		}
-		logging.Infof("ModLoader: │   %s─ Mod %s (%s v%s) provided by %s.",
-			treeSymbol, nested.ID, nested.Name, nested.Version.Version, currentMod.FabricInfo.ID)
+		logging.Infof("ModLoader: │   %s─ Mod %s (%s v%s) provided by %s from '%s'.",
+			treeSymbol, nested.Info.ID, nested.Info.Name, nested.Info.Version, currentMod.FabricInfo.ID, nested.PathInJar)
 	}
 }
 
@@ -335,10 +335,10 @@ func populateProviderMaps(allMods map[string]*Mod, potentialProviders PotentialP
 
 		for _, nested := range mod.NestedModules {
 			nestedProviderInfo := providerInfoBase
-			nestedProviderInfo.VersionOfProvidedItem = nested.Version.Version
-			addProvider(potentialProviders, mod.EffectiveProvides, nested.ID, nested.Version.Version, nestedProviderInfo, false)
-			for _, p := range nested.Provides {
-				addProvider(potentialProviders, mod.EffectiveProvides, p, nested.Version.Version, nestedProviderInfo, false)
+			nestedProviderInfo.VersionOfProvidedItem = nested.Info.Version.Version
+			addProvider(potentialProviders, mod.EffectiveProvides, nested.Info.ID, nested.Info.Version.Version, nestedProviderInfo, false)
+			for _, p := range nested.Info.Provides {
+				addProvider(potentialProviders, mod.EffectiveProvides, p, nested.Info.Version.Version, nestedProviderInfo, false)
 			}
 		}
 	}
@@ -485,14 +485,14 @@ func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides 
 
 		for i := range mod.NestedModules {
 			nestedMod := &mod.NestedModules[i]
-			if rules, ok := rulesByModID[nestedMod.ID]; ok {
-				logging.Infof("ModLoader: Applying %d override rule(s) to nested mod %s (within %s).", len(rules), nestedMod.ID, topLevelID)
+			if rules, ok := rulesByModID[nestedMod.Info.ID]; ok {
+				logging.Infof("ModLoader: Applying %d override rule(s) to nested mod %s (within %s).", len(rules), nestedMod.Info.ID, topLevelID)
 				for _, rule := range rules {
-					rule.Apply(nestedMod)
+					rule.Apply(&nestedMod.Info)
 					logging.Debugf("ModLoader:   - Applied rule: Target='%s', Field='%s', Key='%s', Action='%s', Value='%s'",
 						rule.Target(), rule.Field(), rule.Key(), rule.Action().String(), rule.Value())
 				}
-				foundTargets[nestedMod.ID] = struct{}{}
+				foundTargets[nestedMod.Info.ID] = struct{}{}
 			}
 		}
 	}

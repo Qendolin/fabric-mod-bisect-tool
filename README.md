@@ -45,7 +45,7 @@ When you first launch the tool, you'll see the setup screen.
 
 The tool will then analyze all your mods, which may take a few moments.
 
-*(Suggestion: Add a screenshot of the setup screen here.)*
+![Setup Page](docs/img/setup-page.jpg)
 
 ### Step 2: The Main Screen
 
@@ -53,7 +53,7 @@ This is your mission control. You'll see several lists showing the status of you
 
 *   **Action:** Press the **"Start"** button (or the `S` key) to begin the first test.
 
-*(Suggestion: Add a screenshot of the main screen here.)*
+![Main Page](docs/img/main-page-start.jpg)
 
 ### Step 3: The Test
 
@@ -68,6 +68,8 @@ The tool will now show you a "Test in Progress" screen. It has just enabled a sp
 
 The tool will use your answer to narrow down the search and prepare the next test. Repeat this process until a result is found.
 
+![Test Page](docs/img/test-page.jpg)
+
 ### Step 4: The Results
 
 Once the tool has found a problematic mod (or set of mods), it will show you the **Result** screen.
@@ -77,6 +79,8 @@ Once the tool has found a problematic mod (or set of mods), it will show you the
     2.  You should now manually disable or delete those specific mod files from your `mods` folder. The tool will also tell you if any other mods depend on the problematic ones; consider disabling them as well.
     3.  If you suspect there might be other unrelated issues, you can return to the main page and click **"Continue Search"** to start looking for the next problem among the remaining mods.
 
+![Result Page](docs/img/result-page.jpg)
+
 ## Managing Mods
 
 On the main screen, you can press **`M`** to go to the **Manage Mods** page. This gives you fine-grained control over the search process.
@@ -85,6 +89,18 @@ On the main screen, you can press **`M`** to go to the **Manage Mods** page. Thi
 *   **Disabled:** The mod is treated as if it were temporarily removed from the `mods` folder. It will be *always off* and cannot be activated as a dependency for another mod.
 *   **Omitted:** The mod is ignored and removed from the search pool (`Candidates`). However, if another mod being tested requires it as a dependency, the tool **will still activate it**. This is useful for performance mods or libraries you've already confirmed are safe but are needed for other mods to run.
 *   **Pending:** A temporary status indicating a mod will be added back into the search pool at the start of the next full search round. This is a safety measure to ensure the integrity of an in-progress bisection.
+
+![Manage Mods Page](docs/img/manage-page.jpg)
+
+## History Page
+
+You can press **`Ctrl+H`** to go to the **History** page. This page provides a detailed log of all the tests performed during the current bisection session. For each test, you'll see which mods were enabled and the outcome you reported (Success or Failure). This is useful for reviewing your steps, understanding how the tool arrived at its conclusion, or for debugging purposes if you believe there was an error in the process.
+
+![History Page](docs/img/history-page.jpg)
+
+## Log Page
+
+You can press **`Ctrl+L`** to go to the **Log** page. This page displays the internal log of the tool in real-time. It's primarily useful for debugging purposes or for providing information when reporting an issue to the developers. You can also find the full log file saved as `bisect-tool-YYY-MM-DD_HH-MM-SS.log` in the same directory as the executable.
 
 ## Advanced Features
 

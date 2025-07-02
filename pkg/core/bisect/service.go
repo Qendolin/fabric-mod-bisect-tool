@@ -95,7 +95,9 @@ func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.Ba
 
 	// 3. Not cached. We must perform the test manually.
 	// Break the loop and return the plan and file changes to the UI.
-	effectiveSet, _ := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+	logging.Info("BisectService: Resolving effective set for test targets.")
+	effectiveSet, resolutionPath := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+	logging.Infof("BisectService: %v", resolutionPath)
 
 	statuses := s.state.GetModStatusesSnapshot()
 	finalEffectiveSet := s.finalizeEffectiveSet(effectiveSet, statuses)
@@ -103,13 +105,6 @@ func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.Ba
 	logging.Debugf("BisectService: Final effective set contains %d mods: %v", len(finalEffectiveSet), sets.FormatSet(finalEffectiveSet))
 
 	changes, err = s.activator.Apply(finalEffectiveSet, statuses)
-
-	// Optional: Log the full resolution path for extreme detail.
-	// var resLog []string
-	// for _, info := range resolutionPath {
-	//     resLog = append(resLog, fmt.Sprintf("  - %s (%s)", info.ModID, info.Reason))
-	// }
-	// logging.Debugf("BisectService: Full resolution path:\n%s", strings.Join(resLog, "\n"))
 
 	return plan, changes, err
 }
