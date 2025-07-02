@@ -58,6 +58,7 @@ func NewResultPage(app ui.AppInterface) *ResultPage {
 	p.continueButton = tview.NewButton("Continue Search").
 		SetSelectedFunc(func() {
 			p.app.Dialogs().ShowQuestionDialog(
+				"Confirmation",
 				"This will start a new search for the next conflict set within the remaining mods. Continue?",
 				func() { // OnYes
 					p.app.Navigation().CloseModal()

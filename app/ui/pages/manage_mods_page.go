@@ -86,6 +86,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 
 			// There are changes, show the apply/discard dialog.
 			p.app.Dialogs().ShowQuestionDialog(
+				"Outstanding Changes",
 				"You have unsaved changes. Apply them?",
 				func() {
 					p.commitChanges()
@@ -101,7 +102,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 	}
 }
 
-// NEW: commitChanges applies the session state to the real StateManager.
+// commitChanges applies the session state to the real StateManager.
 func (p *ManageModsPage) commitChanges() {
 	if p.session == nil {
 		p.app.Navigation().GoBack()
@@ -225,8 +226,10 @@ func (p *ManageModsPage) RefreshState() {
 		isSessionPending := p.session.isPendingAddition(id)
 
 		var statusStr string
-		// Priority: Forced > Omitted > Problem > In Test > Inactive
-		if isGloballyPending || isSessionPending {
+		// Priority: Missing > Forced > Omitted > Problem > In Test > Inactive
+		if status.IsMissing { // status.IsMissing is non-editable
+			statusStr = "[black:red:b]MISSING[-:-:-]"
+		} else if isGloballyPending || isSessionPending {
 			statusStr = "[mediumpurple]Pending[-:-:-]"
 		} else if status.ForceEnabled {
 			statusStr = "[green]Forced[-:-:-]"

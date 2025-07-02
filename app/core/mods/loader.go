@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
@@ -432,9 +433,10 @@ func compareVersions(v1Str, v2Str string) int {
 		return 0
 	}
 
-	v1, err1 := ParseExtendedSemVer(v1Str)
-	v2, err2 := ParseExtendedSemVer(v2Str)
+	v1, err1 := version.Parse(v1Str, false)
+	v2, err2 := version.Parse(v2Str, false)
 
+	_, _ = v1, v2
 	if err1 == nil && err2 == nil {
 		return v1.Compare(v2)
 	}

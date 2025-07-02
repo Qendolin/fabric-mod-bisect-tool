@@ -4,19 +4,28 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/app/logging"
 )
 
-const (
-	logPath = "fabric-mod-bisect-tool.log"
-)
-
 func main() {
+	cliArgs := app.ParseCLIArgs()
+
 	// 1. Setup logging first.
 	mainLogger := logging.NewLogger()
+	// Create the log directory if it doesn't exist.
+	if err := os.MkdirAll(cliArgs.LogDir, 0755); err != nil {
+		os.Stderr.WriteString(fmt.Sprintf("Failed to create log directory: %v\n", err))
+		os.Exit(1)
+	}
+	// Create a unique, timestamped log file name.
+	logFileName := fmt.Sprintf("bisect-tool-%s.log", time.Now().Format("2006-01-02_15-04-05"))
+	logPath := filepath.Join(cliArgs.LogDir, logFileName)
+
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		// Can't use logger yet, so print to stderr
@@ -27,7 +36,6 @@ func main() {
 	mainLogger.SetWriter(logFile)
 	logging.SetDefault(mainLogger)
 
-	cliArgs := app.ParseCLIArgs()
 	if cliArgs.Verbose {
 		mainLogger.SetDebug(true)
 		logging.Infof("Main: Verbose logging enabled.")
@@ -55,5 +63,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	if a.IsBisectionReady() {
+		finalReport := app.GenerateLogReport(
+			a.GetViewModel(),
+			a.GetStateManager(),
+		)
+		logging.Infof("\n===== Bisection Report =====\n\n%s", finalReport)
+	}
+
 	logging.Infof("Main: Application exited gracefully.")
 }

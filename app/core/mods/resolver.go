@@ -55,7 +55,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 
 	// Process initial targets
 	for modID := range targetSet {
-		if status, ok := s.modStatuses[modID]; ok && status.ForceDisabled {
+		if status, ok := s.modStatuses[modID]; ok && !status.IsActivatable() {
 			continue
 		}
 		if _, isDirectMod := s.allMods[modID]; isDirectMod {
@@ -68,7 +68,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 	// Process force-enabled mods
 	for modID, status := range s.modStatuses {
 		if status.ForceEnabled {
-			if status.ForceDisabled { // Should not happen with StateManager logic, but good practice
+			if !status.IsActivatable() { // Should not happen with StateManager logic, but good practice
 				continue
 			}
 			if _, isDirectMod := s.allMods[modID]; isDirectMod {
@@ -96,8 +96,8 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 // ensureModActive attempts to activate a mod and its dependencies.
 // Returns true if modToActivateID and all its hard (non-optional, non-implicit) dependencies were successfully activated.
 func (s *resolutionSession) ensureModActive(modToActivateID, neededByModID, reasonForActivation, dependencyIDSatisfied string) bool {
-	if status, ok := s.modStatuses[modToActivateID]; ok && status.ForceDisabled {
-		logging.Debugf("Resolver: Mod '%s' is force-disabled, cannot activate (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
+	if status, ok := s.modStatuses[modToActivateID]; ok && !status.IsActivatable() {
+		logging.Debugf("Resolver: Mod '%s' cannot be activated due to its state (needed by '%s', dependency: '%s').", modToActivateID, neededByModID, dependencyIDSatisfied)
 		return false
 	}
 
@@ -262,7 +262,7 @@ func (s *resolutionSession) findBestProvider(depID string) *ProviderInfo {
 	for i := range providerCandidates {
 		candidate := &providerCandidates[i]
 
-		if status, ok := s.modStatuses[candidate.TopLevelModID]; ok && status.ForceDisabled {
+		if status, ok := s.modStatuses[candidate.TopLevelModID]; ok && !status.IsActivatable() {
 			continue
 		}
 		if _, modExists := s.allMods[candidate.TopLevelModID]; !modExists {
@@ -305,8 +305,8 @@ func (s *resolutionSession) getSelectedProviderForDep(dependencyIDSatisfied, mod
 	for i := range candidates {
 		candidate := &candidates[i]
 		if candidate.TopLevelModID == modToActivateID {
-			if status, ok := s.modStatuses[modToActivateID]; ok && status.ForceDisabled {
-				return nil, false // This provider is disabled
+			if status, ok := s.modStatuses[modToActivateID]; ok && !status.IsActivatable() {
+				return nil, false // This provider cannot be activated.
 			}
 			return candidate, true
 		}

@@ -152,7 +152,7 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 				p.app.Navigation().SwitchTo(PageManageModsID)
 				return nil
 			case 'r', 'R':
-				p.app.Dialogs().ShowQuestionDialog("Are you sure you want to reset the search?", func() {
+				p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to reset the search?", func() {
 					p.app.ResetSearch()
 				}, nil)
 				return nil
@@ -234,7 +234,7 @@ func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (stat
 	switch {
 	case vm.IsComplete:
 		return "Search Complete", "Results"
-	case vm.CurrentTestPlan != nil:
+	case vm.StepCount > 0 && vm.CurrentTestPlan != nil:
 		if vm.CurrentTestPlan.IsVerificationStep {
 			return "Verifying final conflict set...", "Step"
 		}
@@ -320,7 +320,10 @@ func (p *MainPage) formatModList(modIDs []string) []string {
 }
 
 func (p *MainPage) confirmUndo() {
-	p.app.Dialogs().ShowQuestionDialog("Are you sure you want to undo the last step?", func() {
-		p.app.Undo()
+	p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", func() {
+		ok := p.app.Undo()
+		if !ok {
+			p.app.Dialogs().ShowInfoDialog("Cannot Undo", "The undo operation failed or there were no more steps to undo.", nil)
+		}
 	}, nil)
 }

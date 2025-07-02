@@ -21,10 +21,10 @@ type SetupPage struct {
 	app        ui.AppInterface
 	statusText *tview.TextView
 
-	inputField      *tview.InputField
-	loadButton      *tview.Button
-	loadStateButton *tview.Button
-	quitButton      *tview.Button
+	inputField    *tview.InputField
+	quiltCheckbox *tview.Checkbox
+	loadButton    *tview.Button
+	quitButton    *tview.Button
 }
 
 // NewSetupPage creates a new SetupPage instance.
@@ -34,6 +34,8 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 		app:        app,
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
+
+	vm := app.GetViewModel()
 
 	p.inputField = tview.NewInputField().
 		SetLabel("Mods Directory Path: ").
@@ -52,21 +54,25 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 		}
 	})
 
+	p.quiltCheckbox = tview.NewCheckbox().SetLabel("Quilt Support: ")
+	p.quiltCheckbox.SetChecked(vm.QuiltSupport).
+		SetCheckedString("[green]Yes[-]").
+		SetUncheckedString("[red]No[-]").
+		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
+		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+
 	p.loadButton = tview.NewButton("Load Mods").SetSelectedFunc(func() {
-		if strings.TrimSpace(p.inputField.GetText()) == "" {
-			app.Dialogs().ShowErrorDialog("Error", "Mods path cannot be empty.", nil)
+		cleaned := strings.TrimSpace(p.inputField.GetText())
+		cleaned = strings.TrimPrefix(cleaned, "\"")
+		cleaned = strings.TrimSuffix(cleaned, "\"")
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned == "" {
+			app.Dialogs().ShowErrorDialog("Error", "The mods path cannot be empty.", nil, nil)
 			return
 		}
-		app.StartLoadingProcess(filepath.Clean(p.inputField.GetText()))
+		app.StartLoadingProcess(filepath.Clean(cleaned), p.quiltCheckbox.IsChecked())
 	})
 	widgets.DefaultStyleButton(p.loadButton)
-
-	p.loadStateButton = tview.NewButton("Load Saved State").SetSelectedFunc(func() {
-		p.statusText.SetText("Loading saved state (not implemented yet)...")
-	})
-	widgets.DefaultStyleButton(p.loadStateButton)
-	// TODO: implement state loading
-	p.loadStateButton.SetDisabled(true)
 
 	p.quitButton = tview.NewButton("Quit").SetSelectedFunc(func() {
 		go app.QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
@@ -76,27 +82,39 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 	buttonsFlex := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(p.loadButton, 30, 0, true).
-		AddItem(nil, 1, 0, false).
-		AddItem(p.loadStateButton, 30, 0, true).
 		AddItem(nil, 0, 1, false).
 		AddItem(p.quitButton, 30, 0, true)
 
 	setupFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(p.inputField, 1, 0, true).
+		AddItem(p.quiltCheckbox, 1, 0, false).
 		AddItem(nil, 1, 0, false).
 		AddItem(buttonsFlex, 3, 0, false)
 	setupFlex.SetBorderPadding(1, 1, 1, 1)
 
-	buildTime := "Unknown"
+	buildTime := ""
+	buildRevision := ""
+	buildInfo := "Unknown"
 	if info, ok := debug.ReadBuildInfo(); ok {
-
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.time" {
 				buildTime = setting.Value
-				break
+			}
+			if setting.Key == "vcs.revision" {
+				buildRevision = setting.Value
 			}
 		}
+	}
+
+	if buildTime != "" {
+		buildInfo = buildTime
+	}
+	if buildRevision != "" {
+		if buildTime != "" {
+			buildInfo += " - "
+		}
+		buildInfo += buildRevision
 	}
 
 	instructions := tview.NewTextView().
@@ -109,11 +127,10 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 [::b]Tool Information:[-:-:-]
   - Build: %s
   - Author: Qendolin
-  - License: MPL 2.0
-`, buildTime))
+`, buildInfo))
 	instructions.SetBorderPadding(0, 0, 1, 1)
 
-	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 8, 0, true).
+	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 9, 0, true).
 		AddItem(widgets.NewTitleFrame(instructions, "Info"), 0, 1, false)
 
 	p.statusText.SetText("Welcome to the Fabric Mod Bisect Tool by Qendolin! Paste the path to your 'mods' directory below.")
@@ -134,8 +151,8 @@ func (p *SetupPage) GetStatusPrimitive() *tview.TextView {
 func (p *SetupPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.inputField,
+		p.quiltCheckbox,
 		p.loadButton,
-		p.loadStateButton,
 		p.quitButton,
 	}
 }

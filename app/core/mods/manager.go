@@ -93,6 +93,33 @@ func (sm *StateManager) SetOmitted(modID string, isOmitted bool) {
 	}
 }
 
+// SetMissing updates the missing state for a single mod.
+func (sm *StateManager) SetMissing(modID string, missing bool) {
+	if status, ok := sm.modStatuses[modID]; ok {
+		if status.IsMissing != missing {
+			status.IsMissing = missing
+			sm.notifyListeners()
+		}
+	}
+}
+
+// SetMissingBatch updates the missing state for multiple mods at once,
+// sending only a single notification.
+func (sm *StateManager) SetMissingBatch(modIDs []string, missing bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.IsMissing != missing {
+				status.IsMissing = missing
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
 // SetForceEnabledBatch updates the force-enabled state for multiple mods at once.
 // It sends only a single notification after all changes are made.
 func (sm *StateManager) SetForceEnabledBatch(modIDs []string, enabled bool) {

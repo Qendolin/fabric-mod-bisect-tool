@@ -1,5 +1,7 @@
 package mods
 
+import "fmt"
+
 // ProviderInfo describes a mod that can satisfy a dependency.
 type ProviderInfo struct {
 	TopLevelModID         string
@@ -48,9 +50,18 @@ func (m *Mod) FriendlyName() string {
 type ModStatus struct {
 	ID            string
 	Mod           *Mod
-	ForceEnabled  bool
+	ForceEnabled  bool // Is mutually exclusive with ForceDisabled and Omitted
 	ForceDisabled bool
 	Omitted       bool // Previously called ManuallyGood
+	IsMissing     bool // Not exclusive with other states
+}
+
+func (s ModStatus) IsSearchCandidate() bool {
+	return !s.ForceEnabled && !s.ForceDisabled && !s.Omitted && !s.IsMissing
+}
+
+func (s ModStatus) IsActivatable() bool {
+	return !s.ForceDisabled && !s.IsMissing
 }
 
 // ResolutionInfo stores details about why a mod is included in an effective set.
@@ -108,4 +119,25 @@ type OverrideRule interface {
 // DependencyOverrides holds a pre-parsed list of polymorphic rules.
 type DependencyOverrides struct {
 	Rules []OverrideRule
+}
+
+// FileMissingError represents an error for a single missing mod file.
+// The primary subject is the file path itself.
+type FileMissingError struct {
+	ModID    string
+	FilePath string
+}
+
+func (e *FileMissingError) Error() string {
+	return fmt.Sprintf("file not found for mod '%s': %s", e.ModID, e.FilePath)
+}
+
+// MissingFilesError is a wrapper error that contains one or more FileMissingError instances.
+// This allows an operation to report all missing files at once.
+type MissingFilesError struct {
+	Errors []*FileMissingError
+}
+
+func (e *MissingFilesError) Error() string {
+	return fmt.Sprintf("found %d missing mod files", len(e.Errors))
 }
