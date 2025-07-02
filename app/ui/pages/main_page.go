@@ -253,7 +253,7 @@ func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
 	modCount := len(vm.AllModIDs)
 
 	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), fmt.Sprintf("Candidates: %d / %d", len(vm.CandidateSet), modCount))
-	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), fmt.Sprintf("Problematic Mods: %d", len(vm.CurrentConflictSet)))
+	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), fmt.Sprintf("Problematic Mods (Current Round): %d", len(vm.CurrentConflictSet)))
 	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.ClearedSet), fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
 }
 

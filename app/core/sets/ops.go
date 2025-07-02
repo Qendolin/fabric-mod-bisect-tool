@@ -31,6 +31,14 @@ func Union(a, b Set) Set {
 	return result
 }
 
+// AddInPlace adds all elements from b to a and returns the result.
+func AddInPlace(a, b Set) Set {
+	for k := range b {
+		a[k] = struct{}{}
+	}
+	return a
+}
+
 // Intersection returns a new set containing only the elements present in both set a and set b.
 func Intersection(a, b Set) Set {
 	// For efficiency, iterate over the smaller set.
@@ -56,6 +64,14 @@ func Subtract(a, b Set) Set {
 		}
 	}
 	return result
+}
+
+// Subtract removes all elements in b from a and returns the result.
+func SubtractInPlace(a, b Set) Set {
+	for k := range b {
+		delete(a, k)
+	}
+	return a
 }
 
 // Equal checks if two sets contain the exact same elements.

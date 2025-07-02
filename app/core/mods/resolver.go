@@ -449,13 +449,50 @@ func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.S
 	return dependerSet
 }
 
-// CalculateUnresolvableMods determines which mods from a given set of candidates
-// cannot have their dependencies met if the only available providers are also
-// within that same set. This function now respects version predicates.
-func (dr *DependencyResolver) CalculateUnresolvableMods(availableMods sets.Set) sets.Set {
-	unresolvable := make(sets.Set)
+// FindAllUnresolvableMods iteratively calculates the complete set of unresolvable mods
+// from an initial set of candidates. It finds not only mods with missing direct
+// dependencies but also mods whose dependencies become unavailable transitively.
+func (dr *DependencyResolver) CalculateTransitivelyUnresolvableMods(initialCandidates sets.Set) sets.Set {
+	// Start with the assumption that all candidates are available.
+	currentlyAvailable := sets.Copy(initialCandidates)
+	// This will accumulate all mods we discover are unresolvable.
+	totalUnresolvable := make(sets.Set)
 
-	// We must iterate over a sorted slice for deterministic behavior.
+	for {
+		// Find the next layer of unresolvable mods based on the currently available set.
+		newlyFoundUnresolvable := dr.CalculateDirectlyUnresolvableMods(currentlyAvailable)
+
+		// If this pass found no new problems, the set is stable and we are done.
+		if len(newlyFoundUnresolvable) == 0 {
+			break
+		}
+
+		// Add the newly found unresolvable mods to our final result set.
+		for modID := range newlyFoundUnresolvable {
+			totalUnresolvable[modID] = struct{}{}
+		}
+
+		// Remove the newly found unresolvable mods from the available pool
+		// for the next iteration of the check.
+		currentlyAvailable = sets.SubtractInPlace(currentlyAvailable, newlyFoundUnresolvable)
+	}
+
+	return totalUnresolvable
+}
+
+// CalculateDirectlyUnresolvableMods performs a single, first-degree check to determine
+// which mods from a given set of candidates are immediately unresolvable.
+//
+// A mod is considered directly unresolvable if any of its immediate 'depends' entries
+// cannot be satisfied by a version-compatible provider that is also present within
+// the `availableMods` set.
+//
+// This function does not calculate transitive unresolvability. For example, if mod A
+// depends on mod B, and mod B is found to be unresolvable, this function will not flag
+// mod A as unresolvable due to B's issue. For the full transitive check, see
+// FindAllUnresolvableMods, which uses this function iteratively.
+func (dr *DependencyResolver) CalculateDirectlyUnresolvableMods(availableMods sets.Set) sets.Set {
+	unresolvable := make(sets.Set)
 	sortedCandidates := sets.MakeSlice(availableMods)
 
 	for _, modID := range sortedCandidates {
@@ -464,45 +501,53 @@ func (dr *DependencyResolver) CalculateUnresolvableMods(availableMods sets.Set) 
 			continue // Should not happen with a correctly constructed set
 		}
 
-		// Check each 'depends' entry for the mod.
-	dependencyLoop:
 		for depID, predicates := range mod.FabricInfo.Depends {
 			if IsImplicitMod(depID) {
 				continue
 			}
 
-			// Check if a valid provider for this dependency exists *within the available set*.
-			hasValidProviderInSet := false
-			if providerCandidates, found := dr.potentialProviders[depID]; found {
-				for _, provider := range providerCandidates {
-					// Condition 1: The provider's top-level mod must be in our available set.
-					if _, providerIsAvailable := availableMods[provider.TopLevelModID]; !providerIsAvailable {
-						continue
-					}
-
-					// Condition 2: The provider's version must satisfy all predicates for this dependency.
-					versionIsSatisfactory := true
-					for _, p := range predicates {
-						if !p.Test(provider.VersionOfProvidedItem) {
-							versionIsSatisfactory = false
-							break
-						}
-					}
-
-					if versionIsSatisfactory {
-						// We found at least one valid provider within the set.
-						hasValidProviderInSet = true
-						break // No need to check other providers for this dependency.
-					}
-				}
-			}
-
-			if !hasValidProviderInSet {
+			// Use the helper method to check for a valid provider.
+			if !dr.findValidProviderInSet(depID, predicates, availableMods) {
 				unresolvable[modID] = struct{}{}
-				break dependencyLoop // This mod is unresolvable, move to the next mod.
+				break // This mod is unresolvable; no need to check its other dependencies.
 			}
 		}
 	}
 
 	return unresolvable
+}
+
+// findValidProviderInSet searches for at least one provider that satisfies the dependency,
+// is available in the given set, and matches all version predicates.
+func (dr *DependencyResolver) findValidProviderInSet(depID string, predicates []*version.VersionPredicate, availableMods sets.Set) bool {
+	providerCandidates, found := dr.potentialProviders[depID]
+	if !found {
+		return false // No potential providers exist for this dependency at all.
+	}
+
+	for _, provider := range providerCandidates {
+		// Condition 1: The provider's top-level mod must be in our available set.
+		if _, providerIsAvailable := availableMods[provider.TopLevelModID]; !providerIsAvailable {
+			continue
+		}
+
+		// Condition 2: The provider's version must satisfy all predicates for this dependency.
+		if checkAllPredicatesSatisfied(predicates, provider.VersionOfProvidedItem) {
+			return true // Found a valid provider.
+		}
+	}
+
+	// Scanned all potential providers and none were suitable.
+	return false
+}
+
+// checkAllPredicatesSatisfied is a helper that returns true only if the version
+// satisfies every predicate in the slice.
+func checkAllPredicatesSatisfied(predicates []*version.VersionPredicate, v version.Version) bool {
+	for _, p := range predicates {
+		if !p.Test(v) {
+			return false // Early exit on first failure.
+		}
+	}
+	return true // All predicates were satisfied.
 }

@@ -51,14 +51,20 @@ func NewService(stateMgr *mods.StateManager, activator *mods.Activator) (*Servic
 // handleStateChange is called when a mod's forced status changes.
 func (s *Service) handleStateChange() {
 	logging.Debugf("BisectService: State change detected. Reconciling system state.")
-	// 1. Reconcile the engine based on user-driven changes (Omit, Force Enable, etc.).
-	validCandidates := s.getValidCandidates()
-	s.engine.Reconcile(validCandidates)
 
-	// 2. Explicitly reconcile and disable any mods that became unresolvable as a result.
-	s.reconcileAndDisableUnresolvable(validCandidates)
+	// 1. Determine which mods have become unresolvable due to the user's change.
+	currentCandidates := s.getValidCandidates()
+	unresolvableMods := s.state.Resolver().CalculateTransitivelyUnresolvableMods(currentCandidates)
 
-	// 3. Notify the UI of the final, consistent state.
+	// 2. Disable them. This has a side effect that will be picked up by the next call.
+	if len(unresolvableMods) > 0 {
+		s.state.SetForceDisabledBatch(sets.MakeSlice(unresolvableMods), true)
+	}
+
+	// 3. Reconcile the engine based on the final, valid set of candidates.
+	s.engine.Reconcile(s.getValidCandidates())
+
+	// 4. Notify the UI of the final, consistent state.
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
@@ -163,31 +169,26 @@ func (s *Service) UndoLastStep() bool {
 	return true
 }
 
-// reconcileAndDisableUnresolvable iteratively finds and disables any mods that have
-// become unresolvable given the current set of available mods. It is the single
-// source of truth for enforcing dependency consistency.
-func (s *Service) reconcileAndDisableUnresolvable(initialCandidates sets.Set) sets.Set {
-	// Start with a copy of the provided universe of candidates.
-	currentlyAvailable := sets.Copy(initialCandidates)
+// prepareNewRoundCandidates takes the master list of all possible candidates for the
+// next round, determines which ones have become unresolvable, disables them in the
+// state manager, and returns the final, clean list of candidates.
+func (s *Service) prepareNewRoundCandidates(masterCandidates sets.Set) (sets.Set, []string) {
+	// First, determine which of the master candidates are still considered valid by the user.
+	userValidCandidates := sets.Intersection(masterCandidates, s.getValidCandidates())
 
-	allNewlyDisabled := make(sets.Set)
+	// Now, check if any of these have become unresolvable.
+	unresolvableMods := s.state.Resolver().CalculateTransitivelyUnresolvableMods(userValidCandidates)
 
-	// Iteratively find and disable unresolvable mods until the set is stable.
-	for {
-		unresolvableInThisPass := s.state.Resolver().CalculateUnresolvableMods(currentlyAvailable)
-		if len(unresolvableInThisPass) == 0 {
-			break // The set is stable, no more unresolvable mods found.
-		}
-
-		logging.Warnf("BisectService.Reconcile: Found %d unresolvable mods in this pass: %v", len(unresolvableInThisPass), sets.MakeSlice(unresolvableInThisPass))
-
-		// Disable these mods and remove them from our working set for the next iteration.
-		s.state.SetForceDisabledBatch(sets.MakeSlice(unresolvableInThisPass), true)
-		currentlyAvailable = sets.Subtract(currentlyAvailable, unresolvableInThisPass)
-		allNewlyDisabled = sets.Union(allNewlyDisabled, unresolvableInThisPass)
+	// Commit the state change: disable the unresolvable mods.
+	if len(unresolvableMods) > 0 {
+		logging.Warnf("BisectService.Reconcile: Found %d unresolvable mods: %v", len(unresolvableMods), sets.MakeSlice(unresolvableMods))
+		s.state.SetForceDisabledBatch(sets.MakeSlice(unresolvableMods), true)
 	}
 
-	return allNewlyDisabled
+	// The final candidates are the user-valid ones minus those that were just found to be unresolvable.
+	finalCandidates := sets.Subtract(userValidCandidates, unresolvableMods)
+
+	return finalCandidates, sets.MakeSlice(unresolvableMods)
 }
 
 // CancelTest reverts file changes and invalidates the current test plan.
@@ -199,30 +200,20 @@ func (s *Service) CancelTest(changes []mods.BatchStateChange) {
 // ContinueSearch archives the current conflict set, prepares for the next round by
 // auto-disabling any newly unresolvable mods, and then starts a new bisection
 // search on the remaining candidate mods.
-func (s *Service) ContinueSearch() *ContinueSearchResult {
-	result := &ContinueSearchResult{}
+func (s *Service) ContinueSearch() ContinueSearchResult {
 	lastEngine := s.engine
 	lastState := lastEngine.GetCurrentState()
-	lastFoundConflictSet := lastState.ConflictSet
 
 	logging.Infof("BisectService: Starting 'Continue Search' for Round %d.", lastState.Round+1)
 
 	// --- Phase 1: Archive previous results ---
-	// This action modifies s.enumState.MasterCandidateSet by removing the found conflict.
-	s.enumState.AddFoundConflictSet(lastFoundConflictSet)
+	s.enumState.AddFoundConflictSet(lastState.ConflictSet)
 	s.enumState.AppendLog(lastEngine.GetExecutionLog())
 
-	// --- Phase 2: Reconcile and disable unresolvable mods ---
-	// This is a direct action with observable consequences.
-	newlyDisabled := s.reconcileAndDisableUnresolvable(s.enumState.MasterCandidateSet)
-	if len(newlyDisabled) > 0 {
-		result.NewlyDisabledMods = sets.MakeSlice(newlyDisabled)
-	}
-
-	// --- Phase 3: Calculate final candidate set and provide detailed debug logging ---
-	// The candidates for the next round are what's left in the master set AFTER
-	// also removing any mods that were just auto-disabled.
-	finalNextRoundCandidates := sets.Subtract(s.enumState.MasterCandidateSet, newlyDisabled)
+	// --- Phase 2: Prepare the candidates for the next round ---
+	// This single call handles all reconciliation and state updates.
+	finalNextRoundCandidates, newlyDisabledMods := s.prepareNewRoundCandidates(s.enumState.MasterCandidateSet)
+	result := ContinueSearchResult{NewlyDisabledMods: newlyDisabledMods}
 
 	if logging.IsDebugEnabled() {
 		// Calculate the set of mods the user has manually excluded.
@@ -239,7 +230,7 @@ func (s *Service) ContinueSearch() *ContinueSearchResult {
 		logging.Debugf("BisectService: ===========================================")
 	}
 
-	// --- Phase 4: Create the new engine ---
+	// --- Phase 3: Create the new engine ---
 	nextState := imcs.NewInitialState()
 	nextState.AllModIDs = s.state.GetAllModIDs()
 	nextState.Candidates = sets.MakeSlice(finalNextRoundCandidates)
@@ -247,7 +238,7 @@ func (s *Service) ContinueSearch() *ContinueSearchResult {
 	s.engine = imcs.NewEngine(nextState)
 	logging.Infof("BisectService: Initialized new engine for Round %d.", s.engine.GetCurrentState().Round)
 
-	// --- Phase 5: Trigger UI Update ---
+	// --- Phase 4: Trigger UI Update and return result ---
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
