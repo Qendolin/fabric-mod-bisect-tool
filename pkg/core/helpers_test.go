@@ -84,10 +84,6 @@ func createJarFromSpec(t *testing.T, spec modSpec) ([]byte, error) {
 }
 
 func setupLogger(t *testing.T) *os.File {
-	err := os.MkdirAll(testDir, 0666)
-	if err != nil {
-		t.Fatalf("Failed create testdir: %v", err)
-	}
 	mainLogger := logging.NewLogger()
 	mainLogger.SetDebug(true)
 	filename := fmt.Sprintf("%s-latest.log", t.Name())
