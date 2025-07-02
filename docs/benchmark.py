@@ -25,7 +25,7 @@ class TestRunner:
         return self._problematic_set.issubset(test_set)
 
 # ==============================================================================
-# Algorithm 1: Iterative Additive Search (Your "Mystery" Algorithm)
+# Algorithm 1: Iterative Additive Search
 # ==============================================================================
 
 def _find_one_culprit_recursive(
@@ -88,35 +88,78 @@ def find_conflicts_additive(oracle: TestRunner, all_mods: List[int]) -> Set[int]
 # ==============================================================================
 # Algorithm 2: The "Smart Additive" Algorithm (IterativeMinimalConflictSearch)
 # ==============================================================================
+
+
+def _find_next_conflict_element_optimized(oracle: TestRunner, background: Set[str], candidates: List[str]) -> Optional[str]:
+    # Ensure candidates are sorted for deterministic splitting
+    candidates_list = sorted(list(candidates)) 
+
+    # Base Case 1: No more candidates to test.
+    if not candidates_list:
+        return None
+    
+    # Base Case 2: Only one candidate left. Handles initial call if C_all has size 1.
+    if len(candidates_list) == 1:
+        c = candidates_list[0]
+        if oracle.run(background.union({c})):
+            return c
+        else:
+            return None
+
+    # Recursive Step: Divide and conquer.
+    mid = len(candidates_list) // 2
+    c1 = set(candidates_list[:mid])
+    c2 = set(candidates_list[mid:])
+
+    # Test the first half.
+    if oracle.run(background.union(c1)):
+        # OPTIMIZATION: The conflict is in C1. If C1 is a single element, we are done.
+        if len(c1) == 1:
+            return list(c1)[0]
+        else:
+            # Recursive call
+            return _find_next_conflict_element_optimized(oracle, background, list(c1))
+    
+    # Otherwise, the first half is "safe." Search the second half.
+    else:
+        new_background = background.union(c1)
+        # OPTIMIZATION: The conflict might be in C2. If C2 is a single element, test it directly.
+        if len(c2) == 1:
+            d = list(c2)[0]
+            if oracle.run(new_background.union({d})):
+                return d
+            else:
+                return None
+        else:
+            # Recursive call
+            return _find_next_conflict_element_optimized(oracle, new_background, list(c2))
+
 def find_conflicts_smart_additive(oracle: TestRunner, all_mods: List[int]) -> Set[int]:
     """
-    An optimized version of the additive algorithm that removes redundant checks.
+    The Iterative Minimal Conflict Search (IMCS) algorithm.
     """
-    culprits: Set[int] = set()
-    candidates = list(all_mods)
-    
+    conflict_set: Set[str] = set()
+    candidates: List[str] = sorted(all_mods) # Ensure initial candidates are sorted
+
     while True:
-        # Search for the next culprit given the ones we've already found.
-        next_culprit = _find_one_culprit_recursive(
-            oracle,
-            base_set=culprits,
-            search_pool=candidates
-        )
+        # Find the next single component that, in conjunction with the current conflict_set, 
+        # contributes to the failure
+        next_element = _find_next_conflict_element_optimized(oracle, conflict_set, candidates)
         
-        if next_culprit is None:
-            # If no more culprits can be found, our set is complete (or empty).
+        if next_element is None:
+            # If no additional conflict element can be found, the process is complete.
             break
         
-        # Add the newly found culprit and remove it from the candidate pool.
-        culprits.add(next_culprit)
-        candidates.remove(next_culprit)
+        # Add the found element to the confirmed conflict_set and remove it from candidates.
+        conflict_set.add(next_element)
+        candidates.remove(next_element)
         
-        # SMART CHECK: Test if the current set is now a failing set.
-        # If so, we have found the complete minimal set and can stop early.
-        if oracle.run(culprits):
+        # Optimization: Test if the current conflict_set is already a complete, minimal set.
+        # If it causes failure, we can terminate early.
+        if oracle.run(conflict_set):
             break
             
-    return culprits
+    return conflict_set
 
 # ==============================================================================
 # Algorithm 3: Classic `ddmin` (Subtractive)
@@ -303,7 +346,7 @@ def run_benchmark_and_plot():
     # --- Plotting ---
     for p in range(1, P_MAX + 1):
         fig, ax = plt.subplots(figsize=(14, 8))
-        colors = {"Original Additive": "orange", "ddmin Subtractive": "red", "Smart Additive": "green", "QuickXplain": "blue", "Adaptive Hybrid": "purple"}
+        colors = {"Original Additive": "orange", "ddmin Subtractive": "red", "Smart Additive": "green", "Smart Additive Opt": "lime", "QuickXplain": "blue", "Adaptive Hybrid": "purple"}
         num_algs = len(algorithms)
         group_spread_factor = 0.3
         min_y_val, max_y_val = float('inf'), 0

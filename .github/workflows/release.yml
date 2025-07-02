@@ -29,4 +29,5 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: ${{ matrix.goos }}
         goarch: ${{ matrix.goarch }}
-        compress_assets: OFF
+        compress_assets: ./cmd/fabric-mod-bisect-tool
+
