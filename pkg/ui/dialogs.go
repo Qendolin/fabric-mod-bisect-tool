@@ -33,7 +33,7 @@ func (m *DialogManager) ShowErrorDialog(title, message string, err error, onDism
 			})
 		})
 	if err != nil {
-		modal.SetDetailsText(formatErrorChain(err))
+		modal.SetDetailsText(tview.Escape(formatErrorChain(err)))
 	}
 	modal.SetTextColor(tcell.ColorWhite).
 		SetBackgroundColor(tcell.ColorDarkRed).
@@ -67,7 +67,7 @@ func (m *DialogManager) ShowQuitDialog() {
 	m.app.Navigation().ShowModal("quit_dialog", NewModalPage(modal))
 }
 
-func (m *DialogManager) ShowQuestionDialog(title string, question string, onYes func(), onNo func()) {
+func (m *DialogManager) ShowQuestionDialog(title, question, details string, onYes func(), onNo func()) {
 	modal := widgets.NewRichModal().
 		SetCenteredText(question).
 		AddButtons([]string{"No", "Yes"}).
@@ -86,6 +86,9 @@ func (m *DialogManager) ShowQuestionDialog(title string, question string, onYes 
 				}
 			})
 		})
+	if details != "" {
+		modal.SetDetailsText(details)
+	}
 	modal.SetTextColor(tcell.ColorBlack).
 		SetTitleColor(tcell.ColorBlack).
 		SetBorderColor(tcell.ColorWhite)
@@ -94,7 +97,7 @@ func (m *DialogManager) ShowQuestionDialog(title string, question string, onYes 
 }
 
 // ShowInfoDialog displays a modal dialog with a neutral informational message.
-func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) {
+func (m *DialogManager) ShowInfoDialog(title, message, details string, onDismiss func()) {
 	modal := widgets.NewRichModal().
 		SetCenteredText(message).
 		AddButtons([]string{"Dismiss"}).
@@ -106,6 +109,9 @@ func (m *DialogManager) ShowInfoDialog(title, message string, onDismiss func()) 
 				}
 			})
 		})
+	if details != "" {
+		modal.SetDetailsText(details)
+	}
 	modal.SetTextColor(tcell.ColorBlack).
 		SetTitleColor(tcell.ColorBlack).
 		SetBorderColor(tcell.ColorWhite)

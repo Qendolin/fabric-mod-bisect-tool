@@ -54,6 +54,7 @@ type AppInterface interface {
 	Undo() bool
 	ResetSearch()
 	ContinueSearch()
+	Reconcile(callback func())
 }
 
 // SearchStateObserver defines an interface for pages that need to be updated

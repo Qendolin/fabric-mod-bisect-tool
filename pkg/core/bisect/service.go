@@ -1,6 +1,7 @@
 package bisect
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
@@ -9,11 +10,17 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 )
 
-// ContinueSearchResult describes the outcome of a ContinueSearch operation.
-type ContinueSearchResult struct {
-	// NewlyDisabledMods contains the IDs of mods that were automatically
-	// force-disabled because their dependencies became unresolvable.
-	NewlyDisabledMods []string
+// ErrNeedsReconciliation is returned by service methods that require a consistent
+// state to operate, but detect that the state has been dirtied by user actions.
+var ErrNeedsReconciliation = errors.New("system state is inconsistent and needs reconciliation")
+var ErrUndoStackEmpty = errors.New("cannot undo: undo stack is empty")
+
+// ActionReport describes the outcome of a state-changing operation like
+// reconciliation or advancing to the next search round.
+type ActionReport struct {
+	ModsSetProblematic  sets.Set
+	ModsSetUnresolvable sets.Set
+	HasChanges          bool
 }
 
 // Service encapsulates the entire bisection business logic.
@@ -24,7 +31,12 @@ type Service struct {
 
 	enumState *Enumeration
 
+	// The OnStateChange callback is now only for simple UI redraw notifications.
 	OnStateChange func()
+
+	// A flag indicating that the system's dependency state may be inconsistent.
+	needsReconciliation bool
+	isReconciling       bool // Guard flag against infinite loops
 }
 
 // NewService creates a new bisect service from pre-loaded components.
@@ -33,41 +45,34 @@ func NewService(stateMgr *mods.StateManager, activator *mods.Activator) (*Servic
 		return nil, fmt.Errorf("failed to enable all mods on startup: %w", err)
 	}
 
-	initalState := imcs.NewInitialState()
-	initalState.AllModIDs = stateMgr.GetAllModIDs()
-	initalState.Candidates = stateMgr.GetAllModIDs()
-	engine := imcs.NewEngine(initalState)
+	initialState := imcs.NewInitialState()
+	initialState.AllModIDs = stateMgr.GetAllModIDs()
+	initialState.Candidates = stateMgr.GetAllModIDs()
+	engine := imcs.NewEngine(initialState)
 
 	svc := &Service{
 		state:     stateMgr,
 		activator: activator,
 		engine:    engine,
-		enumState: NewEnumeration(stateMgr.GetAllModIDs()),
+		enumState: NewEnumeration(),
 	}
-	stateMgr.OnStateChanged = svc.handleStateChange
+
+	// When the StateManager changes, mark the service as needing reconciliation
+	// and then forward the notification to the UI.
+	stateMgr.OnStateChanged = func() {
+		if svc.isReconciling {
+			return
+		}
+		svc.needsReconciliation = true
+		if svc.OnStateChange != nil {
+			svc.OnStateChange()
+		}
+	}
+
+	// Perform an initial reconciliation to ensure a clean starting state.
+	svc.ReconcileState()
+
 	return svc, nil
-}
-
-// handleStateChange is called when a mod's forced status changes.
-func (s *Service) handleStateChange() {
-	logging.Debugf("BisectService: State change detected. Reconciling system state.")
-
-	// 1. Determine which mods have become unresolvable due to the user's change.
-	currentCandidates := s.getValidCandidates()
-	unresolvableMods := s.state.Resolver().CalculateTransitivelyUnresolvableMods(currentCandidates)
-
-	// 2. Disable them. This has a side effect that will be picked up by the next call.
-	if len(unresolvableMods) > 0 {
-		s.state.SetForceDisabledBatch(sets.MakeSlice(unresolvableMods), true)
-	}
-
-	// 3. Reconcile the engine based on the final, valid set of candidates.
-	s.engine.Reconcile(s.getValidCandidates())
-
-	// 4. Notify the UI of the final, consistent state.
-	if s.OnStateChange != nil {
-		s.OnStateChange()
-	}
 }
 
 // --- Direct Component Access ---
@@ -83,9 +88,79 @@ func (s *Service) GetCurrentState() imcs.SearchState {
 	return s.engine.GetCurrentState()
 }
 
+// NeedsReconciliation returns true if the system state may be inconsistent
+// and a call to ReconcileState is required before performing major operations.
+func (s *Service) NeedsReconciliation() bool {
+	return s.needsReconciliation
+}
+
+// ReconcileState checks for and resolves dependency inconsistencies. It is safe
+// to call multiple times; it will do nothing if the state is already consistent.
+// It returns a report of any mods whose state was changed.
+func (s *Service) ReconcileState() (report ActionReport) {
+	if !s.needsReconciliation {
+		return
+	}
+
+	s.isReconciling = true
+	defer func() { s.isReconciling = false }()
+
+	logging.Debugf("BisectService: Reconciling system state.")
+
+	// Calculate what the set of unresolvable mods should be.
+	expectedUnresolvable := s.state.Resolver().CalculateTransitivelyUnresolvableMods(s.getActivatableMods())
+
+	// Get the set of mods currently marked as unresolvable.
+	currentlyUnresolvable := make(sets.Set)
+	for id, status := range s.state.GetModStatusesSnapshot() {
+		if status.IsUnresolvable {
+			currentlyUnresolvable[id] = struct{}{}
+		}
+	}
+
+	// Determine which mods need their state updated.
+	newlyUnresolvable := sets.Subtract(expectedUnresolvable, currentlyUnresolvable)
+	newlyResolvable := sets.Subtract(currentlyUnresolvable, expectedUnresolvable)
+
+	// Commit the state changes.
+	modStateChanged := false
+	if len(newlyUnresolvable) > 0 {
+		s.state.SetUnresolvableBatch(sets.MakeSlice(newlyUnresolvable), true)
+		modStateChanged = true
+	}
+	if len(newlyResolvable) > 0 {
+		s.state.SetUnresolvableBatch(sets.MakeSlice(newlyResolvable), false)
+		modStateChanged = true
+	}
+
+	// After reconciliation, the bisection engine's view of candidates might be stale.
+	engineStateChanged := s.engine.Reconcile(s.getSearchCandidates())
+
+	// The state is now consistent, so clear the flag.
+	s.needsReconciliation = false
+
+	report.HasChanges = modStateChanged || engineStateChanged
+	report.ModsSetUnresolvable = newlyUnresolvable
+
+	// A reconciliation always implies the state may have changed in ways that
+	// require a UI refresh (e.g., engine's pending additions cleared).
+	// Notify the app so it can trigger a redraw.
+	if report.HasChanges && s.OnStateChange != nil {
+		s.OnStateChange()
+	}
+
+	return
+}
+
 // PlanAndApplyNextTest is the single entry point for the UI's "Step" action.
+// It will fail if the system state is inconsistent.
 func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.BatchStateChange, err error) {
-	// 1. Plan the very next logical test.
+	// 1. Guard Clause: Refuse to operate on an inconsistent state.
+	if s.NeedsReconciliation() {
+		return nil, nil, ErrNeedsReconciliation
+	}
+
+	// 2. Plan the very next logical test.
 	plan, err = s.engine.PlanNextTest()
 	if err != nil {
 		return nil, nil, err // Search is complete or cannot proceed.
@@ -93,8 +168,7 @@ func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.Ba
 
 	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
 
-	// 3. Not cached. We must perform the test manually.
-	// Break the loop and return the plan and file changes to the UI.
+	// 3. Resolve and activate the mod set for the test.
 	logging.Info("BisectService: Resolving effective set for test targets.")
 	effectiveSet, resolutionPath := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
 	logging.Infof("BisectService: %v", resolutionPath)
@@ -119,7 +193,7 @@ func (s *Service) finalizeEffectiveSet(proposedSet sets.Set, statuses map[string
 			// A user override to force-enable a mod takes precedence.
 			finalSet[id] = struct{}{}
 		} else if !status.IsActivatable() {
-			// Any mod that is not activatable (e.g., ForceDisabled, IsMissing) must be excluded.
+			// Any mod that is not activatable must be excluded.
 			delete(finalSet, id)
 		}
 	}
@@ -144,46 +218,24 @@ func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchS
 }
 
 // UndoLastStep orchestrates a complete undo operation. It reverts the bisection engine to its previous state.
-// It returns true if the undo operation was successful
-func (s *Service) UndoLastStep() bool {
+func (s *Service) UndoLastStep() error {
 	if s.engine == nil {
-		return false
+		return errors.New("cannot undo: engine is not initialized")
 	}
 
 	undoneFrame, ok := s.engine.Undo()
 	if !ok {
-		logging.Warnf("BisectService: Undo failed. Engine could not revert its state.")
-		return false
+		return errors.New("cannot undo: undo stack is empty")
 	}
 	logging.Infof("BisectService: Undone frame: Round %d, Iteration %d, Step %d.", undoneFrame.State.Round, undoneFrame.State.Iteration, undoneFrame.State.Step)
 
+	// Undoing a step can change what's considered unresolvable.
+	s.needsReconciliation = true
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
 
-	return true
-}
-
-// prepareNewRoundCandidates takes the master list of all possible candidates for the
-// next round, determines which ones have become unresolvable, disables them in the
-// state manager, and returns the final, clean list of candidates.
-func (s *Service) prepareNewRoundCandidates(masterCandidates sets.Set) (sets.Set, []string) {
-	// First, determine which of the master candidates are still considered valid by the user.
-	userValidCandidates := sets.Intersection(masterCandidates, s.getValidCandidates())
-
-	// Now, check if any of these have become unresolvable.
-	unresolvableMods := s.state.Resolver().CalculateTransitivelyUnresolvableMods(userValidCandidates)
-
-	// Commit the state change: disable the unresolvable mods.
-	if len(unresolvableMods) > 0 {
-		logging.Warnf("BisectService.Reconcile: Found %d unresolvable mods: %v", len(unresolvableMods), sets.MakeSlice(unresolvableMods))
-		s.state.SetForceDisabledBatch(sets.MakeSlice(unresolvableMods), true)
-	}
-
-	// The final candidates are the user-valid ones minus those that were just found to be unresolvable.
-	finalCandidates := sets.Subtract(userValidCandidates, unresolvableMods)
-
-	return finalCandidates, sets.MakeSlice(unresolvableMods)
+	return nil
 }
 
 // CancelTest reverts file changes and invalidates the current test plan.
@@ -192,68 +244,80 @@ func (s *Service) CancelTest(changes []mods.BatchStateChange) {
 	s.engine.InvalidateActivePlan()
 }
 
-// ContinueSearch archives the current conflict set, prepares for the next round by
-// auto-disabling any newly unresolvable mods, and then starts a new bisection
-// search on the remaining candidate mods.
-func (s *Service) ContinueSearch() ContinueSearchResult {
+// ContinueSearch transitions the system to the next search round. It archives
+// the last result, reconciles the candidate list, creates a new engine,
+// and returns a report of the changes.
+func (s *Service) ContinueSearch() (ActionReport, error) {
+	// This action can only be performed if the current search is complete.
+	if !s.engine.GetCurrentState().IsComplete {
+		return ActionReport{}, errors.New("cannot continue search: the current search is not yet complete")
+	}
+
 	lastEngine := s.engine
 	lastState := lastEngine.GetCurrentState()
+	lastConflictSet := lastState.ConflictSet
 
+	// --- Phase 1: Enact Primary State Changes ---
 	logging.Infof("BisectService: Starting 'Continue Search' for Round %d.", lastState.Round+1)
 
-	// --- Phase 1: Archive previous results ---
-	s.enumState.AddFoundConflictSet(lastState.ConflictSet)
+	// Mark the found conflict set as problematic. This is a primary state change
+	// that will trigger our `OnStateChange` hook, setting `needsReconciliation` to true.
+	s.state.SetProblematicBatch(sets.MakeSlice(lastConflictSet), true)
+
+	// Archive the enumeration results for historical records.
+	s.enumState.AddFoundConflictSet(lastConflictSet)
 	s.enumState.AppendLog(lastEngine.GetExecutionLog())
 
-	// --- Phase 2: Prepare the candidates for the next round ---
-	// This single call handles all reconciliation and state updates.
-	finalNextRoundCandidates, newlyDisabledMods := s.prepareNewRoundCandidates(s.enumState.MasterCandidateSet)
-	result := ContinueSearchResult{NewlyDisabledMods: newlyDisabledMods}
+	// --- Phase 2: Perform Reconciliation ---
+	// Because the state is now dirty, we must reconcile it to determine any
+	// newly unresolvable mods and bring the system to a consistent state.
+	report := s.ReconcileState()
+	report.ModsSetProblematic = lastConflictSet // Add problematic mods to the final report.
+	report.HasChanges = report.HasChanges || len(lastConflictSet) > 0
+
+	// --- Phase 3: Create New Engine ---
+	// Now that the state is consistent, we can get the final list of candidates.
+	finalCandidates := s.getSearchCandidates()
 
 	if logging.IsDebugEnabled() {
-		// Calculate the set of mods the user has manually excluded.
-		allMods := sets.MakeSet(s.state.GetAllModIDs())
-		validCandidates := s.getValidCandidates()
-		userExcluded := sets.Subtract(allMods, validCandidates)
-
-		logging.Debugf("BisectService: === Calculating Next Round Candidates ===")
-		logging.Debugf("  - Total Mods to Start: %d", len(allMods))
-		logging.Debugf("  - Subtracting All Found Conflicts: %v", s.enumState.FoundConflictSets)
-		logging.Debugf("  - Subtracting User Excluded (Omitted/Disabled): %v", sets.MakeSlice(userExcluded))
-		logging.Debugf("  - Subtracting Auto-Disabled This Round: %v", result.NewlyDisabledMods)
-		logging.Debugf("  - Final Candidate List for New Engine (%d mods): %v", len(finalNextRoundCandidates), sets.MakeSlice(finalNextRoundCandidates))
+		logging.Debugf("BisectService: === Continue Search Round %d Summary ===", lastState.Round+1)
+		logging.Debugf("  - Last Conflict Found %d: %v", len(lastConflictSet), sets.FormatSet(lastConflictSet))
+		logging.Debugf("  - All Found Conflict Sets %d: %v", len(s.enumState.FoundConflictSets), s.enumState.FoundConflictSets)
+		logging.Debugf("  - Mods Marked Problematic This Round %d: %v", len(report.ModsSetProblematic), sets.FormatSet(report.ModsSetProblematic))
+		logging.Debugf("  - Mods Newly Unresolvable (Auto-Disabled) This Round %d: %v", len(report.ModsSetUnresolvable), sets.FormatSet(report.ModsSetUnresolvable))
+		logging.Debugf("  - Final Candidate List for New Engine %d: %v", len(finalCandidates), sets.FormatSet(finalCandidates))
 		logging.Debugf("BisectService: ===========================================")
 	}
 
-	// --- Phase 3: Create the new engine ---
 	nextState := imcs.NewInitialState()
 	nextState.AllModIDs = s.state.GetAllModIDs()
-	nextState.Candidates = sets.MakeSlice(finalNextRoundCandidates)
+	nextState.Candidates = sets.MakeSlice(finalCandidates)
 	nextState.Round = lastState.Round + 1
 	s.engine = imcs.NewEngine(nextState)
 	logging.Infof("BisectService: Initialized new engine for Round %d.", s.engine.GetCurrentState().Round)
 
-	// --- Phase 4: Trigger UI Update and return result ---
-	if s.OnStateChange != nil {
-		s.OnStateChange()
-	}
-
-	return result
+	return report, nil
 }
 
 // ResetSearch performs a hard reset of the entire bisection process.
-// It discards all history, found conflicts, and cached results,
-// restarting the search from the original set of mods.
 func (s *Service) ResetSearch() {
 	allModIDs := s.state.GetAllModIDs()
+
 	// Re-initialize the entire enumeration state from scratch.
-	s.enumState = NewEnumeration(allModIDs)
+	s.enumState = NewEnumeration()
+
+	// Reset system-set statuses for all mods.
+	s.state.SetProblematicBatch(allModIDs, false)
+	s.state.SetUnresolvableBatch(allModIDs, false)
+
 	// Create a new engine with the original full set of candidates.
 	initialState := imcs.NewInitialState()
 	initialState.AllModIDs = allModIDs
 	initialState.Candidates = allModIDs
 	s.engine = imcs.NewEngine(initialState)
 
+	// Mark state as dirty to force a full reconciliation on the next action.
+	s.needsReconciliation = true
 	if s.OnStateChange != nil {
 		s.OnStateChange()
 	}
@@ -261,7 +325,7 @@ func (s *Service) ResetSearch() {
 
 // --- Helper Methods ---
 
-// GetCurrentExecutionLog returns the log of completed tests.
+// GetCurrentExecutionLog returns the log of completed tests from the active engine.
 func (s *Service) GetCurrentExecutionLog() *imcs.ExecutionLog {
 	if s.engine == nil {
 		return nil
@@ -273,14 +337,12 @@ func (s *Service) GetCurrentExecutionLog() *imcs.ExecutionLog {
 // during the entire session, combining archived logs from previous enumeration
 // runs with the log from the currently active bisection.
 func (s *Service) GetCombinedExecutionLog() []imcs.CompletedTest {
-	// Start with the history from all previously completed runs.
 	if s.enumState == nil || s.enumState.ArchivedExecutionLog == nil {
 		return nil
 	}
 
 	combinedEntries := s.enumState.ArchivedExecutionLog.GetEntries()
 
-	// Append the history from the currently active run.
 	if s.engine != nil {
 		if currentLog := s.engine.GetExecutionLog(); currentLog != nil {
 			combinedEntries = append(combinedEntries, currentLog.GetEntries()...)
@@ -290,14 +352,26 @@ func (s *Service) GetCombinedExecutionLog() []imcs.CompletedTest {
 	return combinedEntries
 }
 
-// getValidCandidates identifies and returns the set of mods that are currently
+// getSearchCandidates identifies and returns the set of mods that are currently
 // considered active participants (candidates) in the bisection search.
-func (s *Service) getValidCandidates() sets.Set {
-	validCandidates := make(sets.Set)
+func (s *Service) getSearchCandidates() sets.Set {
+	searchCandidates := make(sets.Set)
 	for id, status := range s.state.GetModStatusesSnapshot() {
 		if status.IsSearchCandidate() {
-			validCandidates[id] = struct{}{}
+			searchCandidates[id] = struct{}{}
 		}
 	}
-	return validCandidates
+	return searchCandidates
+}
+
+// getActivatableMods identifies and returns the set of all mods that can be
+// enabled, including Omitted mods which may be required as dependencies.
+func (s *Service) getActivatableMods() sets.Set {
+	activatableMods := make(sets.Set)
+	for id, status := range s.state.GetModStatusesSnapshot() {
+		if status.IsActivatable() {
+			activatableMods[id] = struct{}{}
+		}
+	}
+	return activatableMods
 }

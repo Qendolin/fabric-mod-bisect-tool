@@ -67,14 +67,14 @@ Please launch Minecraft and confirm the failure persists.`
 		SetSelectedFunc(p.onSuccess)
 	p.successBtn.SetDisabled(true)
 	p.successBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
-	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.ColorWhite))
+	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkGreen).Background(tcell.ColorWhite))
 	p.successBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen).Underline(true))
 
 	p.failBtn = tview.NewButton("Failure (Issue remains)").
 		SetSelectedFunc(p.onFailure)
 	p.failBtn.SetDisabled(true)
 	p.failBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
-	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorWhite))
+	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkRed).Background(tcell.ColorWhite))
 	p.failBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorRed).Underline(true))
 
 	p.backBtn = tview.NewButton("Back (Cancel Step)").
@@ -106,7 +106,7 @@ Please launch Minecraft and confirm the failure persists.`
 
 	p.SetDirection(tview.FlexRow).
 		AddItem(widgets.NewHorizontalSeparator(tcell.ColorWhite), 1, 0, false).
-		AddItem(tview.NewBox(), 0, 1, false).
+		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(instructions, 0, 2, false).
 		AddItem(buttonFlex, 3, 0, true).
 		AddItem(tview.NewBox(), 0, 1, false)

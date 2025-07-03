@@ -66,7 +66,7 @@ func (e *Engine) PlanNextTest() (*TestPlan, error) {
 // external state change that makes the test irrelevant.
 func (e *Engine) InvalidateActivePlan() {
 	if e.activePlan != nil {
-		logging.Warnf("IMCSEngine: Invalidating active test plan due to external state change.")
+		logging.Info("IMCSEngine: Invalidating active test plan due to external state change.")
 		e.activePlan = nil
 	}
 }
@@ -127,14 +127,16 @@ func (e *Engine) MergePendingAdditions() {
 }
 
 // Reconcile intelligently synchronizes the engine's internal state with a
-// new set of valid candidates from an external source. It handles pruning of
-// invalid items from all parts of the current search state and defers the
-// addition of new items until the end of the current bisection iteration.
-func (e *Engine) Reconcile(validCandidates sets.Set) {
+// new set of valid candidates from an external source. It returns true if any
+// internal state (active plan, pending additions, etc.) was modified.
+func (e *Engine) Reconcile(validCandidates sets.Set) (changed bool) {
 	logging.Debugf("IMCSEngine.Reconcile: Received %d valid candidates: %v", len(validCandidates), sets.FormatSet(validCandidates))
 
 	// 1. Invalidate any active plan, as the underlying assumptions have changed.
-	e.InvalidateActivePlan()
+	if e.activePlan != nil {
+		changed = true
+		e.InvalidateActivePlan()
+	}
 
 	// 2. Determine the full set of items the engine currently considers part of the search.
 	currentEngineItems := sets.MakeSet(e.state.Candidates)
@@ -149,13 +151,16 @@ func (e *Engine) Reconcile(validCandidates sets.Set) {
 		logging.Debugf("IMCSEngine.Reconcile: Pruning %d item(s): %v", len(removals), sets.FormatSet(removals))
 		e.pendingAdditions = sets.Subtract(e.pendingAdditions, removals)
 		e.RemoveCandidates(removals)
+		changed = true
 	}
 
 	// 5. Defer all additions.
 	if len(additions) > 0 {
 		logging.Debugf("IMCSEngine.Reconcile: Deferring addition of %d item(s): %v", len(additions), sets.FormatSet(additions))
 		e.pendingAdditions = sets.Union(e.pendingAdditions, additions)
+		changed = true
 	}
+	return
 }
 
 // RemoveCandidates safely prunes a set of items from all aspects of the

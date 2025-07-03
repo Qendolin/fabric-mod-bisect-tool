@@ -54,67 +54,63 @@ func (w *OverviewWidget) Draw(screen tcell.Screen) {
 	for i := 0; i < width; i++ {
 		currentScreenX := x + i
 
+		endModIndex := len(w.allMods) * (i + 1) / width
 		if currentScreenX == splitPointScreenX {
-			w.drawSplitLine(screen, currentScreenX, y)
+			w.drawSplitLine(screen, currentScreenX, y, lastModIndex, endModIndex)
 		} else {
-			endModIndex := len(w.allMods) * (i + 1) / width
 			w.drawContentCell(screen, currentScreenX, y, lastModIndex, endModIndex)
-			lastModIndex = endModIndex
 		}
+		lastModIndex = endModIndex
 	}
 }
 
 // calculateSplitPointX determines the screen X-coordinate for the bisection split line.
 // Returns -1 if no split line should be drawn.
 func (w *OverviewWidget) calculateSplitPointX(drawX, drawWidth int) int {
-	if len(w.candidateSet) == 0 {
-		return -1 // No candidates, no split.
+	// The split line is only meaningful if there are enough candidates to form two groups.
+	if len(w.candidateSet) < 2 {
+		return -1
 	}
 
-	// Find the absolute indices of the candidate block in the allMods list.
-	candidateStartIndex := -1
-	candidateEndIndex := -1
+	// 1. Get an ordered list of the actual candidate mod IDs. This is the list the bisection algorithm operates on.
+	candidateMods := sets.MakeSlice(w.candidateSet)
+	numCandidates := len(candidateMods)
+
+	// Don't draw the line if the candidate set is too small to be visually useful.
+	if numCandidates < 3 {
+		return -1
+	}
+
+	// 2. Find the logical split point within the candidate list.
+	// This gives us the index of the first mod in the second partition (C2).
+	splitIndexInCandidates := sets.GetSplitIndex(numCandidates)
+	if splitIndexInCandidates >= len(candidateMods) {
+		return -1 // Safety check, should not happen.
+	}
+	splitModID := candidateMods[splitIndexInCandidates]
+
+	// 3. Find the absolute index of this specific mod within the `w.allMods` list, which dictates the visual layout.
+	splitModIndexInAllMods := -1
 	for i, modID := range w.allMods {
-		if _, isCandidate := w.candidateSet[modID]; isCandidate {
-			if candidateStartIndex == -1 {
-				candidateStartIndex = i
-			}
-			candidateEndIndex = i
+		if modID == splitModID {
+			splitModIndexInAllMods = i
+			break
 		}
 	}
 
-	if candidateStartIndex == -1 {
-		return -1 // Should not happen if len(w.candidateMods) > 0, but safety check.
+	if splitModIndexInAllMods == -1 {
+		// This can happen if the widget's state is inconsistent. Do not draw.
+		return -1
 	}
 
-	numCandidates := candidateEndIndex - candidateStartIndex + 1
-	// The split index is relative to the start of the candidates.
-	// Use `(numCandidates + 1) / 2` to handle odd/even splits.
-	splitIndexInCandidates := (numCandidates + 1) / 2
-	// This is the absolute index in the `allMods` list.
-	splitModIndex := candidateStartIndex + splitIndexInCandidates
-
-	// Convert the mod index to a screen coordinate.
-	// `drawWidth / len(w.allMods)` is the mods per screen cell.
-	// `splitModIndex * modsPerCell` gives the pixel position.
-	splitPointScreenX := drawX + (splitModIndex * drawWidth / len(w.allMods))
-
-	// Check if the visual width of the candidate set is at least 3 cells.
-	candidateStartScreenX := drawX + (candidateStartIndex * drawWidth / len(w.allMods))
-	candidateEndScreenX := drawX + ((candidateEndIndex + 1) * drawWidth / len(w.allMods))
-	candidateScreenWidth := candidateEndScreenX - candidateStartScreenX
-
-	if candidateScreenWidth < 3 {
-		return -1 // Not enough space, don't draw the line.
-	}
-
-	return splitPointScreenX
+	// 4. Convert the absolute mod index to a screen coordinate.
+	return drawX + (splitModIndexInAllMods * drawWidth / len(w.allMods))
 }
 
 // drawSplitLine draws the vertical line at the bisection split point.
-func (w *OverviewWidget) drawSplitLine(screen tcell.Screen, x, y int) {
-	// The split point is always within the candidate set, which is white.
-	style := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
+func (w *OverviewWidget) drawSplitLine(screen tcell.Screen, x, y, startModIndex, endModIndex int) {
+	color := w.determineColor(w.allMods[startModIndex:endModIndex])
+	style := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(color)
 	screen.SetContent(x, y, tview.BoxDrawingsDoubleVertical, nil, style)
 }
 
