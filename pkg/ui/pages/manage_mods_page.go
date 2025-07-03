@@ -68,17 +68,8 @@ func (p *ManageModsPage) setupLayout() {
 
 func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
-		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
-			return event
-		}
 
-		if p.modTable.HasFocus() {
-			// Handle state changes when table is focused
-			if p.handleTableInput(event) == nil {
-				return nil
-			}
-		}
-
+		// Handle escape first
 		if event.Key() == tcell.KeyEscape {
 			if p.session == nil || !p.session.HasChanges() {
 				p.app.Navigation().GoBack() // No changes, just go back.
@@ -89,6 +80,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 			p.app.Dialogs().ShowQuestionDialog(
 				"Outstanding Changes",
 				"You have unsaved changes. Apply them?",
+				"",
 				func() {
 					p.commitChanges()
 				},
@@ -97,6 +89,18 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 				},
 			)
 			return nil
+		}
+
+		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
+			return event
+		}
+
+		if p.modTable.HasFocus() {
+			// Handle state changes when table is focused
+			if p.handleTableInput(event) == nil {
+				p.RefreshState()
+				return nil
+			}
 		}
 
 		return event
@@ -113,10 +117,10 @@ func (p *ManageModsPage) commitChanges() {
 	stateMgr := p.app.GetStateManager()
 	enabled, disabled, omitted, normal := p.session.CalculateChanges()
 
-	var pendingAdditionsOnCommit []string
+	pendingAdditionsOnCommit := make(sets.Set)
 	for _, id := range normal {
 		if p.session.isPendingAddition(id) {
-			pendingAdditionsOnCommit = append(pendingAdditionsOnCommit, id)
+			pendingAdditionsOnCommit[id] = struct{}{}
 		}
 	}
 
@@ -140,20 +144,24 @@ func (p *ManageModsPage) commitChanges() {
 		stateMgr.SetOmitted(id, false)
 	}
 
-	// Now, check if this commit resulted in pending additions and show the info dialog.
-	if len(pendingAdditionsOnCommit) > 0 {
-		p.app.Dialogs().ShowInfoDialog(
-			"Pending Changes",
-			"Some mods you have changed will only be added to the search pool at the start of the next bisection iteration.",
-			func() {
-				// Navigate back only after the user dismisses this second dialog.
-				p.app.Navigation().GoBack()
-			},
-		)
-	} else {
-		// If there were no pending additions, navigate back immediately.
-		p.app.Navigation().GoBack()
-	}
+	// Let the application reconcile it's state and continue afterwards
+	p.app.Reconcile(func() {
+		// Now, check if this commit resulted in pending additions and show the info dialog.
+		if len(pendingAdditionsOnCommit) > 0 {
+			p.app.Dialogs().ShowInfoDialog(
+				"Pending Changes",
+				"Some mods you have changed will only be added to the search pool at the start of the next bisection iteration.",
+				tview.Escape(sets.FormatSet(pendingAdditionsOnCommit).String()),
+				func() {
+					// Navigate back only after the user dismisses this second dialog.
+					p.app.Navigation().GoBack()
+				},
+			)
+		} else {
+			// If there were no pending additions, navigate back immediately.
+			p.app.Navigation().GoBack()
+		}
+	})
 }
 
 func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey {
@@ -177,12 +185,19 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 	switch event.Rune() {
 	case 'd', 'D':
 		p.session.ToggleForceDisable(modID, shift)
+		return nil
 	case 'e', 'E':
 		p.session.ToggleForceEnable(modID, shift)
+		return nil
 	case 'o', 'O':
 		p.session.ToggleOmitted(modID, shift)
+		return nil
+	case 'f', 'F':
+		if p.modTable.HasFocus() && !p.modTable.Search.HasFocus() {
+			p.app.SetFocus(p.modTable.Search)
+		}
+		return nil
 	}
-	p.RefreshState()
 
 	return event
 }
@@ -243,8 +258,10 @@ func (p *ManageModsPage) RefreshState() {
 			disabledIDs = append(disabledIDs, id)
 		} else if status.Omitted {
 			statusStr = "[steelblue]Omitted[-:-:-]"
-		} else if _, ok := vm.CurrentConflictSet[id]; ok {
+		} else if status.IsProblematic { // status.IsProblematic is non-editable
 			statusStr = "[red::b]Problem[-:-:-]"
+		} else if status.IsUnresolvable { // status.IsUnresolvable is non-editable
+			statusStr = "[darkgoldenrod]Unresolvable[-:-:-]"
 		} else if _, ok := nextTestSet[id]; ok {
 			statusStr = "[white]In Test[-:-:-]"
 		} else {
@@ -379,14 +396,14 @@ func (s *ManagementSession) ToggleForceEnable(modID string, isBulk bool) {
 	if _, ok := s.workingStatuses[modID]; !ok {
 		return
 	}
+	// Allow bulk operations on non user editable mods
 	if isBulk {
 		allIDs := s.getAllIDs()
 		shouldEnable := s.determineBulkToggleState(allIDs, func(st *mods.ModStatus) bool { return st.ForceEnabled })
 		for _, id := range allIDs {
 			s.setStatus(id, shouldEnable, false, false)
 		}
-	} else if !s.workingStatuses[modID].IsMissing {
-		// Missing mods can't have their status changed, except by bulk operations
+	} else if s.workingStatuses[modID].IsUserEditable() {
 		if s.workingStatuses[modID].ForceEnabled {
 			s.setStatus(modID, false, false, false) // Is enabled -> set to normal
 		} else {
@@ -406,7 +423,7 @@ func (s *ManagementSession) ToggleForceDisable(modID string, isBulk bool) {
 		for _, id := range allIDs {
 			s.setStatus(id, false, shouldDisable, false)
 		}
-	} else if !s.workingStatuses[modID].IsMissing {
+	} else if s.workingStatuses[modID].IsUserEditable() {
 		if s.workingStatuses[modID].ForceDisabled {
 			s.setStatus(modID, false, false, false)
 		} else {
@@ -426,7 +443,7 @@ func (s *ManagementSession) ToggleOmitted(modID string, isBulk bool) {
 		for _, id := range allIDs {
 			s.setStatus(id, false, false, shouldOmit)
 		}
-	} else if !s.workingStatuses[modID].IsMissing {
+	} else if s.workingStatuses[modID].IsUserEditable() {
 		if s.workingStatuses[modID].Omitted {
 			s.setStatus(modID, false, false, false)
 		} else {

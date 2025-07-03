@@ -103,6 +103,60 @@ func (sm *StateManager) SetMissing(modID string, missing bool) {
 	}
 }
 
+// SetProblematicBatch updates the problematic state for multiple mods at once,
+// sending only a single notification.
+func (sm *StateManager) SetProblematicBatch(modIDs []string, problematic bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.IsProblematic != problematic {
+				status.IsProblematic = problematic
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
+// SetProblematic updates the problematic state for a single mod.
+func (sm *StateManager) SetProblematic(modID string, problematic bool) {
+	if status, ok := sm.modStatuses[modID]; ok {
+		if status.IsProblematic != problematic {
+			status.IsProblematic = problematic
+			sm.notifyListeners()
+		}
+	}
+}
+
+// SetUnresolvableBatch updates the unresolvable state for multiple mods at once,
+// sending only a single notification.
+func (sm *StateManager) SetUnresolvableBatch(modIDs []string, unresolvable bool) {
+	var changed bool
+	for _, modID := range modIDs {
+		if status, ok := sm.modStatuses[modID]; ok {
+			if status.IsUnresolvable != unresolvable {
+				status.IsUnresolvable = unresolvable
+				changed = true
+			}
+		}
+	}
+	if changed {
+		sm.notifyListeners()
+	}
+}
+
+// SetUnresolvable updates the unresolvable state for a single mod.
+func (sm *StateManager) SetUnresolvable(modID string, unresolvable bool) {
+	if status, ok := sm.modStatuses[modID]; ok {
+		if status.IsUnresolvable != unresolvable {
+			status.IsUnresolvable = unresolvable
+			sm.notifyListeners()
+		}
+	}
+}
+
 // SetMissingBatch updates the missing state for multiple mods at once,
 // sending only a single notification.
 func (sm *StateManager) SetMissingBatch(modIDs []string, missing bool) {

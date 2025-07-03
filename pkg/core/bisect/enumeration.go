@@ -8,15 +8,13 @@ import (
 // Enumeration holds the state for the entire process of finding multiple independent conflict sets.
 type Enumeration struct {
 	FoundConflictSets    []sets.Set
-	MasterCandidateSet   sets.Set
 	ArchivedExecutionLog *imcs.ExecutionLog
 }
 
 // NewEnumeration creates and initializes the state for a new enumeration process.
-func NewEnumeration(allItems []string) *Enumeration {
+func NewEnumeration() *Enumeration {
 	return &Enumeration{
 		FoundConflictSets:    make([]sets.Set, 0),
-		MasterCandidateSet:   sets.MakeSet(allItems),
 		ArchivedExecutionLog: imcs.NewExecutionLog(),
 	}
 }
@@ -28,7 +26,6 @@ func (e *Enumeration) AddFoundConflictSet(conflictSet sets.Set) {
 		return
 	}
 	e.FoundConflictSets = append(e.FoundConflictSets, conflictSet)
-	e.MasterCandidateSet = sets.Subtract(e.MasterCandidateSet, conflictSet)
 }
 
 // AppendLog archives the history from a completed bisection run.

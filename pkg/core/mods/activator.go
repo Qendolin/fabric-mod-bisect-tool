@@ -47,14 +47,37 @@ type BatchStateChange struct {
 
 // Apply calculates and executes the necessary file renames to achieve the effectiveSet state.
 // It performs a batch of renames and returns the list of changes made.
+// Before renaming, it also verifies that all mods that should be active are present on disk
+// (unless already marked as missing in statuses). This helps catch unexpected deletions.
 func (a *Activator) Apply(effectiveSet sets.Set, statuses map[string]ModStatus) ([]BatchStateChange, error) {
-	changes := a.calculateChanges(effectiveSet, statuses)
-	if len(changes) == 0 {
+	changes, expectedActiveMods := a.calculateChanges(effectiveSet, statuses)
+	if len(changes) == 0 && len(expectedActiveMods) == 0 {
 		return nil, nil
 	}
 
-	var enabledMods []string
-	var disabledMods []string
+	var enabledMods, disabledMods []string
+	var appliedChanges []BatchStateChange
+	var missingFileErrors []*FileMissingError
+
+	// Check that all required active mods (not already marked missing) actually exist.
+	for id := range expectedActiveMods {
+		mod := a.allMods[id]
+		jarPath := filepath.Join(a.modsDir, mod.BaseFilename+".jar")
+		disabledPath := filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
+
+		if _, err := os.Stat(jarPath); os.IsNotExist(err) {
+			if _, err := os.Stat(disabledPath); os.IsNotExist(err) {
+				// File is truly missing (neither .jar nor .disabled present).
+				logging.Warnf("Activator: Source file for mod '%s' is missing: neither '%s' nor '%s' found.", id, jarPath, disabledPath)
+				missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: id, FilePath: jarPath})
+			}
+		}
+	}
+
+	if len(missingFileErrors) > 0 {
+		return nil, &MissingFilesError{Errors: missingFileErrors}
+	}
+
 	for _, change := range changes {
 		if change.Activate {
 			enabledMods = append(enabledMods, change.ModID)
@@ -67,20 +90,17 @@ func (a *Activator) Apply(effectiveSet sets.Set, statuses map[string]ModStatus) 
 
 	logging.Infof("Activator: Applying changes to %d mod files. Enabling: %v, Disabling: %v", len(changes), enabledMods, disabledMods)
 
-	appliedChanges := make([]BatchStateChange, 0, len(changes))
-	var missingFileErrors []*FileMissingError
-
 	for _, change := range changes {
 		if _, err := os.Stat(change.OldPath); os.IsNotExist(err) {
-			// Check if the file is already in the target state (e.g., already disabled).
+			// Check if file already in the target state.
 			if _, err := os.Stat(change.NewPath); !os.IsNotExist(err) {
 				a.currentActivations[change.ModID] = change.Activate
 				continue // File already in correct state. Not an error.
 			}
-			// The file is truly missing from the filesystem.
+			// File is truly missing from disk.
 			logging.Warnf("Activator: Source file for mod '%s' is missing: %s", change.ModID, change.OldPath)
 			missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: change.ModID, FilePath: change.OldPath})
-			continue // Continue processing other files.
+			continue
 		}
 
 		if err := os.Rename(change.OldPath, change.NewPath); err != nil {
@@ -159,16 +179,24 @@ func (a *Activator) EnableAll(statuses map[string]ModStatus) error {
 
 // calculateChanges determines which files need to be renamed based on the desired effective set
 // and the current physical state of mod files on disk as tracked by the activator.
-func (a *Activator) calculateChanges(effectiveSet sets.Set, statuses map[string]ModStatus) []BatchStateChange {
+// It also returns the set of mods that should be active and are not marked as missing.
+// This set is later used in Apply to verify that the required files actually exist.
+func (a *Activator) calculateChanges(effectiveSet sets.Set, statuses map[string]ModStatus) ([]BatchStateChange, sets.Set) {
 	var changes []BatchStateChange
+	expectedActiveMods := make(sets.Set)
+
 	for id, mod := range a.allMods {
 		status, ok := statuses[id]
 		if !ok || status.IsMissing {
-			continue // Skip missing mods entirely.
+			continue // Skip mods already known to be missing.
+		}
+
+		_, shouldBeActive := effectiveSet[id]
+		if shouldBeActive {
+			expectedActiveMods[id] = struct{}{}
 		}
 
 		isCurrentlyActive := a.currentActivations[id] // The physical state as tracked by activator
-		_, shouldBeActive := effectiveSet[id]         // The desired logical state from resolver
 
 		if isCurrentlyActive == shouldBeActive {
 			logging.Debugf("Activator: Mod '%s' physical state matches desired state (active: %t). No change needed.", id, isCurrentlyActive)
@@ -176,35 +204,33 @@ func (a *Activator) calculateChanges(effectiveSet sets.Set, statuses map[string]
 		}
 
 		// Determine the *current physical path* on disk based on `isCurrentlyActive` and `mod.BaseFilename`.
-		// `mod.BaseFilename` is the filename without the .jar or .disabled suffix (e.g., "mod-A-1.0").
-		var currentPhysicalPath string
+		var oldPath string
 		if isCurrentlyActive {
-			currentPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
+			oldPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
 		} else {
-			currentPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
+			oldPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
 		}
 
 		// Determine the *target physical path* on disk based on `shouldBeActive`.
-		var newPhysicalPath string
-		if shouldBeActive { // Desired state is active
-			newPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
-		} else { // Desired state is disabled
-			newPhysicalPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
+		var newPath string
+		if shouldBeActive {
+			newPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
+		} else {
+			newPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
 		}
 
-		// Although `isCurrentlyActive == shouldBeActive` should catch most redundant operations,
-		// this check adds a layer of robustness.
-		if currentPhysicalPath == newPhysicalPath {
-			logging.Warnf("Activator: Calculated redundant rename for mod '%s'. Current path '%s' is already target path '%s'. Skipping.", id, currentPhysicalPath, newPhysicalPath)
+		if oldPath == newPath {
+			logging.Warnf("Activator: Calculated redundant rename for mod '%s'. Current path '%s' is already target path '%s'. Skipping.", id, oldPath, newPath)
 			continue
 		}
 
 		changes = append(changes, BatchStateChange{
 			ModID:    id,
-			OldPath:  currentPhysicalPath,
-			NewPath:  newPhysicalPath,
+			OldPath:  oldPath,
+			NewPath:  newPath,
 			Activate: shouldBeActive,
 		})
 	}
-	return changes
+
+	return changes, expectedActiveMods
 }

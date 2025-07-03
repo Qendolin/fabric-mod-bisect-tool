@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
@@ -153,6 +152,20 @@ func (a *App) handleCoreStateChange() {
 	}
 }
 
+func (a *App) Reconcile(callback func()) {
+	if a.bisectSvc.NeedsReconciliation() {
+		logging.Debugf("App: Reconciliation triggered and needed.")
+		report := a.bisectSvc.ReconcileState()
+		if report.HasChanges {
+			a.showReconciliationReport(&report, callback)
+			return
+		}
+	}
+	if callback != nil {
+		callback()
+	}
+}
+
 // Step orchestrates the next bisection test.
 func (a *App) Step() {
 	if !a.IsBisectionReady() {
@@ -178,15 +191,21 @@ func (a *App) ContinueSearch() {
 		return
 	}
 	logging.Debugf("App: ContinueSearch action triggered.")
-	// The service layer handles all the complex logic atomically.
-	result := a.bisectSvc.ContinueSearch()
 
-	// If the operation resulted in mods being auto-disabled, we must inform the user.
+	// The service layer handles all the complex logic atomically.
+	report, err := a.bisectSvc.ContinueSearch()
+	if err != nil {
+		a.dialogManager.ShowErrorDialog("Unexpected Error", "Cannot continue the search!", err, nil)
+		return
+	}
+
+	// If the operation resulted in changes, we inform the user.
 	// This happens *after* the state has already been updated.
-	if len(result.NewlyDisabledMods) > 0 {
+	if len(report.ModsSetUnresolvable) > 0 {
 		a.dialogManager.ShowInfoDialog(
 			"Unresolvable Mods Disabled",
-			fmt.Sprintf("To continue the search, the following mods were automatically disabled because their dependencies can no longer be met:\n\n[yellow]%s[-]", strings.Join(result.NewlyDisabledMods, ", ")),
+			"To continue the search, the following mods were automatically disabled because their dependencies can no longer be met:",
+			tview.Escape(sets.FormatSet(report.ModsSetUnresolvable).String()),
 			nil,
 		)
 	}
@@ -194,12 +213,23 @@ func (a *App) ContinueSearch() {
 
 func (a *App) Undo() bool {
 	logging.Debugf("App: Undo action triggered.")
-	return a.bisectSvc.UndoLastStep()
+	err := a.bisectSvc.UndoLastStep()
+	if errors.Is(err, bisect.ErrUndoStackEmpty) {
+		a.dialogManager.ShowInfoDialog("Cannot Undo", "Nothing left to undo.", "", nil)
+		return false
+	}
+	if err != nil {
+		logging.Errorf("App: Undo failed: %v", err)
+		a.dialogManager.ShowInfoDialog("Cannot Undo", "The undo operation failed or there were no more steps to undo.", "", nil)
+		return false
+	}
+	return true
 }
 
 func (a *App) ResetSearch() {
 	logging.Debugf("App: ResetSearch faction triggered.")
 	a.bisectSvc.ResetSearch()
+	a.Reconcile(nil)
 }
 
 func (a *App) Run() error {
@@ -328,28 +358,25 @@ func (a *App) handleStepError(err error) {
 			allKnownConflicts = sets.Union(allKnownConflicts, s)
 		}
 
-		var unexpectedDeletions []string
-		var expectedDeletions []string
+		unexpectedDeletions := make(sets.Set)
+		expectedDeletions := make(sets.Set)
 		var missingIDs []string
 
 		for _, e := range missingErr.Errors {
 			missingIDs = append(missingIDs, e.ModID)
 			if _, isProblem := allKnownConflicts[e.ModID]; isProblem {
-				expectedDeletions = append(expectedDeletions, e.ModID)
+				expectedDeletions[e.ModID] = struct{}{}
 			} else {
-				unexpectedDeletions = append(unexpectedDeletions, e.ModID)
+				unexpectedDeletions[e.ModID] = struct{}{}
 			}
 		}
 
 		// Case 1: Unexpected deletions occurred. Give the user a choice.
 		if len(unexpectedDeletions) > 0 {
-			message := fmt.Sprintf(
-				"The following mod files were unexpectedly missing:\n[yellow]%s[-]\n\nDo you want to continue the search without them?",
-				strings.Join(unexpectedDeletions, "\n"),
-			)
 			a.dialogManager.ShowQuestionDialog(
 				"Missing Mod Files Detected",
-				message,
+				"The following mod files were unexpectedly missing. Do you want to continue the search without them?",
+				tview.Escape(sets.FormatSet(unexpectedDeletions).String()),
 				func() {
 					logging.Infof("App: Disabling %d mods that are undexpectedly missing: %v", len(missingIDs), missingIDs)
 					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
@@ -358,13 +385,10 @@ func (a *App) handleStepError(err error) {
 				nil,
 			)
 		} else { // Case 2: Only expected deletions. Inform the user.
-			message := fmt.Sprintf(
-				"The following mod(s), which were part of a known conflict set, have been detected as missing:\n[yellow]%s[-]\n\nThis is expected. The search will now proceed with the updated mod list.",
-				strings.Join(expectedDeletions, "\n"),
-			)
 			a.dialogManager.ShowInfoDialog(
-				"Known Conflict Mod(s) Removed",
-				message,
+				"Known Problematic Mod(s) Removed",
+				"The following mod(s), which were part of a known conflict set, have been detected as missing. This is expected. The search will now proceed with the updated mod list.",
+				tview.Escape(sets.FormatSet(expectedDeletions).String()),
 				func() {
 					logging.Infof("App: Disabling %d mods that are expectedly missing: %v", len(missingIDs), missingIDs)
 					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
@@ -375,12 +399,40 @@ func (a *App) handleStepError(err error) {
 		return
 	}
 
+	if errors.Is(err, bisect.ErrNeedsReconciliation) {
+		report := a.bisectSvc.ReconcileState()
+		if report.HasChanges {
+			a.showReconciliationReport(&report, a.Step)
+		} else {
+			logging.Error("App: Reconciliation triggered by ErrNeedsReconciliation but reconciliation yielded no changes.")
+			a.Step()
+		}
+		return
+	}
+
 	logging.Errorf("App: Step error: %v", err)
 
 	a.dialogManager.ShowErrorDialog("Bisection Error", `An error occurred and the next step could not be prepared.
 If another program, like Minecraft, is currently acessing your mods, please close it.
 
 Please check the application log for details.`, nil, nil)
+}
+
+func (a *App) showReconciliationReport(report *bisect.ActionReport, callback func()) {
+	if len(report.ModsSetUnresolvable) > 0 {
+		// Inform the user what was automatically disabled.
+		a.dialogManager.ShowInfoDialog(
+			"Disabled Mods",
+			"The following mods were automatically disabled due to unmet dependencies:",
+			tview.Escape(sets.FormatSet(report.ModsSetUnresolvable).String()),
+			callback,
+		)
+		return
+	}
+	if callback != nil {
+		logging.Info("App: Reconciliation report has no 'Unresolvable Mods' changes. This is odd. Calling callback directly.")
+		callback()
+	}
 }
 
 // --- AppInterface Implementation ---

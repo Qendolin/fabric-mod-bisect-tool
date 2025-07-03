@@ -147,20 +147,26 @@ func (m *Mod) FriendlyName() string {
 
 // ModStatus represents the current runtime state of a single mod.
 type ModStatus struct {
-	ID            string
-	Mod           *Mod
-	ForceEnabled  bool // Is mutually exclusive with ForceDisabled and Omitted
-	ForceDisabled bool
-	Omitted       bool // Previously called ManuallyGood
-	IsMissing     bool // Not exclusive with other states
+	ID             string
+	Mod            *Mod
+	ForceEnabled   bool // Is mutually exclusive with ForceDisabled and Omitted
+	ForceDisabled  bool
+	Omitted        bool // Previously called ManuallyGood. Mod is not a search candidate, but can be activated
+	IsMissing      bool
+	IsProblematic  bool
+	IsUnresolvable bool
 }
 
 func (s ModStatus) IsSearchCandidate() bool {
-	return !s.ForceEnabled && !s.ForceDisabled && !s.Omitted && !s.IsMissing
+	return !s.ForceEnabled && !s.ForceDisabled && !s.Omitted && !s.IsMissing && !s.IsUnresolvable && !s.IsProblematic
 }
 
 func (s ModStatus) IsActivatable() bool {
-	return !s.ForceDisabled && !s.IsMissing
+	return !s.ForceDisabled && !s.IsMissing && !s.IsUnresolvable && !s.IsProblematic
+}
+
+func (s ModStatus) IsUserEditable() bool {
+	return !s.IsMissing
 }
 
 // ResolutionInfo stores details about why a mod is included in an effective set.
@@ -267,5 +273,9 @@ type MissingFilesError struct {
 }
 
 func (e *MissingFilesError) Error() string {
-	return fmt.Sprintf("found %d missing mod files", len(e.Errors))
+	missing := make([]string, len(e.Errors))
+	for i, err := range e.Errors {
+		missing[i] = fmt.Sprintf("%s at %s", err.ModID, err.FilePath)
+	}
+	return fmt.Sprintf("found %d missing mod files: %s", len(e.Errors), missing)
 }

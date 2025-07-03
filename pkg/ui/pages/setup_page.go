@@ -128,6 +128,7 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 [::b]Tool Information:[-:-:-]
   - Build: %s
   - Author: Qendolin
+  - Source: https://github.com/Qendolin/fabric-mod-bisect-tool
 `, buildInfo))
 	instructions.SetBorderPadding(0, 0, 1, 1)
 

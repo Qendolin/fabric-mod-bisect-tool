@@ -72,6 +72,8 @@ func (n *NavigationManager) SwitchTo(pageID string) {
 	if activator, ok := page.(PageActivator); ok {
 		activator.OnPageActivated()
 	}
+
+	n.showTopModal()
 }
 
 // GoBack navigates to the previous page in the history stack.
@@ -91,6 +93,8 @@ func (n *NavigationManager) GoBack() {
 	if activator, ok := lastPage.(PageActivator); ok {
 		activator.OnPageActivated()
 	}
+
+	n.showTopModal()
 }
 
 // ShowModal displays a transient page (like a dialog) over the current view.
@@ -113,6 +117,7 @@ func (n *NavigationManager) CloseModal() {
 	n.pages.RemovePage(modalID)
 
 	// Update UI for the page that is now in front
+	n.showTopModal()
 	currentPage := n.GetCurrentPage(true)
 	n.updateUIForPage(currentPage)
 
@@ -153,4 +158,20 @@ func (n *NavigationManager) GetCurrentPageID(includeModal bool) string {
 
 	pageID, _ := n.pages.GetFrontPage()
 	return pageID
+}
+
+// showTopModal ensures the top-most modal page is visible and focused.
+func (n *NavigationManager) showTopModal() {
+	if len(n.modalStack) == 0 {
+		return
+	}
+
+	modalID := n.modalStack[len(n.modalStack)-1]
+	n.pages.ShowPage(modalID)
+
+	_, primitive := n.pages.GetFrontPage()
+	if p, ok := primitive.(Page); ok {
+		n.app.SetFocus(p)
+		n.updateUIForPage(p)
+	}
 }
