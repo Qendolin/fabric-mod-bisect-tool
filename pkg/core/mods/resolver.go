@@ -47,7 +47,7 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 // ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
 func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, ResolutionPath) {
 	startTime := time.Now()
-	logging.Infof("Resolver: Resolving effective set for %d mods.", len(targetSet))
+	logging.Infof("Resolver: Resolving effective set for %d mods: %v", len(targetSet), sets.FormatSet(targetSet))
 
 	s := &resolutionSession{
 		allMods:            dr.allMods,

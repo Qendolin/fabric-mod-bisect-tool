@@ -27,9 +27,8 @@ func TranslateMavenVersionRange(mavenRange string) (results []string, err error)
 
 	// If the range is just a plain version (no brackets or parens)
 	if !strings.ContainsAny(mavenRange, "[]()") {
-		// Special Maven meaning: treat as minimum version
-		results = append(results, ">="+strings.TrimSpace(mavenRange))
-		return results, nil
+		// Special Maven meaning: treat as minimum version, but actually we just use '*'
+		return []string{"*"}, nil
 	}
 
 	// Split into top-level ranges (OR)
