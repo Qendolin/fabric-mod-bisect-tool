@@ -58,6 +58,9 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 	if ml.QuiltParsing {
 		logging.Info("ModLoader: Loading mods with Quilt support. Please note that log messages with fabric.mod.json might refer to quilt.mod.json too.")
 	}
+	if ml.NeoForgeParsing {
+		logging.Info("ModLoader: Loading mods with NeoForge support. Please note that log messages with fabric.mod.json might refer to neoforge.mods.toml too.")
+	}
 
 	potentialProviders := make(PotentialProvidersMap)
 	addImplicitProvides(potentialProviders)

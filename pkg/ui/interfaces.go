@@ -29,6 +29,7 @@ type BisectionViewModel struct {
 	CurrentTestPlan    *imcs.TestPlan
 	ExecutionLog       []imcs.CompletedTest
 	QuiltSupport       bool
+	NeoForgeSupport    bool
 }
 
 // AppInterface defines methods the UI layer needs to access from the main App struct.
@@ -45,7 +46,7 @@ type AppInterface interface {
 	SetFocus(tview.Primitive)
 
 	// --- Core Logic ---
-	StartLoadingProcess(modsPath string, quiltSupport bool)
+	StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool)
 	GetViewModel() BisectionViewModel
 	GetStateManager() *mods.StateManager // StateManager is still needed for detailed mod info.
 

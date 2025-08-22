@@ -21,7 +21,8 @@ var (
 )
 
 type ModParser struct {
-	QuiltParsing bool
+	QuiltParsing    bool
+	NeoForgeParsing bool
 }
 
 // ExtractModMetadata opens a JAR and extracts its top-level and nested fabric.mod.json files.
@@ -34,7 +35,7 @@ func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (Fa
 
 	topLevelFmj, err := p.parseFabricModJsonFromReader(&zr.Reader, jarPath, logBuffer)
 	if err != nil {
-		return FabricModJson{}, nil, fmt.Errorf("parsing top-level fabric.mod.json for %s: %w", jarPath, err)
+		return FabricModJson{}, nil, fmt.Errorf("parsing top-level metadata for %s: %w", jarPath, err)
 	}
 
 	var allNestedMods []NestedModule
@@ -109,6 +110,17 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 // parseFabricModJsonFromReader searches for and unmarshals fabric.mod.json from a zip reader.
 // It also validates that the mod does not provide any reserved/implicit IDs.
 func (p *ModParser) parseFabricModJsonFromReader(zipReader *zip.Reader, jarIdentifier string, logBuffer *logBuffer) (FabricModJson, error) {
+	// Prioritize NeoForge parsing if the flag is enabled and the file exists.
+	if p.NeoForgeParsing {
+		if neoForgeFile := p.getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml"); neoForgeFile != nil {
+			// Delegate all parsing to the specialist NeoForge function, which handles its own format
+			// and its specific method of declaring nested JARs.
+			return p.parseNeoForgeModToml(zipReader, neoForgeFile, jarIdentifier, logBuffer)
+		} else {
+			logBuffer.add(logging.LevelWarn, "ModLoader: NeoForge parsing is enabled but neoforge.mods.toml was not found for %s. Falling back to fabric.mod.json.", jarIdentifier)
+		}
+	}
+
 	// First, determine which metadata file to use, with quilt taking priority if enabled.
 	targetFileName := "fabric.mod.json"
 	if p.QuiltParsing {
