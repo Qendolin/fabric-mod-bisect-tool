@@ -256,8 +256,8 @@ func (e *Engine) GetEstimatedMaxTests() int {
 	// Number of problems found is the size of the ConflictSet.
 	problemsFound := len(e.state.ConflictSet)
 
-	if problemsFound == 0 && !e.state.IsComplete {
-		problemsFound = 1
+	if !e.state.IsComplete {
+		problemsFound++
 	}
 
 	if numInitialCandidates == 0 || problemsFound == 0 {
