@@ -21,10 +21,11 @@ type SetupPage struct {
 	app        ui.AppInterface
 	statusText *tview.TextView
 
-	inputField    *tview.InputField
-	quiltCheckbox *tview.Checkbox
-	loadButton    *tview.Button
-	quitButton    *tview.Button
+	inputField       *tview.InputField
+	quiltCheckbox    *tview.Checkbox
+	neoForgeCheckbox *tview.Checkbox
+	loadButton       *tview.Button
+	quitButton       *tview.Button
 }
 
 // NewSetupPage creates a new SetupPage instance.
@@ -62,6 +63,13 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
+	p.neoForgeCheckbox = tview.NewCheckbox().SetLabel("NeoForge Support: ")
+	p.neoForgeCheckbox.SetChecked(vm.NeoForgeSupport).
+		SetCheckedString("[green]Yes[-]").
+		SetUncheckedString("[red]No[-]").
+		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
+		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+
 	p.loadButton = tview.NewButton("Load Mods").SetSelectedFunc(func() {
 		cleaned := strings.TrimSpace(p.inputField.GetText())
 		cleaned = strings.TrimPrefix(cleaned, "\"")
@@ -71,7 +79,7 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 			app.Dialogs().ShowErrorDialog("Error", "The mods path cannot be empty.", nil, nil)
 			return
 		}
-		app.StartLoadingProcess(filepath.Clean(cleaned), p.quiltCheckbox.IsChecked())
+		app.StartLoadingProcess(filepath.Clean(cleaned), p.quiltCheckbox.IsChecked(), p.neoForgeCheckbox.IsChecked())
 	})
 	widgets.DefaultStyleButton(p.loadButton)
 
@@ -90,6 +98,7 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 		SetDirection(tview.FlexRow).
 		AddItem(p.inputField, 1, 0, true).
 		AddItem(p.quiltCheckbox, 1, 0, false).
+		AddItem(p.neoForgeCheckbox, 1, 0, false).
 		AddItem(nil, 1, 0, false).
 		AddItem(buttonsFlex, 3, 0, false)
 	setupFlex.SetBorderPadding(1, 1, 1, 1)
@@ -132,7 +141,7 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 `, buildInfo))
 	instructions.SetBorderPadding(0, 0, 1, 1)
 
-	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 9, 0, true).
+	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 10, 0, true).
 		AddItem(widgets.NewTitleFrame(instructions, "Info"), 0, 1, false)
 
 	p.statusText.SetText("Welcome to the Fabric Mod Bisect Tool by Qendolin! Paste the path to your 'mods' directory below.")
@@ -154,6 +163,7 @@ func (p *SetupPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.inputField,
 		p.quiltCheckbox,
+		p.neoForgeCheckbox,
 		p.loadButton,
 		p.quitButton,
 	}

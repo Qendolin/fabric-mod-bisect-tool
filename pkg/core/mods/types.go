@@ -214,7 +214,7 @@ func (rp ResolutionPath) String() string {
 // IsImplicitMod checks if a dependency ID is for an implicit (non-mod) dependency.
 func IsImplicitMod(depID string) bool {
 	switch depID {
-	case "java", "minecraft", "fabricloader", "quilt_loader":
+	case "java", "minecraft", "fabricloader", "quilt_loader", "neoforge", "forge":
 		return true
 	}
 	return false

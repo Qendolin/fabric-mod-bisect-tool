@@ -87,14 +87,14 @@ func NewApp(logger *logging.Logger, cliArgs *CLIArgs) *App {
 }
 
 // StartLoadingProcess is called by the SetupPage to begin loading mods.
-func (a *App) StartLoadingProcess(modsPath string, quiltSupport bool) {
+func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool) {
 	a.navManager.SwitchTo(ui.PageLoadingID)
 	a.loadingPage.StartLoading(modsPath)
 
 	go func() {
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}}
 		logging.Infof("App: Loading mods from '%s', Quilt Support: %v", modsPath, a.cliArgs.QuiltSupport)
 		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, func(fileName string) {
 			a.QueueUpdateDraw(func() {
@@ -474,6 +474,7 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 		CurrentTestPlan:    currentPlan,
 		ExecutionLog:       a.bisectSvc.GetCombinedExecutionLog(),
 		QuiltSupport:       a.cliArgs.QuiltSupport,
+		NeoForgeSupport:    a.cliArgs.NeoForgeSupport,
 	}
 }
 
