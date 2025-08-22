@@ -35,7 +35,23 @@ func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (Fa
 
 	topLevelFmj, err := p.parseFabricModJsonFromReader(&zr.Reader, jarPath, logBuffer)
 	if err != nil {
-		return FabricModJson{}, nil, fmt.Errorf("parsing top-level metadata for %s: %w", jarPath, err)
+		// If standard parsing fails, we only attempt the container fallback if NeoForge parsing is enabled.
+		if !p.NeoForgeParsing {
+			return FabricModJson{}, nil, fmt.Errorf("parsing top-level metadata for %s: %w", jarPath, err)
+		}
+
+		// In NeoForge mode, a parsing failure might just mean it's a container.
+		topLevelFmj, err = p.tryParseAsContainer(&zr.Reader, jarPath, err, logBuffer)
+		if err != nil {
+			// If it's also not a container, then it's a final failure.
+			return FabricModJson{}, nil, err
+		}
+	} else if p.NeoForgeParsing {
+		// If it *is* a mod, it might *also* contain jarjar nested JARs. Append them.
+		jarJarEntries, _ := p.parseJarJarMetadata(&zr.Reader, jarPath, logBuffer)
+		if len(jarJarEntries) > 0 {
+			topLevelFmj.Jars = append(topLevelFmj.Jars, jarJarEntries...)
+		}
 	}
 
 	var allNestedMods []NestedModule
@@ -43,6 +59,18 @@ func (p *ModParser) ExtractModMetadata(jarPath string, logBuffer *logBuffer) (Fa
 		if nestedJarEntry.File == "" {
 			logBuffer.add(logging.LevelWarn, "ModLoader: Top-level mod '%s' has a nested JAR entry with an empty 'file' path. Skipping.", topLevelFmj.ID)
 			continue
+		}
+
+		if p.NeoForgeParsing {
+			isMod, checkErr := p.isNestedJarANeoForgeMod(&zr.Reader, nestedJarEntry.File)
+			if checkErr != nil {
+				logBuffer.add(logging.LevelWarn, "ModLoader: Failed to check nested JAR '%s' in '%s': %v. Skipping.", nestedJarEntry.File, filepath.Base(jarPath), checkErr)
+				continue
+			}
+			if !isMod {
+				logBuffer.add(logging.LevelDebug, "ModLoader: Skipping nested library '%s' in '%s' as it has no neoforge.mods.toml.", nestedJarEntry.File, filepath.Base(jarPath))
+				continue
+			}
 		}
 
 		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry.File, "", logBuffer)
@@ -87,7 +115,20 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 
 	currentFmj, err := p.parseFabricModJsonFromReader(innerZipReader, pathInParent, logBuffer)
 	if err != nil {
-		return nil, fmt.Errorf("parsing metadata from '%s': %w", pathInParent, err)
+		// Just as with the top level, only attempt the container fallback in NeoForge mode.
+		if !p.NeoForgeParsing {
+			return nil, fmt.Errorf("parsing metadata from '%s': %w", pathInParent, err)
+		}
+		currentFmj, err = p.tryParseAsContainer(innerZipReader, pathInParent, err, logBuffer)
+		if err != nil {
+			return nil, err
+		}
+	} else if p.NeoForgeParsing {
+		// Append jarjar entries if the nested JAR is a real mod.
+		jarJarEntries, _ := p.parseJarJarMetadata(innerZipReader, pathInParent, logBuffer)
+		if len(jarJarEntries) > 0 {
+			currentFmj.Jars = append(currentFmj.Jars, jarJarEntries...)
+		}
 	}
 
 	fullPathInJar := path.Join(currentPathPrefix, pathInParent)
@@ -97,6 +138,19 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 		if deeperJarEntry.File == "" {
 			continue
 		}
+
+		if p.NeoForgeParsing {
+			isMod, checkErr := p.isNestedJarANeoForgeMod(innerZipReader, deeperJarEntry.File)
+			if checkErr != nil {
+				logBuffer.add(logging.LevelWarn, "ModLoader: Failed to check deeper nested JAR '%s' within '%s': %v. Skipping.", deeperJarEntry.File, pathInParent, checkErr)
+				continue
+			}
+			if !isMod {
+				logBuffer.add(logging.LevelDebug, "ModLoader: Skipping nested library '%s' within '%s' as it has no neoforge.mods.toml.", deeperJarEntry.File, pathInParent)
+				continue
+			}
+		}
+
 		deeperNestedMods, err := p.recursivelyParseNestedJar(innerZipReader, deeperJarEntry.File, fullPathInJar, logBuffer)
 		if err != nil {
 			logBuffer.add(logging.LevelWarn, "ModLoader: Skipping deeper nested JAR '%s' within '%s': %v", deeperJarEntry.File, pathInParent, err)
