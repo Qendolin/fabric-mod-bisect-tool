@@ -37,6 +37,10 @@ This tool is like a smart detective for your mods folder. Instead of you having 
     ```
 4.  Place the tool in a convenient location. You can run it from anywhere!
 
+On windows you'll likely get a blue warning that you need to dismiss. (*This warning means that the application has an unknown publisher. It doesn't mean that it is unsafe to run!*)
+<img width="1118" height="500" alt="image" src="https://github.com/user-attachments/assets/f4a3b6bc-492d-4b16-bcf4-d789b5bbb104" />
+
+
 ## How to Use the Tool
 
 Using the tool is a simple, guided process.
