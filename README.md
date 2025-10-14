@@ -86,7 +86,8 @@ The tool will now show you a "Test in Progress" screen. It has just enabled a sp
   * **Success (No Issue):** The problem did *not* happen. The game loaded and worked as expected.
   * **Failure (Issue Occurred):** The problem *did* happen (e.g., the game crashed or the bug was present).
 
-The tool will use your answer to narrow down the search and prepare the next test. Repeat this process until a result is found.
+> [!IMPORTANT]
+> The tool will use your answer to narrow down the search and prepare the next test. **Repeat this process** until a result is found.
 
 ![Test Page](docs/img/test-page.jpg)
 
