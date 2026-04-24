@@ -39,15 +39,15 @@ The algorithm consists of a main procedure, `FindConflictSet`, and a recursive h
 3      CandidateSet ← C_all
 4      loop indefinitely:
 5          // Find the next single component that, in conjunction with the current ConflictSet, contributes to the failure.
-6          next_element ← FindNextConflictElement(StableSet=ConflictSet, CandidateSet=CandidateSet)
+6          nextElement ← FindNextConflictElement(StableSet=ConflictSet, CandidateSet=CandidateSet)
 7  
 8          // If no additional conflict element can be found, the process is complete.
-9          if next_element is null:
+9          if nextElement is null:
 10             break
 11 
 12         // Add the found element to the confirmed ConflictSet and remove it from the candidate pool.
-13         ConflictSet ← ConflictSet ∪ {next_element}
-14         CandidateSet ← CandidateSet \ {next_element}
+13         ConflictSet ← ConflictSet ∪ {nextElement}
+14         CandidateSet ← CandidateSet \ {nextElement}
 15 
 16         // Optimization: Test if the current ConflictSet is already a complete, minimal set.
 17         // If it causes failure, we can terminate early without searching for more components.
@@ -87,23 +87,23 @@ The algorithm consists of a main procedure, `FindConflictSet`, and a recursive h
 25 
 26     // Otherwise, the first half is safe. Add it to the StableSet and search C₂.
 27     else:
-28         new_safe_set ← StableSet ∪ C₁
+28         newStableSet ← StableSet ∪ C₁
 29         // Optimization: The next conflict element might be in C₂.
 30         // If C₂ is a single element, test it directly.
 31         if size(C₂) = 1:
-32             let d be the single element in C₂
-33             if test(new_safe_set ∪ {d}) is FAIL:
-34                 return d
+32             let c be the single element in C₂
+33             if test(newStableSet ∪ {c}) is FAIL:
+34                 return c
 35             else:
 36                 return null // This was the last possible conflict element.
 37         else:
-38             return FindNextConflictElement(new_safe_set, C₂)
+38             return FindNextConflictElement(newStableSet, C₂)
 ```
 
 ## 4. Complexity Analysis
 
 -   **Time Complexity: O(p log n)**
-    The algorithm's total cost is dominated by the `p` calls to the `FindNextConflictElement` procedure. Each call performs a binary search on a diminishing set of candidates (from `n` down to `n-p+1`), with a cost of `O(log n)`. Therefore, the total time complexity is `O(p * log n)`.
+    The algorithm's total cost is dominated by the `p` calls to the `FindNextConflictElement` procedure. Each call performs a binary search on a diminishing set of candidates (from `n` down to `n-p+1`), with a cost of `O(log n)`. Therefore, the total time complexity is `O(p log n)`.
 
 -   **Space Complexity: O(n)**
     The algorithm requires storing the set of candidates, which is initially of size `n`. The recursion depth of the helper function is `O(log n)`.
