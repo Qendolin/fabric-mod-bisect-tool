@@ -431,50 +431,152 @@ func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.S
 	return dependerSet
 }
 
-// FindAllUnresolvableMods iteratively calculates the complete set of unresolvable mods
-// from an initial set of candidates. It finds not only mods with missing direct
-// dependencies but also mods whose dependencies become unavailable transitively.
+// UnresolvableModDetails contains categorized information about unresolvable mods,
+// separating direct failures from transitive failures and mapping their root causes.
+type UnresolvableModDetails struct {
+	DirectlyUnresolvable     map[string][]string // ModID -> missing dependencies
+	TransitivelyUnresolvable map[string]sets.Set // ModID -> set of root cause ModIDs
+}
+
+// CalculateUnresolvableModsDetails performs a full, iterative dependency check to find all
+// broken mods and meticulously tracks the causal chain of failure.
+//
+// It guarantees that transitively broken mods are accurately mapped to the directly unresolvable
+// mods (root causes) that initiated the cascading failure.
+//
+// Use Case: Ideal for generating detailed, user-facing error reports or logs where explaining
+// *why* a mod is broken is just as important as knowing that it is broken.
+// Note: This is slightly more resource-intensive than CalculateTransitivelyUnresolvableMods.
+func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates sets.Set) UnresolvableModDetails {
+	available := sets.Copy(initialCandidates)
+
+	// 1. Initial pass: Find all directly unresolvable mods (the root causes)
+	directlyUnresolvable := dr.CalculateDirectlyUnresolvableModsWithDetails(available)
+
+	transitivelyUnresolvable := make(map[string]sets.Set)
+	rootCauses := make(map[string]sets.Set)
+
+	for modID := range directlyUnresolvable {
+		delete(available, modID)
+		rootCauses[modID] = sets.Set{modID: struct{}{}}
+	}
+
+	// 2. Iterative pass: Find transitively unresolvable mods and track causality
+	for {
+		newlyUnresolvable := dr.CalculateDirectlyUnresolvableModsWithDetails(available)
+		if len(newlyUnresolvable) == 0 {
+			break
+		}
+
+		for modID, failedDeps := range newlyUnresolvable {
+			mod := dr.allMods[modID]
+			modRootCauses := sets.Set{}
+
+			// To find the root cause, we look at the potential providers for the dependencies that just failed.
+			for _, depID := range failedDeps {
+				predicates := mod.FabricInfo.Depends[depID]
+				if providers, ok := dr.potentialProviders[depID]; ok {
+					for _, p := range providers {
+						// Check if this provider actually satisfied the version requirements
+						if checkAllPredicatesSatisfied(predicates, p.VersionOfProvidedItem) {
+							// If this provider was removed because it is unresolvable, inherit its root causes
+							if causes, isUnresolvable := rootCauses[p.TopLevelModID]; isUnresolvable {
+								for cause := range causes {
+									modRootCauses[cause] = struct{}{}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Fallback: If we somehow lost the causal chain, this mod acts as its own root cause
+			if len(modRootCauses) == 0 {
+				modRootCauses[modID] = struct{}{}
+			}
+
+			rootCauses[modID] = modRootCauses
+			transitivelyUnresolvable[modID] = modRootCauses
+			delete(available, modID)
+		}
+	}
+
+	return UnresolvableModDetails{
+		DirectlyUnresolvable:     directlyUnresolvable,
+		TransitivelyUnresolvable: transitivelyUnresolvable,
+	}
+}
+
+// CalculateTransitivelyUnresolvableMods iteratively calculates the complete boolean set of
+// all mods that cannot be resolved, whether directly missing a dependency or failing transitively
+// due to cascading dependency failures.
+//
+// Performance: This is highly optimized for speed. It uses fast-path boolean checks and
+// avoids tracking causality or allocating slices for failed dependencies.
+//
+// Use Case: Ideal for background processing, bisection loops, or filtering where you only
+// need to know *if* a mod is broken to exclude it from further testing.
 func (dr *DependencyResolver) CalculateTransitivelyUnresolvableMods(initialCandidates sets.Set) sets.Set {
-	// Start with the assumption that all candidates are available.
 	currentlyAvailable := sets.Copy(initialCandidates)
-	// This will accumulate all mods we discover are unresolvable.
-	totalUnresolvable := make(sets.Set)
+	totalUnresolvable := sets.Set{}
 
 	for {
-		// Find the next layer of unresolvable mods based on the currently available set.
 		newlyFoundUnresolvable := dr.CalculateDirectlyUnresolvableMods(currentlyAvailable)
 
-		// If this pass found no new problems, the set is stable and we are done.
 		if len(newlyFoundUnresolvable) == 0 {
 			break
 		}
 
-		// Add the newly found unresolvable mods to our final result set.
 		for modID := range newlyFoundUnresolvable {
 			totalUnresolvable[modID] = struct{}{}
 		}
 
-		// Remove the newly found unresolvable mods from the available pool
-		// for the next iteration of the check.
 		currentlyAvailable = sets.SubtractInPlace(currentlyAvailable, newlyFoundUnresolvable)
 	}
 
 	return totalUnresolvable
 }
 
-// CalculateDirectlyUnresolvableMods performs a single, first-degree check to determine
-// which mods from a given set of candidates are immediately unresolvable.
+// CalculateDirectlyUnresolvableMods performs a fast, first-degree check to determine which
+// mods are immediately unresolvable because they lack providers for their direct dependencies.
 //
-// A mod is considered directly unresolvable if any of its immediate 'depends' entries
-// cannot be satisfied by a version-compatible provider that is also present within
-// the `availableMods` set.
+// It does NOT check if the providers themselves are resolvable (no transitive checks).
+// It halts checking a mod the moment its first failed dependency is encountered (early exit).
 //
-// This function does not calculate transitive unresolvability. For example, if mod A
-// depends on mod B, and mod B is found to be unresolvable, this function will not flag
-// mod A as unresolvable due to B's issue. For the full transitive check, see
-// FindAllUnresolvableMods, which uses this function iteratively.
+// Use Case: Used internally as the fast-path engine for CalculateTransitivelyUnresolvableMods,
+// or for quick surface-level validation of a mod set.
 func (dr *DependencyResolver) CalculateDirectlyUnresolvableMods(availableMods sets.Set) sets.Set {
-	unresolvable := make(sets.Set)
+	resMap := dr.calculateDirectlyUnresolvable(availableMods, true)
+	resSet := make(sets.Set, len(resMap))
+	for modID := range resMap {
+		resSet[modID] = struct{}{}
+	}
+	return resSet
+}
+
+// CalculateDirectlyUnresolvableModsWithDetails performs a first-degree check like
+// CalculateDirectlyUnresolvableMods, but maps each unresolvable mod to a complete slice
+// of every direct dependency that failed to resolve.
+//
+// Performance: It must evaluate every dependency for every mod without early exiting,
+// resulting in memory allocations for the string slices.
+//
+// Use Case: Useful when you need a shallow, immediate error report for a specific subset
+// of mods, without traversing the entire dependency tree.
+func (dr *DependencyResolver) CalculateDirectlyUnresolvableModsWithDetails(availableMods sets.Set) map[string][]string {
+	return dr.calculateDirectlyUnresolvable(availableMods, false)
+}
+
+// calculateDirectlyUnresolvable is the underlying internal engine for all first-degree
+// unresolvability checks.
+//
+// Parameters:
+//   - availableMods: The pool of mods currently considered active/available.
+//   - earlyExit: If true, optimizes performance by instantly marking a mod as unresolvable
+//     upon its first missing dependency and skipping slice allocations. If false, it
+//     exhaustively maps all missing dependencies for each broken mod.
+func (dr *DependencyResolver) calculateDirectlyUnresolvable(availableMods sets.Set, earlyExit bool) map[string][]string {
+	unresolvable := make(map[string][]string)
 	sortedCandidates := sets.MakeSlice(availableMods)
 
 	for _, modID := range sortedCandidates {
@@ -483,16 +585,25 @@ func (dr *DependencyResolver) CalculateDirectlyUnresolvableMods(availableMods se
 			continue // Should not happen with a correctly constructed set
 		}
 
+		var failedDeps []string
+		isUnresolvable := false
+
 		for depID, predicates := range mod.FabricInfo.Depends {
 			if IsImplicitMod(depID) {
 				continue
 			}
 
-			// Use the helper method to check for a valid provider.
 			if !dr.findValidProviderInSet(depID, predicates, availableMods) {
-				unresolvable[modID] = struct{}{}
-				break // This mod is unresolvable; no need to check its other dependencies.
+				isUnresolvable = true
+				if earlyExit {
+					break // Fast path: Stop checking other dependencies
+				}
+				failedDeps = append(failedDeps, depID)
 			}
+		}
+
+		if isUnresolvable {
+			unresolvable[modID] = failedDeps
 		}
 	}
 

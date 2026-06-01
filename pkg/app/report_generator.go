@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
@@ -85,18 +86,69 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 		if len(conflictSpecificUnresolvable) > 0 {
 			builder.WriteString("    └ Disabling this set would also require disabling:\n")
 			for _, modID := range sets.MakeSlice(conflictSpecificUnresolvable) {
-				builder.WriteString(fmt.Sprintf("      - %s\n", modID))
+				if dep, depOk := allMods[modID]; depOk {
+					builder.WriteString(fmt.Sprintf("      - %s from '%s.jar'\n", modID, dep.BaseFilename))
+				} else {
+					builder.WriteString(fmt.Sprintf("      - %s from unknown\n", modID))
+				}
 			}
 		}
 	}
 
-	// Display generally unresolvable mods as a side note for completeness (once at the end)
-	generallyUnresolvableSlice := sets.MakeSlice(generallyUnresolvable)
-	if len(generallyUnresolvableSlice) > 0 {
+	// Generally Unresolvable Mods
+	details := stateMgr.Resolver().CalculateUnresolvableModsDetails(allModsSet)
+
+	if len(details.DirectlyUnresolvable) > 0 {
 		builder.WriteString("\n--- Mods with unresolved dependencies (may need manual review) ---\n")
-		for _, modID := range generallyUnresolvableSlice {
+
+		// Invert the transitive mapping to easily look up "Which mods does this root cause break?"
+		causedByRoot := make(map[string]sets.Set)
+		for transitiveID, roots := range details.TransitivelyUnresolvable {
+			for rootID := range roots {
+				if _, ok := causedByRoot[rootID]; !ok {
+					causedByRoot[rootID] = sets.Set{}
+				}
+				causedByRoot[rootID][transitiveID] = struct{}{}
+			}
+		}
+
+		// Sort top-level directly unresolvable mods for clean deterministic output
+		topLevelSlice := make([]string, 0, len(details.DirectlyUnresolvable))
+		for modID := range details.DirectlyUnresolvable {
+			topLevelSlice = append(topLevelSlice, modID)
+		}
+		sort.Strings(topLevelSlice)
+
+		for _, modID := range topLevelSlice {
 			if mod, ok := allMods[modID]; ok {
 				builder.WriteString(fmt.Sprintf("- %s (%s) from '%s.jar'\n", modID, mod.FriendlyName(), mod.BaseFilename))
+
+				// 1. Display directly missing dependencies
+				if failedDeps := details.DirectlyUnresolvable[modID]; len(failedDeps) > 0 {
+					builder.WriteString("    └ Unresolved or unmet dependencies:\n")
+					sort.Strings(failedDeps)
+					for _, depID := range failedDeps {
+						if providerMod, providerOk := allMods[depID]; providerOk {
+							builder.WriteString(fmt.Sprintf("      - %s from '%s.jar'\n", depID, providerMod.BaseFilename))
+						} else {
+							builder.WriteString(fmt.Sprintf("      - %s from unknown\n", depID))
+						}
+					}
+				}
+
+				// 2. Display the transitively broken mods dependent on this root mod
+				if caused, ok := causedByRoot[modID]; ok && len(caused) > 0 {
+					builder.WriteString("    └ Disabling this mod would also require disabling:\n")
+					causedSlice := sets.MakeSlice(caused)
+					sort.Strings(causedSlice)
+					for _, depID := range causedSlice {
+						if depMod, depOk := allMods[depID]; depOk {
+							builder.WriteString(fmt.Sprintf(fmt.Sprintf("      - %s from '%s.jar'\n", depID, depMod.BaseFilename)))
+						} else {
+							builder.WriteString(fmt.Sprintf(fmt.Sprintf("      - %s from unknown\n", depID)))
+						}
+					}
+				}
 			}
 		}
 	}
