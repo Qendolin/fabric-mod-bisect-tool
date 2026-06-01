@@ -497,6 +497,7 @@ func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides 
 		}
 	}
 
+	// FIXME: This warning should not be printed for builtin overrides
 	unappliedTargets := sets.Subtract(allRuleTargets, foundTargets)
 	if len(unappliedTargets) > 0 {
 		logging.Warnf("ModLoader: Skipping override rule(s) for unknown mod(s) not found in any top-level or nested JAR: %v", sets.FormatSet(unappliedTargets))

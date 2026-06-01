@@ -6,6 +6,8 @@ import (
 	"github.com/rivo/tview"
 )
 
+// FIXME: When the set size is too small this renders individual lines with gaps between instead of a continuous bar
+
 // OverviewWidget is a single-row visual representation of mod sets.
 type OverviewWidget struct {
 	*tview.Box

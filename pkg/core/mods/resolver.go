@@ -217,6 +217,7 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 	if !s.resolutionFailed {
 		s.failureReason = fmt.Sprintf("failed to resolve dependency '%s %s' for mod '%s'", depID, predicateStr, requiringModID)
 	}
+	// TODO: This error should be logged at a higher level. Doing it here causes the same issue to be reported multiple times
 	logging.Errorf("Resolver: Could not resolve dependency '%s %s' for mod '%s': no valid providers could be activated.", depID, predicateStr, requiringModID)
 	return false
 }
