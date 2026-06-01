@@ -6,8 +6,6 @@ import (
 	"github.com/rivo/tview"
 )
 
-// FIXME: When the set size is too small this renders individual lines with gaps between instead of a continuous bar
-
 // OverviewWidget is a single-row visual representation of mod sets.
 type OverviewWidget struct {
 	*tview.Box
@@ -52,17 +50,14 @@ func (w *OverviewWidget) Draw(screen tcell.Screen) {
 
 	splitPointScreenX := w.calculateSplitPointX(x, width)
 
-	lastModIndex := 0
 	for i := 0; i < width; i++ {
 		currentScreenX := x + i
 
-		endModIndex := len(w.allMods) * (i + 1) / width
 		if currentScreenX == splitPointScreenX {
-			w.drawSplitLine(screen, currentScreenX, y, lastModIndex, endModIndex)
+			w.drawSplitLine(screen, currentScreenX, y, i, width)
 		} else {
-			w.drawContentCell(screen, currentScreenX, y, lastModIndex, endModIndex)
+			w.drawContentCell(screen, currentScreenX, y, i, width)
 		}
-		lastModIndex = endModIndex
 	}
 }
 
@@ -110,31 +105,37 @@ func (w *OverviewWidget) calculateSplitPointX(drawX, drawWidth int) int {
 }
 
 // drawSplitLine draws the vertical line at the bisection split point.
-func (w *OverviewWidget) drawSplitLine(screen tcell.Screen, x, y, startModIndex, endModIndex int) {
-	color := w.determineColor(w.allMods[startModIndex:endModIndex])
+func (w *OverviewWidget) drawSplitLine(screen tcell.Screen, x, y, i, width int) {
+	start := i * len(w.allMods) / width
+	end := (i + 1) * len(w.allMods) / width
+	if start == end {
+		end++
+	}
+
+	color := w.determineColor(w.allMods[start:end])
 	style := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(color)
 	screen.SetContent(x, y, tview.BoxDrawingsDoubleVertical, nil, style)
 }
 
 // drawContentCell draws a single cell of the overview bar, determining its foreground and background colors.
-func (w *OverviewWidget) drawContentCell(screen tcell.Screen, x, y, startModIndex, endModIndex int) {
-	// If start and end are the same, this cell represents no mods, so draw nothing.
-	if startModIndex >= endModIndex {
-		return
+func (w *OverviewWidget) drawContentCell(screen tcell.Screen, x, y, i, width int) {
+	numMods := len(w.allMods)
+
+	// Helper to calculate exact fractional slice bounds for a half-cell
+	getBounds := func(halfIndex int) (int, int) {
+		start := halfIndex * numMods / (width * 2)
+		end := (halfIndex + 1) * numMods / (width * 2)
+		if start == end {
+			end++ // Guarantees at least 1 mod is rendered, preventing grey gaps
+		}
+		return start, end
 	}
 
-	midModIndex := startModIndex + (endModIndex-startModIndex)/2
+	startL, endL := getBounds(i * 2)   // Left half (Foreground)
+	startR, endR := getBounds(i*2 + 1) // Right half (Background)
 
-	// Determine the color for each half of this specific cell.
-	fgColor := w.determineColor(w.allMods[startModIndex : midModIndex+1])
-	bgColor := w.determineColor(w.allMods[midModIndex+1 : endModIndex])
-
-	if startModIndex == midModIndex+1 {
-		fgColor = bgColor
-	}
-	if midModIndex+1 == endModIndex {
-		bgColor = fgColor
-	}
+	fgColor := w.determineColor(w.allMods[startL:endL])
+	bgColor := w.determineColor(w.allMods[startR:endR])
 
 	style := tcell.StyleDefault.Foreground(fgColor).Background(bgColor)
 	screen.SetContent(x, y, '▌', nil, style)
