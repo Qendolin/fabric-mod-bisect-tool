@@ -438,7 +438,7 @@ func updateEffectiveProvides(effectiveProvides map[string]version.Version, provi
 
 // addImplicitProvides adds common implicit dependencies to the potential providers map.
 func addImplicitProvides(potentialProviders PotentialProvidersMap) {
-	implicitIDs := []string{"java", "minecraft", "fabricloader", "quilt_loader"}
+	implicitIDs := []string{"java", "minecraft", "fabricloader", "quilt_loader", "neoforge", "forge"}
 	placeholderVersion, _ := version.Parse("0.0.0", false)
 
 	for _, id := range implicitIDs {
