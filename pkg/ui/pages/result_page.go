@@ -134,6 +134,11 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 				messageBuilder.WriteString(fmt.Sprintf("Found [yellow::b]%d[-:-:-] independent conflict sets:\n", len(allFoundSets)))
 			}
 
+			allModsSet := sets.MakeSet(modState.GetAllModIDs())
+
+			// Calculate globally unresolvable mods (for reference)
+			generallyUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
+
 			// Display each conflict set.
 			for i, conflictSet := range allFoundSets {
 				if len(allFoundSets) > 1 {
@@ -147,15 +152,29 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 					messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
 				}
 
-				allModsSet := sets.MakeSet(modState.GetAllModIDs())
-				unresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
+				// Calculate unresolvable mods when conflictSet is disabled
+				unresolvableDueToConflict := modState.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
 
-				if len(unresolvable) > 0 {
+				// Find only the ones that become unresolvable due to this specific conflict
+				conflictSpecificUnresolvable := sets.Subtract(unresolvableDueToConflict, generallyUnresolvable)
+
+				if len(conflictSpecificUnresolvable) > 0 {
 					messageBuilder.WriteString("    [gray]└ Disabling this set would also require disabling:\n")
-					unresolvableMods := sets.MakeSlice(unresolvable)
+					unresolvableMods := sets.MakeSlice(conflictSpecificUnresolvable)
 					for _, modID := range unresolvableMods {
 						mod := mods[modID]
 						messageBuilder.WriteString(fmt.Sprintf("      - [yellow]%s[-:-:-] from '%s.jar'\n", modID, mod.BaseFilename))
+					}
+				}
+			}
+
+			// Display generally unresolvable mods as a side note for completeness
+			generallyUnresolvableSlice := sets.MakeSlice(generallyUnresolvable)
+			if len(generallyUnresolvableSlice) > 0 {
+				messageBuilder.WriteString("\n[gray]Mods ignored due to unresolvable dependencies (may need manual review):\n")
+				for _, modID := range generallyUnresolvableSlice {
+					if mod, ok := mods[modID]; ok {
+						messageBuilder.WriteString(fmt.Sprintf("[gray]  - %s from '%s.jar'\n", modID, mod.BaseFilename))
 					}
 				}
 			}

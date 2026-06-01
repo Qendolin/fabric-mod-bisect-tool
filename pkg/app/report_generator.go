@@ -63,6 +63,9 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 	allMods := stateMgr.GetAllMods()
 	allModsSet := sets.MakeSet(stateMgr.GetAllModIDs())
 
+	// Calculate globally unresolvable mods (for reference)
+	generallyUnresolvable := stateMgr.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
+
 	for i, conflictSet := range allFoundSets {
 		builder.WriteString(fmt.Sprintf("\n--- Conflict Set #%d ---\n", i+1))
 		for _, id := range sets.MakeSlice(conflictSet) {
@@ -73,11 +76,27 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 			builder.WriteString(fmt.Sprintf("  - %s %s\n", id, modInfo))
 		}
 
-		unresolvable := stateMgr.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
-		if len(unresolvable) > 0 {
-			builder.WriteString("    └ Dependent mods that may also need disabling:\n")
-			for _, modID := range sets.MakeSlice(unresolvable) {
+		// Calculate unresolvable mods when conflictSet is disabled
+		unresolvableDueToConflict := stateMgr.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
+
+		// Find only the ones that become unresolvable due to this specific conflict
+		conflictSpecificUnresolvable := sets.Subtract(unresolvableDueToConflict, generallyUnresolvable)
+
+		if len(conflictSpecificUnresolvable) > 0 {
+			builder.WriteString("    └ Disabling this set would also require disabling:\n")
+			for _, modID := range sets.MakeSlice(conflictSpecificUnresolvable) {
 				builder.WriteString(fmt.Sprintf("      - %s\n", modID))
+			}
+		}
+	}
+
+	// Display generally unresolvable mods as a side note for completeness (once at the end)
+	generallyUnresolvableSlice := sets.MakeSlice(generallyUnresolvable)
+	if len(generallyUnresolvableSlice) > 0 {
+		builder.WriteString("\n--- Mods with unresolved dependencies (may need manual review) ---\n")
+		for _, modID := range generallyUnresolvableSlice {
+			if mod, ok := allMods[modID]; ok {
+				builder.WriteString(fmt.Sprintf("- %s (%s) from '%s.jar'\n", modID, mod.FriendlyName(), mod.BaseFilename))
 			}
 		}
 	}
