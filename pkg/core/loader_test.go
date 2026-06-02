@@ -27,6 +27,8 @@ func TestModLoader(t *testing.T) {
 		return dir
 	}
 
+	implicitProviderCount := len(mods.GetImplicitMods())
+
 	// Helper to load mods and perform common assertions
 	loadAndCheck := func(t *testing.T, modsDir string, expectedModIDs []string, expectedProviderCount int, expectError bool) (map[string]*mods.Mod, mods.PotentialProvidersMap) {
 		loader := mods.ModLoader{}
@@ -49,8 +51,8 @@ func TestModLoader(t *testing.T) {
 					t.Errorf("Expected mod '%s' to be loaded, but it was not found", id)
 				}
 			}
-			if len(providers) != expectedProviderCount {
-				t.Errorf("Expected %d potential providers, got %d", expectedProviderCount, len(providers))
+			if len(providers) != expectedProviderCount+implicitProviderCount {
+				t.Errorf("Expected %d potential providers, got %d", expectedProviderCount+implicitProviderCount, len(providers))
 			}
 			return allMods, providers
 		}
@@ -64,7 +66,7 @@ func TestModLoader(t *testing.T) {
 			"mymod-1.0.jar": {JSONContent: `{"id": "mymod", "version": "1.0"}`},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{"mymod"}, 4+1, false) // 4 implicit + 1 mod
+		loadAndCheck(t, modsDir, []string{"mymod"}, 1, false)
 	})
 
 	t.Run("Multiple_Independent_Mods", func(t *testing.T) {
@@ -76,7 +78,7 @@ func TestModLoader(t *testing.T) {
 			"mod_b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadedMods, providers := loadAndCheck(t, modsDir, []string{"mod_a", "mod_b"}, 4+2, false)
+		loadedMods, providers := loadAndCheck(t, modsDir, []string{"mod_a", "mod_b"}, 2, false)
 		if loadedMods != nil {
 			if _, ok := loadedMods["mod_a"]; !ok {
 				t.Fatal("mod_a should be loaded")
@@ -99,7 +101,7 @@ func TestModLoader(t *testing.T) {
 			"mod_req-1.0.jar": {JSONContent: `{"id": "mod_req", "version": "1.0", "depends": {"mod_dep": ">=1.0"}}`},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{"mod_dep", "mod_req"}, 4+2, false)
+		loadAndCheck(t, modsDir, []string{"mod_dep", "mod_req"}, 2, false)
 	})
 
 	t.Run("Mod_with_Provides", func(t *testing.T) {
@@ -110,7 +112,7 @@ func TestModLoader(t *testing.T) {
 			"lib_provider-1.0.jar": {JSONContent: `{"id": "lib_provider", "version": "1.0", "provides": ["my_lib"]}`},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadedMods, providers := loadAndCheck(t, modsDir, []string{"lib_provider"}, 4+2, false) // 4 implicit + lib_provider + my_lib
+		loadedMods, providers := loadAndCheck(t, modsDir, []string{"lib_provider"}, 2, false) // lib_provider + my_lib
 		if loadedMods != nil {
 			if _, ok := loadedMods["lib_provider"]; !ok {
 				t.Fatal("lib_provider should be loaded")
@@ -137,8 +139,7 @@ func TestModLoader(t *testing.T) {
 			},
 		}
 		setupDummyMods(t, modsDir, specs)
-		// The total providers are 4 implicit + "main_mod" + "nested_lib" = 6.
-		loadedMods, providers := loadAndCheck(t, modsDir, []string{"main_mod"}, 4+2, false)
+		loadedMods, providers := loadAndCheck(t, modsDir, []string{"main_mod"}, 2, false)
 		if loadedMods != nil {
 			mainMod := loadedMods["main_mod"]
 			if len(mainMod.NestedModules) != 1 || mainMod.NestedModules[0].Info.ID != "nested_lib" {
@@ -162,10 +163,10 @@ func TestModLoader(t *testing.T) {
 			"conf_mod-2.0.jar": {JSONContent: `{"id": "conf_mod", "version": "2.0"}`}, // Higher version should win
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadedMods, _ := loadAndCheck(t, modsDir, []string{"conf_mod"}, 4+1, false)
+		loadedMods, _ := loadAndCheck(t, modsDir, []string{"conf_mod"}, 1, false)
 		if loadedMods != nil {
-			if loadedMods["conf_mod"].FabricInfo.Version.Version.String() != "2.0" {
-				t.Errorf("Expected conf_mod v2.0 to win conflict, got v%s", loadedMods["conf_mod"].FabricInfo.Version.Version.String())
+			if loadedMods["conf_mod"].Metadata.Version.Version.String() != "2.0" {
+				t.Errorf("Expected conf_mod v2.0 to win conflict, got v%s", loadedMods["conf_mod"].Metadata.Version.Version.String())
 			}
 		}
 	})
@@ -183,12 +184,12 @@ func TestModLoader(t *testing.T) {
 		setupDummyMods(t, modsDir, specs)
 
 		// The loader should only load the winner, v2.0.
-		loadedMods, _ := loadAndCheck(t, modsDir, []string{"conf_mod"}, 4+1, false)
+		loadedMods, _ := loadAndCheck(t, modsDir, []string{"conf_mod"}, 1, false)
 
 		if loadedMods != nil {
 			// Assert that the winner is the correct version.
-			if loadedMods["conf_mod"].FabricInfo.Version.Version.String() != "2.0" {
-				t.Errorf("Expected conf_mod v2.0 to win conflict based on version, got v%s", loadedMods["conf_mod"].FabricInfo.Version.Version.String())
+			if loadedMods["conf_mod"].Metadata.Version.Version.String() != "2.0" {
+				t.Errorf("Expected conf_mod v2.0 to win conflict based on version, got v%s", loadedMods["conf_mod"].Metadata.Version.Version.String())
 			}
 			// Assert that the active loser's file was correctly disabled.
 			disabledPath := filepath.Join(modsDir, "conf_mod-1.0.jar.disabled")
@@ -223,8 +224,8 @@ func TestModLoader(t *testing.T) {
 		if !ok {
 			t.Fatal("Expected mod with ID 'quilt_mod' to be loaded, but it was not found.")
 		}
-		if loadedMod.FabricInfo.Version.Version.String() != "1.1" {
-			t.Errorf("Expected quilt.mod.json (v1.1) to take priority, got v%s", loadedMod.FabricInfo.Version.Version.String())
+		if loadedMod.Metadata.Version.Version.String() != "1.1" {
+			t.Errorf("Expected quilt.mod.json (v1.1) to take priority, got v%s", loadedMod.Metadata.Version.Version.String())
 		}
 	})
 
@@ -236,7 +237,7 @@ func TestModLoader(t *testing.T) {
 			"broken_mod-1.0.jar": {JSONContent: `{"id": "broken_mod", "version": "1.0", "breaks": {"another_mod": "1.0"}}`},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{"broken_mod"}, 4+1, false) // Breaks handled at resolution, not load time.
+		loadAndCheck(t, modsDir, []string{"broken_mod"}, 1, false) // Breaks handled at resolution, not load time.
 	})
 
 	t.Run("Mod_with_Complex_Version_Range", func(t *testing.T) {
@@ -249,7 +250,7 @@ func TestModLoader(t *testing.T) {
 		}
 		setupDummyMods(t, modsDir, specs)
 		// Should load fine, parsing of range handled by VersionRanges.UnmarshalJSON
-		loadAndCheck(t, modsDir, []string{"range_mod", "my_lib"}, 4+2, false)
+		loadAndCheck(t, modsDir, []string{"range_mod", "my_lib"}, 2, false)
 	})
 
 	// --- Negative Cases ---
@@ -261,7 +262,7 @@ func TestModLoader(t *testing.T) {
 			t.Fatalf("Failed to create empty mods directory: %v", err)
 		}
 		defer os.RemoveAll(modsDir)
-		loadAndCheck(t, modsDir, []string{}, 4, false)
+		loadAndCheck(t, modsDir, []string{}, 0, false)
 	})
 
 	t.Run("Missing_Mod_Json", func(t *testing.T) {
@@ -277,7 +278,7 @@ func TestModLoader(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(modsDir, "empty.jar"), zipBuf.Bytes(), 0644); err != nil {
 			t.Fatal(err)
 		}
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Mod should be skipped with a warning, LoadMods should not error.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Mod should be skipped with a warning, LoadMods should not error.
 	})
 
 	t.Run("Invalid_Mod_Json_Malformed", func(t *testing.T) {
@@ -288,7 +289,7 @@ func TestModLoader(t *testing.T) {
 			"malformed.jar": {JSONContent: `{"id": "malformed", "version": "1.0",`}, // Trailing comma, invalid JSON
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Should warn and skip, not error LoadMods.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Should warn and skip, not error LoadMods.
 	})
 
 	t.Run("Invalid_Mod_Json_Missing_ID", func(t *testing.T) {
@@ -299,7 +300,7 @@ func TestModLoader(t *testing.T) {
 			"no_id.jar": {JSONContent: `{"version": "1.0"}`}, // Missing ID
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Should warn and skip.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Should warn and skip.
 	})
 
 	t.Run("Invalid_Mod_Json_Missing_Version", func(t *testing.T) {
@@ -310,7 +311,7 @@ func TestModLoader(t *testing.T) {
 			"no_version.jar": {JSONContent: `{"id": "no_version"}`}, // Missing version
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Should warn and skip due to VersionField.UnmarshalJSON.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Should warn and skip due to VersionField.UnmarshalJSON.
 	})
 
 	t.Run("Invalid_Mod_Json_Invalid_Version_String", func(t *testing.T) {
@@ -324,15 +325,15 @@ func TestModLoader(t *testing.T) {
 
 		// The loader correctly loads this mod with a StringVersion.
 		// We should expect 1 mod to be loaded.
-		loadedMods, _ := loadAndCheck(t, modsDir, []string{"bad_version"}, 4+1, false)
+		loadedMods, _ := loadAndCheck(t, modsDir, []string{"bad_version"}, 1, false)
 
 		if loadedMods != nil {
 			mod := loadedMods["bad_version"]
-			if mod.FabricInfo.Version.Version.IsSemantic() {
+			if mod.Metadata.Version.Version.IsSemantic() {
 				t.Error("Expected version for 'bad_version' to be a non-semantic StringVersion")
 			}
-			if mod.FabricInfo.Version.Version.String() != "a.b.c" {
-				t.Errorf("Expected version string 'a.b.c', got '%s'", mod.FabricInfo.Version.Version.String())
+			if mod.Metadata.Version.Version.String() != "a.b.c" {
+				t.Errorf("Expected version string 'a.b.c', got '%s'", mod.Metadata.Version.Version.String())
 			}
 		}
 	})
@@ -348,7 +349,7 @@ func TestModLoader(t *testing.T) {
 		}
 		setupDummyMods(t, modsDir, specs)
 		// The loader should correctly fail to parse this mod and skip it.
-		loadAndCheck(t, modsDir, []string{}, 4, false)
+		loadAndCheck(t, modsDir, []string{}, 0, false)
 	})
 
 	t.Run("Illegal_Mod_ID_Reserved", func(t *testing.T) {
@@ -359,7 +360,7 @@ func TestModLoader(t *testing.T) {
 			"java_mod-1.0.jar": {JSONContent: `{"id": "java", "version": "1.0"}`}, // Illegal ID
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Should warn and skip.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Should warn and skip.
 	})
 
 	t.Run("Illegal_Provides_ID_Reserved", func(t *testing.T) {
@@ -370,7 +371,7 @@ func TestModLoader(t *testing.T) {
 			"provides_mc-1.0.jar": {JSONContent: `{"id": "provides_mc", "version": "1.0", "provides": ["minecraft"]}`}, // Illegal provides ID
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{}, 4, false) // Should warn and skip.
+		loadAndCheck(t, modsDir, []string{}, 0, false) // Should warn and skip.
 	})
 
 	t.Run("Nested_JAR_Not_Found", func(t *testing.T) {
@@ -383,6 +384,6 @@ func TestModLoader(t *testing.T) {
 			},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loadAndCheck(t, modsDir, []string{"main_mod"}, 4+1, false) // main_mod should load, but warning about missing nested.
+		loadAndCheck(t, modsDir, []string{"main_mod"}, 1, false) // main_mod should load, but warning about missing nested.
 	})
 }

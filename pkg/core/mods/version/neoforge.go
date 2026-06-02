@@ -27,7 +27,7 @@ func TranslateMavenVersionRange(mavenRange string) (results []string, err error)
 
 	// If the range is just a plain version (no brackets or parens)
 	if !strings.ContainsAny(mavenRange, "[]()") {
-		// Special Maven meaning: treat as minimum version, but actually we just use '*'
+		// Special Maven meaning: the version is a soft requirement, we just use '*'
 		return []string{"*"}, nil
 	}
 

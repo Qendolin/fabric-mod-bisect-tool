@@ -24,7 +24,7 @@ func TestTranslateMavenVersion(t *testing.T) {
 
 func TestTranslateMavenVersionRange(t *testing.T) {
 	cases := map[string][]string{
-		"1.0":           {">=1.0"},
+		"1.0":           {"*"},
 		"(,1.0]":        {"<=1.0"},
 		"(,1.0)":        {"<1.0"},
 		"[1.0]":         {"=1.0"},
