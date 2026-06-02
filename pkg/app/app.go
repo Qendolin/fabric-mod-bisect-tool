@@ -298,10 +298,10 @@ func (a *App) setupGlobalInputCapture() {
 func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 	var allOverrides []*mods.DependencyOverrides
 
-	// Priority 1: Current Working Directory
+	// Priority 1 (highest): Current Working Directory
 	cwd, _ := os.Getwd()
 	cwdPath := filepath.Join(cwd, "fabric_loader_dependencies.json")
-	if cwdOverrides, err := mods.LoadDependencyOverridesFromPath(cwdPath); err != nil {
+	if cwdOverrides, err := mods.LoadDependencyOverridesFromPath(cwdPath, mods.OverrideSourceUserProvided); err != nil {
 		// A "not found" error is expected and should be ignored silently.
 		if !os.IsNotExist(err) {
 			// Any other error (e.g., malformed JSON, permissions) should be logged.
@@ -314,7 +314,7 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 
 	// Priority 2: Standard config directory
 	configPath := filepath.Join(modsPath, "..", "config", "fabric_loader_dependencies.json")
-	if configOverrides, err := mods.LoadDependencyOverridesFromPath(configPath); err != nil {
+	if configOverrides, err := mods.LoadDependencyOverridesFromPath(configPath, mods.OverrideSourceUserProvided); err != nil {
 		if !os.IsNotExist(err) {
 			logging.Warnf("App: Could not load dependency overrides from '%s': %v", configPath, err)
 		}
@@ -325,7 +325,7 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 
 	// Priority 3: Embedded overrides
 	if !a.cliArgs.NoEmbeddedOverrides {
-		if embedded, err := mods.LoadDependencyOverrides(bytes.NewReader(embeds.GetEmbeddedOverrides())); err != nil {
+		if embedded, err := mods.LoadDependencyOverrides(bytes.NewReader(embeds.GetEmbeddedOverrides()), mods.OverrideSourceBuiltin); err != nil {
 			// This indicates a problem with the embedded file itself, which is a developer error.
 			logging.Errorf("App: Failed to load embedded dependency overrides: %v", err)
 		} else {
