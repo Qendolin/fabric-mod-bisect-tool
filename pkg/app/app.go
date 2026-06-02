@@ -444,8 +444,13 @@ func (a *App) Layout() *ui.LayoutManager         { return a.layoutManager }
 func (a *App) GetLogger() *logging.Logger        { return a.logger }
 
 func (a *App) GetViewModel() ui.BisectionViewModel {
+	vm := ui.BisectionViewModel{
+		IsReady:         false,
+		QuiltSupport:    a.cliArgs.QuiltSupport,
+		NeoForgeSupport: a.cliArgs.NeoForgeSupport,
+	}
 	if !a.IsBisectionReady() {
-		return ui.BisectionViewModel{IsReady: false}
+		return vm
 	}
 
 	engine := a.bisectSvc.Engine()
@@ -455,27 +460,25 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 
 	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
 
-	return ui.BisectionViewModel{
-		IsReady:            true,
-		IsComplete:         state.IsComplete,
-		IsVerificationStep: isVerification,
-		StepCount:          engine.GetStepCount(),
-		Iteration:          state.Iteration,
-		Round:              state.Round,
-		EstimatedMaxTests:  engine.GetEstimatedMaxTests(),
-		LastTestResult:     state.LastTestResult,
-		AllConflictSets:    enumState.FoundConflictSets,
-		CurrentConflictSet: state.ConflictSet,
-		LastFoundElement:   state.LastFoundElement,
-		AllModIDs:          state.AllModIDs,
-		CandidateSet:       state.GetCandidateSet(),
-		ClearedSet:         state.GetClearedSet(),
-		PendingAdditions:   engine.GetPendingAdditions(),
-		CurrentTestPlan:    currentPlan,
-		ExecutionLog:       a.bisectSvc.GetCombinedExecutionLog(),
-		QuiltSupport:       a.cliArgs.QuiltSupport,
-		NeoForgeSupport:    a.cliArgs.NeoForgeSupport,
-	}
+	vm.IsReady = true
+	vm.IsComplete = state.IsComplete
+	vm.IsVerificationStep = isVerification
+	vm.StepCount = engine.GetStepCount()
+	vm.Iteration = state.Iteration
+	vm.Round = state.Round
+	vm.EstimatedMaxTests = engine.GetEstimatedMaxTests()
+	vm.LastTestResult = state.LastTestResult
+	vm.AllConflictSets = enumState.FoundConflictSets
+	vm.CurrentConflictSet = state.ConflictSet
+	vm.LastFoundElement = state.LastFoundElement
+	vm.AllModIDs = state.AllModIDs
+	vm.CandidateSet = state.GetCandidateSet()
+	vm.ClearedSet = state.GetClearedSet()
+	vm.PendingAdditions = engine.GetPendingAdditions()
+	vm.CurrentTestPlan = currentPlan
+	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
+
+	return vm
 }
 
 func (a *App) GetStateManager() *mods.StateManager { return a.bisectSvc.StateManager() }
