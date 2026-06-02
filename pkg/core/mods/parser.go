@@ -188,7 +188,7 @@ func (p *ModParser) parseModMetadataFromReader(zipReader *zip.Reader, jarIdentif
 		// Unlike fabric mods, nested jars from META-INF/jarjar/metadata.json are loaded here
 		err = p.parseNeoForgeNestedJars(zipReader, &mm, jarIdentifier, logBuffer)
 		if err != nil {
-			return
+			logBuffer.add(logging.LevelError, "ModLoader: Failed to parse jarjar metadata for %s: %v. Loading without nested jars.", jarIdentifier, err)
 		}
 	}
 

@@ -76,17 +76,6 @@ func (p *ModParser) parseNeoForgeNestedJars(zipReader *zip.Reader, mm *ModMetada
 
 	// Jar is not a mod, it's either a container or just a java library
 	if mm.Loader == LoaderNone {
-		if len(jarJarEntries) == 0 {
-			if jarJarErr != nil {
-				return fmt.Errorf("parsing metadata for %s failed and it is not a valid container: %w", jarIdentifier, jarJarErr)
-			} else {
-				// This is not an error
-				logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod and not a container, probably just a library", jarIdentifier)
-			}
-		} else {
-			logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod, but is a container for %d nested JAR(s).", jarIdentifier, len(jarJarEntries))
-		}
-
 		// Treat the jar as a container. Create a synthetic metadata object for it.
 		// The placeholder version is required for the struct, but will not be used in dependency resolution.
 		placeholderVersion, _ := version.Parse("0.0.0-synthetic", false)
@@ -97,6 +86,17 @@ func (p *ModParser) parseNeoForgeNestedJars(zipReader *zip.Reader, mm *ModMetada
 			Jars:          jarJarEntries,
 			Loader:        LoaderNone,
 			IsJavaLibrary: true,
+		}
+
+		if len(jarJarEntries) == 0 {
+			if jarJarErr != nil {
+				return fmt.Errorf("parsing metadata for %s failed and it is not a valid container: %w", jarIdentifier, jarJarErr)
+			} else {
+				// This is not an error
+				logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod and not a container, probably just a library", jarIdentifier)
+			}
+		} else {
+			logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod, but is a container for %d nested JAR(s).", jarIdentifier, len(jarJarEntries))
 		}
 	} else {
 		// Jar is a mod, Doesn't matter if it's NF or Fabric/Quilt mod, we need to add the nested jars
