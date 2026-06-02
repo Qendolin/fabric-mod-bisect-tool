@@ -68,7 +68,7 @@ func GenerateLogReport(vm ui.BisectionViewModel, stateMgr *mods.StateManager) st
 		for _, id := range sets.MakeSlice(conflictSet) {
 			modInfo := ""
 			if mod, ok := allMods[id]; ok {
-				modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
+				modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.Metadata.Version, mod.BaseFilename)
 			}
 			builder.WriteString(fmt.Sprintf("  - %s %s\n", id, modInfo))
 		}

@@ -10,6 +10,15 @@ import (
 	"github.com/titanous/json5"
 )
 
+type Loader string
+
+const (
+	LoaderNone     = Loader("")
+	LoaderFabric   = Loader("Fabric")
+	LoaderQuilt    = Loader("Quilt")
+	LoaderNeoForge = Loader("NeoForge")
+)
+
 // VersionField is a wrapper for version.Version that handles JSON unmarshaling
 // from a string, ensuring the version is parsed and valid at load time.
 type VersionField struct {
@@ -101,26 +110,39 @@ type ProviderInfo struct {
 // PotentialProvidersMap maps a dependency ID to a list of ProviderInfo structs.
 type PotentialProvidersMap map[string][]ProviderInfo
 
-// FabricModJson represents the structure of a fabric.mod.json file.
-type FabricModJson struct {
-	ID         string        `json:"id"`
-	Name       string        `json:"name"`
-	Version    VersionField  `json:"version"`
-	Provides   []string      `json:"provides"`
-	Depends    VersionRanges `json:"depends"`
-	Breaks     VersionRanges `json:"breaks"`
-	Recommends VersionRanges `json:"recommends"`
-	Suggests   VersionRanges `json:"suggests"`
-	Conflicts  VersionRanges `json:"conflicts"`
-	Jars       []struct {
-		File string `json:"file"`
-	} `json:"jars"`
+// ModMetadata contains the metadata extracted from a mod's manifest file.
+// It represents the core information about a mod as defined in its manifest (fabric.mod.json, quilt.mod.json, or neoforge.mods.toml).
+type ModMetadata struct {
+	// ID is the unique identifier for the mod (e.g., "example-mod").
+	ID string
+	// Name is the human-readable name of the mod.
+	Name string
+	// Version is the mod's version number.
+	Version VersionField
+	// Loader indicates which mod loader the mod is designed for.
+	Loader Loader
+	// Provides is a list of mod IDs this mod provides. This does not include the mod's own ID.
+	Provides []string
+	// Depends maps mod IDs to version ranges, representing required dependencies.
+	Depends VersionRanges
+	// Breaks maps mod IDs to version ranges, representing mods that are broken by this mod.
+	Breaks VersionRanges
+	// Recommends maps mod IDs to version ranges, representing recommended (but not required) dependencies.
+	Recommends VersionRanges
+	// Suggests maps mod IDs to version ranges, representing suggested (optional) dependencies.
+	Suggests VersionRanges
+	// Conflicts maps mod IDs to version ranges, representing mods that are incompatible with this mod.
+	Conflicts VersionRanges
+	// Jars is a list of nested JAR file paths referenced by this mod (e.g., for container mods).
+	Jars []string
+	// Indicates that this mod metadata doesn't represent a real mod
+	IsJavaLibrary bool
 }
 
 // NestedModule holds metadata for a mod found inside another JAR file,
 // including its full path within the parent archive.
 type NestedModule struct {
-	Info      FabricModJson
+	Info      ModMetadata
 	PathInJar string
 }
 
@@ -128,7 +150,7 @@ type NestedModule struct {
 type Mod struct {
 	Path              string
 	BaseFilename      string
-	FabricInfo        FabricModJson
+	Metadata          ModMetadata
 	IsInitiallyActive bool // Was the mod active (.jar) when first loaded?
 	NestedModules     []NestedModule
 	EffectiveProvides map[string]version.Version // Maps all unique IDs this mod provides to their version.
@@ -139,10 +161,10 @@ func (m *Mod) FriendlyName() string {
 	if m == nil {
 		return "Unknown Mod"
 	}
-	if m.FabricInfo.Name != "" {
-		return m.FabricInfo.Name
+	if m.Metadata.Name != "" {
+		return m.Metadata.Name
 	}
-	return m.FabricInfo.ID
+	return m.Metadata.ID
 }
 
 // ModStatus represents the current runtime state of a single mod.
@@ -244,7 +266,7 @@ func (a OverrideAction) String() string {
 
 // OverrideRule is the interface for any dependency or provides override rule.
 type OverrideRule interface {
-	Apply(fmj *FabricModJson)
+	Apply(mm *ModMetadata)
 	Target() string
 	Field() string
 	Key() string
