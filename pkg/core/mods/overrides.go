@@ -25,18 +25,20 @@ type mapBasedRule struct {
 	RuleField        string
 	RuleKey          string
 	VersionPredicate *version.VersionPredicate
+	OverrideSource   OverrideSource
 }
 
 // listBasedRule handles overrides for list-based fields (e.g., "provides").
 type listBasedRule struct {
-	TargetModID string
-	RuleAction  OverrideAction
-	RuleField   string
-	Item        string
+	TargetModID    string
+	RuleAction     OverrideAction
+	RuleField      string
+	Item           string
+	OverrideSource OverrideSource
 }
 
 // LoadDependencyOverridesFromPath loads overrides from a specific file path.
-func LoadDependencyOverridesFromPath(path string) (*DependencyOverrides, error) {
+func LoadDependencyOverridesFromPath(path string, overrideSource OverrideSource) (*DependencyOverrides, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -44,11 +46,11 @@ func LoadDependencyOverridesFromPath(path string) (*DependencyOverrides, error) 
 		}
 		return nil, fmt.Errorf("reading override file '%s': %w", path, err)
 	}
-	return LoadDependencyOverrides(bytes.NewReader(data))
+	return LoadDependencyOverrides(bytes.NewReader(data), overrideSource)
 }
 
 // LoadDependencyOverrides loads and parses dependency overrides from an io.Reader.
-func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
+func LoadDependencyOverrides(reader io.Reader, overrideSource OverrideSource) (*DependencyOverrides, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("reading dependency override data: %w", err)
@@ -86,6 +88,7 @@ func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
 						RuleField:        fieldName,
 						RuleKey:          key,
 						VersionPredicate: pred,
+						OverrideSource:   overrideSource,
 					}
 					parsedOverrides.Rules = append(parsedOverrides.Rules, rule)
 				}
@@ -96,10 +99,11 @@ func LoadDependencyOverrides(reader io.Reader) (*DependencyOverrides, error) {
 				}
 				for _, item := range itemList {
 					rule := listBasedRule{
-						TargetModID: targetModID,
-						RuleAction:  action,
-						RuleField:   fieldName,
-						Item:        item,
+						TargetModID:    targetModID,
+						RuleAction:     action,
+						RuleField:      fieldName,
+						Item:           item,
+						OverrideSource: overrideSource,
 					}
 					parsedOverrides.Rules = append(parsedOverrides.Rules, rule)
 				}
@@ -180,6 +184,7 @@ func (r mapBasedRule) Value() string {
 	}
 	return r.VersionPredicate.String()
 }
+func (r mapBasedRule) Source() OverrideSource { return r.OverrideSource }
 func (r mapBasedRule) Apply(fmj *FabricModJson) {
 	var targetMap *VersionRanges
 
@@ -217,6 +222,7 @@ func (r listBasedRule) Field() string          { return r.RuleField }
 func (r listBasedRule) Key() string            { return r.Item }
 func (r listBasedRule) Action() OverrideAction { return r.RuleAction }
 func (r listBasedRule) Value() string          { return "" }
+func (r listBasedRule) Source() OverrideSource { return r.OverrideSource }
 func (r listBasedRule) Apply(fmj *FabricModJson) {
 	var targetSlice *[]string
 	if r.RuleField == "provides" {

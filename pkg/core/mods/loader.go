@@ -463,11 +463,9 @@ func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides 
 	}
 
 	rulesByModID := make(map[string][]OverrideRule)
-	allRuleTargets := make(map[string]struct{})
 	for _, rule := range overrides.Rules {
 		targetID := rule.Target()
 		rulesByModID[targetID] = append(rulesByModID[targetID], rule)
-		allRuleTargets[targetID] = struct{}{}
 	}
 
 	foundTargets := make(map[string]struct{})
@@ -497,9 +495,27 @@ func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides 
 		}
 	}
 
-	// FIXME: This warning should not be printed for builtin overrides
-	unappliedTargets := sets.Subtract(allRuleTargets, foundTargets)
-	if len(unappliedTargets) > 0 {
-		logging.Warnf("ModLoader: Skipping override rule(s) for unknown mod(s) not found in any top-level or nested JAR: %v", sets.FormatSet(unappliedTargets))
+	// Track unapplied targets by source
+	unappliedBySource := make(map[OverrideSource]map[string]struct{})
+	for targetID, rules := range rulesByModID {
+		if _, found := foundTargets[targetID]; !found {
+			// Use the source of the first rule targeting this mod
+			source := rules[0].Source()
+			if unappliedBySource[source] == nil {
+				unappliedBySource[source] = make(map[string]struct{})
+			}
+			unappliedBySource[source][targetID] = struct{}{}
+		}
+	}
+
+	// Report unapplied targets per source
+	for source, unapplied := range unappliedBySource {
+		if len(unapplied) > 0 {
+			if source == OverrideSourceBuiltin {
+				logging.Infof("ModLoader: Skipping builtin override rule(s) for unknown mod(s): %v", sets.FormatSet(unapplied))
+			} else {
+				logging.Warnf("ModLoader: Skipping override rule(s) for unknown mod(s) not found in any top-level or nested JAR: %v", sets.FormatSet(unapplied))
+			}
+		}
 	}
 }

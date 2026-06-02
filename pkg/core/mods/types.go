@@ -242,6 +242,27 @@ func (a OverrideAction) String() string {
 	}
 }
 
+// OverrideSource indicates where an override rule originates from.
+type OverrideSource int
+
+const (
+	// OverrideSourceBuiltin indicates an override from the embedded fabric_loader_dependencies.json
+	OverrideSourceBuiltin OverrideSource = iota
+	// OverrideSourceUserProvided indicates an override from a user-provided config file
+	OverrideSourceUserProvided
+)
+
+// String returns the string representation of the OverrideSource.
+func (s OverrideSource) String() string {
+	switch s {
+	case OverrideSourceBuiltin:
+		return "builtin"
+	case OverrideSourceUserProvided:
+		return "user-provided"
+	}
+	return "unknown"
+}
+
 // OverrideRule is the interface for any dependency or provides override rule.
 type OverrideRule interface {
 	Apply(fmj *FabricModJson)
@@ -250,6 +271,7 @@ type OverrideRule interface {
 	Key() string
 	Action() OverrideAction
 	Value() string
+	Source() OverrideSource
 }
 
 // DependencyOverrides holds a pre-parsed list of polymorphic rules.
