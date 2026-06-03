@@ -185,20 +185,20 @@ func (r mapBasedRule) Value() string {
 	return r.VersionPredicate.String()
 }
 func (r mapBasedRule) Source() OverrideSource { return r.OverrideSource }
-func (r mapBasedRule) Apply(fmj *FabricModJson) {
+func (r mapBasedRule) Apply(mm *ModMetadata) {
 	var targetMap *VersionRanges
 
 	switch r.RuleField {
 	case "depends":
-		targetMap = &fmj.Depends
+		targetMap = &mm.Depends
 	case "breaks":
-		targetMap = &fmj.Breaks
+		targetMap = &mm.Breaks
 	case "recommends":
-		targetMap = &fmj.Recommends
+		targetMap = &mm.Recommends
 	case "suggests":
-		targetMap = &fmj.Suggests
+		targetMap = &mm.Suggests
 	case "conflicts":
-		targetMap = &fmj.Conflicts
+		targetMap = &mm.Conflicts
 	default:
 		return
 	}
@@ -223,10 +223,10 @@ func (r listBasedRule) Key() string            { return r.Item }
 func (r listBasedRule) Action() OverrideAction { return r.RuleAction }
 func (r listBasedRule) Value() string          { return "" }
 func (r listBasedRule) Source() OverrideSource { return r.OverrideSource }
-func (r listBasedRule) Apply(fmj *FabricModJson) {
+func (r listBasedRule) Apply(mm *ModMetadata) {
 	var targetSlice *[]string
 	if r.RuleField == "provides" {
-		targetSlice = &fmj.Provides
+		targetSlice = &mm.Provides
 	} else {
 		return
 	}

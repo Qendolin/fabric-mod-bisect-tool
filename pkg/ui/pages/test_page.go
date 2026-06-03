@@ -3,6 +3,7 @@ package pages
 import (
 	"time"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
 	"github.com/gdamore/tcell/v2"
@@ -86,6 +87,7 @@ Please launch Minecraft and confirm the failure persists.`
 
 	// prevent accidental input
 	go func() {
+		defer logging.HandlePanic()
 		time.Sleep(300 * time.Millisecond)
 		p.app.QueueUpdateDraw(func() {
 			p.successBtn.SetDisabled(false)

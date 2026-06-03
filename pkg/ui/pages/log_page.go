@@ -65,6 +65,7 @@ func (p *LogPage) startPolling() {
 
 	ticker := time.NewTicker(250 * time.Millisecond)
 	go func() {
+		defer logging.HandlePanic()
 		defer ticker.Stop()
 		for {
 			select {

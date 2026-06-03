@@ -14,6 +14,21 @@ import (
 )
 
 func main() {
+	defer logging.HandlePanic()
+
+	var a *app.App
+
+	go func() {
+		for p := range logging.PanicChannel {
+			if a != nil {
+				a.Stop()
+			}
+			fmt.Fprintf(os.Stderr, "panic: %v\n%s", p.Value, string(p.Stack))
+			os.Exit(2)
+		}
+
+	}()
+
 	cliArgs := app.ParseCLIArgs()
 
 	// 1. Setup logging first.
@@ -64,7 +79,7 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// 3. Create the App structure, passing the configured logger
-	a := app.NewApp(mainLogger, cliArgs)
+	a = app.NewApp(mainLogger, cliArgs)
 
 	// 4. Goroutine to handle OS signals
 	go func() {

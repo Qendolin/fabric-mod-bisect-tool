@@ -47,7 +47,7 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 // ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
 func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, ResolutionPath) {
 	startTime := time.Now()
-	logging.Infof("Resolver: Resolving effective set for %d mods.", len(targetSet))
+	logging.Infof("Resolver: Resolving effective set for %d mods: %v", len(targetSet), sets.FormatSet(targetSet))
 
 	s := &resolutionSession{
 		allMods:            dr.allMods,
@@ -139,7 +139,7 @@ func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDe
 	s.effectiveSet[modID] = mod
 
 	allDepsOK := true
-	for depID, predicates := range mod.FabricInfo.Depends {
+	for depID, predicates := range mod.Metadata.Depends {
 		if IsImplicitMod(depID) {
 			continue
 		}
@@ -279,10 +279,10 @@ func (s *resolutionSession) findBestProviders(depID string, predicates []*versio
 // validateBreaks performs a final check on the successful resolution set.
 func (s *resolutionSession) validateBreaks() error {
 	for modID, mod := range s.effectiveSet {
-		if mod.FabricInfo.Breaks == nil {
+		if mod.Metadata.Breaks == nil {
 			continue
 		}
-		for brokenDepID, predicates := range mod.FabricInfo.Breaks {
+		for brokenDepID, predicates := range mod.Metadata.Breaks {
 			provider, isProvided := s.cachedProviders[brokenDepID]
 			if !isProvided {
 				continue
@@ -291,7 +291,7 @@ func (s *resolutionSession) validateBreaks() error {
 				if p.Test(provider.VersionOfProvidedItem) {
 					predicateStr := formatPredicates(predicates)
 					return fmt.Errorf("mod '%s' (v%s) breaks '%s' (provided by '%s' v%s) due to rule '%s %s'",
-						modID, mod.FabricInfo.Version.Version, brokenDepID, provider.TopLevelModID, provider.VersionOfProvidedItem, brokenDepID, predicateStr)
+						modID, mod.Metadata.Version.Version, brokenDepID, provider.TopLevelModID, provider.VersionOfProvidedItem, brokenDepID, predicateStr)
 				}
 			}
 		}
@@ -372,11 +372,11 @@ func (s *resolutionSession) updateResolutionPath(modID, neededBy, reason, satisf
 func (s *resolutionSession) collectResolutionPath() ResolutionPath {
 	pathSlice := make([]ResolutionInfo, 0, len(s.effectiveSet))
 	for _, mod := range s.effectiveSet {
-		if info, ok := s.resolutionPath[mod.FabricInfo.ID]; ok {
+		if info, ok := s.resolutionPath[mod.Metadata.ID]; ok {
 			pathSlice = append(pathSlice, info)
 		} else {
-			logging.Errorf("Resolver: Mod '%s' in effective set but missing resolution path.", mod.FabricInfo.ID)
-			pathSlice = append(pathSlice, ResolutionInfo{ModID: mod.FabricInfo.ID, Reason: "Error: Path Undefined"})
+			logging.Errorf("Resolver: Mod '%s' in effective set but missing resolution path.", mod.Metadata.ID)
+			pathSlice = append(pathSlice, ResolutionInfo{ModID: mod.Metadata.ID, Reason: "Error: Path Undefined"})
 		}
 	}
 	sort.Slice(pathSlice, func(i, j int) bool {
@@ -403,15 +403,15 @@ func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.S
 		newlyFound := make(sets.Set)
 		for _, mod := range dr.allMods {
 			// Skip if this mod is already known to be problematic or is a target.
-			if _, isProblematic := problematicSet[mod.FabricInfo.ID]; isProblematic {
+			if _, isProblematic := problematicSet[mod.Metadata.ID]; isProblematic {
 				continue
 			}
 
 			// Check if this mod depends on any mod in the current problematic set.
-			for depID := range mod.FabricInfo.Depends {
+			for depID := range mod.Metadata.Depends {
 				if _, isTargetDep := problematicSet[depID]; isTargetDep {
-					newlyFound[mod.FabricInfo.ID] = struct{}{}
-					dependerSet[mod.FabricInfo.ID] = struct{}{}
+					newlyFound[mod.Metadata.ID] = struct{}{}
+					dependerSet[mod.Metadata.ID] = struct{}{}
 					break // Move to the next mod once a dependency is found.
 				}
 			}
@@ -474,7 +474,7 @@ func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates
 
 			// To find the root cause, we look at the potential providers for the dependencies that just failed.
 			for _, depID := range failedDeps {
-				predicates := mod.FabricInfo.Depends[depID]
+				predicates := mod.Metadata.Depends[depID]
 				if providers, ok := dr.potentialProviders[depID]; ok {
 					for _, p := range providers {
 						// Check if this provider actually satisfied the version requirements
@@ -588,7 +588,7 @@ func (dr *DependencyResolver) calculateDirectlyUnresolvable(availableMods sets.S
 		var failedDeps []string
 		isUnresolvable := false
 
-		for depID, predicates := range mod.FabricInfo.Depends {
+		for depID, predicates := range mod.Metadata.Depends {
 			if IsImplicitMod(depID) {
 				continue
 			}
