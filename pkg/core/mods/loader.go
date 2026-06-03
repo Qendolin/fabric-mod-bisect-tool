@@ -132,7 +132,10 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go ml.jarProcessingWorker(&wg, tasks, results)
+		go func() {
+			defer logging.HandlePanic()
+			ml.jarProcessingWorker(&wg, tasks, results)
+		}()
 	}
 
 	for _, file := range filesToProcess {
@@ -141,6 +144,7 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 	close(tasks)
 
 	go func() {
+		defer logging.HandlePanic()
 		wg.Wait()
 		close(results)
 	}()

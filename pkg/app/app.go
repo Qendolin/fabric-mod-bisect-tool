@@ -92,6 +92,7 @@ func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport
 	a.loadingPage.StartLoading(modsPath)
 
 	go func() {
+		defer logging.HandlePanic()
 		overrides := a.loadAndMergeOverrides(modsPath)
 
 		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}}
@@ -148,7 +149,12 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 func (a *App) handleCoreStateChange() {
 	if obs, ok := a.navManager.GetCurrentPage(true).(ui.SearchStateObserver); ok {
-		go a.QueueUpdateDraw(func() { obs.RefreshSearchState() })
+		go func() {
+			defer logging.HandlePanic()
+			a.QueueUpdateDraw(func() {
+				obs.RefreshSearchState()
+			})
+		}()
 	}
 }
 
@@ -281,7 +287,10 @@ func (a *App) setupGlobalInputCapture() {
 					return nil
 				}
 			case tcell.KeyCtrlC:
-				go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
+				go func() {
+					defer logging.HandlePanic()
+					a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
+				}()
 				return nil
 			case tcell.KeyCtrlH:
 				if a.navManager.GetCurrentPageID(false) != ui.PageHistoryID {
