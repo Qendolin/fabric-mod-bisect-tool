@@ -1,6 +1,6 @@
 # Fabric Mod Bisect Tool
 
-A powerful, easy-to-use tool to find conflicting Fabric and Quilt mods.
+A powerful, easy-to-use tool to find conflicting Fabric, Quilt and NeoForge mods.
 
 If your game is having issues, like crashing on startup or exhibiting strange bugs, and you have hundreds of mods, finding the culprit can be a nightmare. This tool automates that process by performing a guided search, quickly pinpointing exactly which mod or combination of mods is causing the failure.
 
@@ -80,7 +80,7 @@ The tool will now show you a "Test in Progress" screen. It has just enabled a sp
 
 #### Action
 
-1.  Launch Minecraft using your normal mod loader (Fabric or Quilt).
+1.  Launch Minecraft using your normal mod loader (Fabric, Quilt or NeoForge).
 2.  Check if the problem still occurs. Does the game crash? Does the bug you're hunting still happen?
 3.  Return to the tool and click the button that matches the outcome:
   * **Success (No Issue):** The problem did *not* happen. The game loaded and worked as expected.
@@ -136,6 +136,7 @@ You can launch the tool with these optional flags for more control.
 * `--no-embedded-overrides`: Disables the built-in list of fixes for mods that have known dependency issues. Use this if you think a built-in fix is causing problems.
 * `--verbose`: Turns on detailed debug logging. The log file (`bisect-tool.log`) will contain much more information, which is useful for bug reports.
 * `--quilt`: Enables special support for Quilt mods (e.g., reading `quilt.mod.json`).
+* `--neoforge`: Enables special support for NeoForge mods (e.g., reading `neoforge.mods.toml`).
 * `--log-dir <path>`: Lets you specify a different folder to save the `bisect-tool.log` file. For example: `--log-dir "C:\my_logs"`.
 
 ### Dependency Overrides
