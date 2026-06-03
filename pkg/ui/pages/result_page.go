@@ -148,7 +148,7 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 				for _, id := range sets.MakeSlice(conflictSet) {
 					modInfo := ""
 					if mod, ok := mods[id]; ok {
-						modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.FabricInfo.Version, mod.BaseFilename)
+						modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.Metadata.Version, mod.BaseFilename)
 					}
 					messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
 				}
@@ -249,7 +249,7 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 			for _, id := range sets.MakeSlice(lastSet) {
 				modInfo := ""
 				if mod, ok := mods[id]; ok {
-					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.Metadata.Version)
 				}
 				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
 			}
@@ -259,7 +259,7 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 			for _, id := range sets.MakeSlice(vm.CurrentConflictSet) {
 				modInfo := ""
 				if mod, ok := mods[id]; ok {
-					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.FabricInfo.Version)
+					modInfo = fmt.Sprintf("(%s %s)", mod.FriendlyName(), mod.Metadata.Version)
 				}
 				messageBuilder.WriteString(fmt.Sprintf("  - [red::b]%s[-:-:-] %s\n", id, modInfo))
 			}

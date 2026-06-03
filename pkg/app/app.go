@@ -87,14 +87,15 @@ func NewApp(logger *logging.Logger, cliArgs *CLIArgs) *App {
 }
 
 // StartLoadingProcess is called by the SetupPage to begin loading mods.
-func (a *App) StartLoadingProcess(modsPath string, quiltSupport bool) {
+func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool) {
 	a.navManager.SwitchTo(ui.PageLoadingID)
 	a.loadingPage.StartLoading(modsPath)
 
 	go func() {
+		defer logging.HandlePanic()
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}}
 		logging.Infof("App: Loading mods from '%s', Quilt Support: %v", modsPath, a.cliArgs.QuiltSupport)
 		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, func(fileName string) {
 			a.QueueUpdateDraw(func() {
@@ -148,7 +149,12 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 func (a *App) handleCoreStateChange() {
 	if obs, ok := a.navManager.GetCurrentPage(true).(ui.SearchStateObserver); ok {
-		go a.QueueUpdateDraw(func() { obs.RefreshSearchState() })
+		go func() {
+			defer logging.HandlePanic()
+			a.QueueUpdateDraw(func() {
+				obs.RefreshSearchState()
+			})
+		}()
 	}
 }
 
@@ -281,7 +287,10 @@ func (a *App) setupGlobalInputCapture() {
 					return nil
 				}
 			case tcell.KeyCtrlC:
-				go a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
+				go func() {
+					defer logging.HandlePanic()
+					a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
+				}()
 				return nil
 			case tcell.KeyCtrlH:
 				if a.navManager.GetCurrentPageID(false) != ui.PageHistoryID {
@@ -444,8 +453,13 @@ func (a *App) Layout() *ui.LayoutManager         { return a.layoutManager }
 func (a *App) GetLogger() *logging.Logger        { return a.logger }
 
 func (a *App) GetViewModel() ui.BisectionViewModel {
+	vm := ui.BisectionViewModel{
+		IsReady:         false,
+		QuiltSupport:    a.cliArgs.QuiltSupport,
+		NeoForgeSupport: a.cliArgs.NeoForgeSupport,
+	}
 	if !a.IsBisectionReady() {
-		return ui.BisectionViewModel{IsReady: false}
+		return vm
 	}
 
 	engine := a.bisectSvc.Engine()
@@ -455,26 +469,25 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 
 	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
 
-	return ui.BisectionViewModel{
-		IsReady:            true,
-		IsComplete:         state.IsComplete,
-		IsVerificationStep: isVerification,
-		StepCount:          engine.GetStepCount(),
-		Iteration:          state.Iteration,
-		Round:              state.Round,
-		EstimatedMaxTests:  engine.GetEstimatedMaxTests(),
-		LastTestResult:     state.LastTestResult,
-		AllConflictSets:    enumState.FoundConflictSets,
-		CurrentConflictSet: state.ConflictSet,
-		LastFoundElement:   state.LastFoundElement,
-		AllModIDs:          state.AllModIDs,
-		CandidateSet:       state.GetCandidateSet(),
-		ClearedSet:         state.GetClearedSet(),
-		PendingAdditions:   engine.GetPendingAdditions(),
-		CurrentTestPlan:    currentPlan,
-		ExecutionLog:       a.bisectSvc.GetCombinedExecutionLog(),
-		QuiltSupport:       a.cliArgs.QuiltSupport,
-	}
+	vm.IsReady = true
+	vm.IsComplete = state.IsComplete
+	vm.IsVerificationStep = isVerification
+	vm.StepCount = engine.GetStepCount()
+	vm.Iteration = state.Iteration
+	vm.Round = state.Round
+	vm.EstimatedMaxTests = engine.GetEstimatedMaxTests()
+	vm.LastTestResult = state.LastTestResult
+	vm.AllConflictSets = enumState.FoundConflictSets
+	vm.CurrentConflictSet = state.ConflictSet
+	vm.LastFoundElement = state.LastFoundElement
+	vm.AllModIDs = state.AllModIDs
+	vm.CandidateSet = state.GetCandidateSet()
+	vm.ClearedSet = state.GetClearedSet()
+	vm.PendingAdditions = engine.GetPendingAdditions()
+	vm.CurrentTestPlan = currentPlan
+	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
+
+	return vm
 }
 
 func (a *App) GetStateManager() *mods.StateManager { return a.bisectSvc.StateManager() }

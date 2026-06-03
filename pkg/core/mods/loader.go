@@ -56,7 +56,10 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 	map[string]*Mod, PotentialProvidersMap, []string, error,
 ) {
 	if ml.QuiltParsing {
-		logging.Info("ModLoader: Loading mods with Quilt support. Please note that log messages with fabric.mod.json might refer to quilt.mod.json too.")
+		logging.Info("ModLoader: Loading mods with Quilt support.")
+	}
+	if ml.NeoForgeParsing {
+		logging.Info("ModLoader: Loading mods with NeoForge support.")
 	}
 
 	potentialProviders := make(PotentialProvidersMap)
@@ -129,7 +132,10 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go ml.jarProcessingWorker(&wg, tasks, results)
+		go func() {
+			defer logging.HandlePanic()
+			ml.jarProcessingWorker(&wg, tasks, results)
+		}()
 	}
 
 	for _, file := range filesToProcess {
@@ -138,6 +144,7 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 	close(tasks)
 
 	go func() {
+		defer logging.HandlePanic()
 		wg.Wait()
 		close(results)
 	}()
@@ -177,7 +184,7 @@ func (ml *ModLoader) logParsedFile(res processFileResult) {
 	nestedMods := res.mod.NestedModules
 
 	logging.Infof("ModLoader: ├─ Mod %s (%s v%s) from file '%s.jar'",
-		currentMod.FabricInfo.ID, currentMod.FriendlyName(), currentMod.FabricInfo.Version,
+		currentMod.Metadata.ID, currentMod.FriendlyName(), currentMod.Metadata.Version,
 		res.baseFileName)
 
 	for i, nested := range nestedMods {
@@ -186,7 +193,7 @@ func (ml *ModLoader) logParsedFile(res processFileResult) {
 			treeSymbol = "└"
 		}
 		logging.Infof("ModLoader: │   %s─ Mod %s (%s v%s) provided by %s from '%s'.",
-			treeSymbol, nested.Info.ID, nested.Info.Name, nested.Info.Version, currentMod.FabricInfo.ID, nested.PathInJar)
+			treeSymbol, nested.Info.ID, nested.Info.Name, nested.Info.Version, currentMod.Metadata.ID, nested.PathInJar)
 	}
 }
 
@@ -205,7 +212,7 @@ func (ml *ModLoader) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan proces
 
 		// Create a log buffer for this specific task.
 		var logBuffer logBuffer
-		topLevelFmj, nestedFmjs, err := ml.ExtractModMetadata(fullPath, &logBuffer)
+		topLevelModMetadata, nestedModMetadata, err := ml.ExtractModMetadata(fullPath, baseFilename+".jar", &logBuffer)
 		if err != nil {
 			results <- processFileResult{baseFileName: baseFilename, parseError: fmt.Errorf("extracting metadata from %s: %w", task.fileEntry.Name(), err), logs: logBuffer}
 			continue
@@ -214,9 +221,9 @@ func (ml *ModLoader) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan proces
 		currentMod := &Mod{
 			Path:              fullPath,
 			BaseFilename:      baseFilename,
-			FabricInfo:        topLevelFmj,
+			Metadata:          topLevelModMetadata,
 			IsInitiallyActive: isJarFile,
-			NestedModules:     nestedFmjs,
+			NestedModules:     nestedModMetadata,
 		}
 		results <- processFileResult{
 			mod:          currentMod,
@@ -231,7 +238,7 @@ func resolveModConflicts(parsedFileResults []*processFileResult, allMods map[str
 	// Group all parsed results by the primary mod ID they represent.
 	candidatesByID := make(map[string][]*Mod)
 	for _, res := range parsedFileResults {
-		modID := res.mod.FabricInfo.ID
+		modID := res.mod.Metadata.ID
 		candidatesByID[modID] = append(candidatesByID[modID], res.mod)
 	}
 
@@ -282,8 +289,8 @@ func determineWinner(modID string, candidates []*Mod) *Mod {
 	// Sort the candidates slice in-place to find the best one.
 	sort.Slice(candidates, func(i, j int) bool {
 		// Rule 1: Higher version is higher priority.
-		v1 := candidates[i].FabricInfo.Version.Version
-		v2 := candidates[j].FabricInfo.Version.Version
+		v1 := candidates[i].Metadata.Version.Version
+		v2 := candidates[j].Metadata.Version.Version
 		versionCmp := v1.Compare(v2)
 		if versionCmp != 0 {
 			return versionCmp > 0 // true if i > j, resulting in descending order.
@@ -295,7 +302,7 @@ func determineWinner(modID string, candidates []*Mod) *Mod {
 
 	winner := candidates[0]
 	logging.Infof("ModLoader: Winner for mod %s is v%s from file '%s'.",
-		modID, winner.FabricInfo.Version.Version, winner.BaseFilename+".jar")
+		modID, winner.Metadata.Version.Version, winner.BaseFilename+".jar")
 
 	return winner
 }
@@ -325,12 +332,12 @@ func disableDuplicateFile(modsDir, baseFilename string) error {
 func populateProviderMaps(allMods map[string]*Mod, potentialProviders PotentialProvidersMap) {
 	for _, mod := range allMods {
 		mod.EffectiveProvides = make(map[string]version.Version)
-		providerInfoBase := ProviderInfo{TopLevelModID: mod.FabricInfo.ID, TopLevelModVersion: mod.FabricInfo.Version.Version}
+		providerInfoBase := ProviderInfo{TopLevelModID: mod.Metadata.ID, TopLevelModVersion: mod.Metadata.Version.Version}
 
-		addProvider(potentialProviders, mod.EffectiveProvides, mod.FabricInfo.ID, mod.FabricInfo.Version.Version, providerInfoBase, true)
+		addProvider(potentialProviders, mod.EffectiveProvides, mod.Metadata.ID, mod.Metadata.Version.Version, providerInfoBase, true)
 
-		for _, p := range mod.FabricInfo.Provides {
-			addProvider(potentialProviders, mod.EffectiveProvides, p, mod.FabricInfo.Version.Version, providerInfoBase, true)
+		for _, p := range mod.Metadata.Provides {
+			addProvider(potentialProviders, mod.EffectiveProvides, p, mod.Metadata.Version.Version, providerInfoBase, true)
 		}
 
 		for _, nested := range mod.NestedModules {
@@ -433,12 +440,15 @@ func updateEffectiveProvides(effectiveProvides map[string]version.Version, provi
 	}
 }
 
+func GetImplicitMods() []string {
+	return []string{"java", "minecraft", "fabricloader", "quilt_loader", "neoforge", "forge"}
+}
+
 // addImplicitProvides adds common implicit dependencies to the potential providers map.
 func addImplicitProvides(potentialProviders PotentialProvidersMap) {
-	implicitIDs := []string{"java", "minecraft", "fabricloader", "quilt_loader"}
 	placeholderVersion, _ := version.Parse("0.0.0", false)
 
-	for _, id := range implicitIDs {
+	for _, id := range GetImplicitMods() {
 		potentialProviders[id] = append(potentialProviders[id], ProviderInfo{
 			TopLevelModID:         id,
 			VersionOfProvidedItem: placeholderVersion,
@@ -474,7 +484,7 @@ func (ml *ModLoader) applyOverridesToLoadedMods(mods map[string]*Mod, overrides 
 		if rules, ok := rulesByModID[topLevelID]; ok {
 			logging.Infof("ModLoader: Applying %d override rule(s) to top-level mod %s.", len(rules), topLevelID)
 			for _, rule := range rules {
-				rule.Apply(&mod.FabricInfo)
+				rule.Apply(&mod.Metadata)
 				logging.Debugf("ModLoader:   - Applied rule: Target='%s', Field='%s', Key='%s', Action='%s', Value='%s'",
 					rule.Target(), rule.Field(), rule.Key(), rule.Action().String(), rule.Value())
 			}
