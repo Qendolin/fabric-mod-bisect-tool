@@ -1387,7 +1387,7 @@ provides = ["original_api"]
 		}
 		defer os.Remove(overridesPath)
 
-		overrides, err := mods.LoadDependencyOverridesFromPath(overridesPath)
+		overrides, err := mods.LoadDependencyOverridesFromPath(overridesPath, mods.OverrideSourceUserProvided)
 		if err != nil {
 			t.Fatalf("Failed to load overrides: %v", err)
 		}
