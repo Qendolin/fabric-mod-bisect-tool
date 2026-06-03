@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
 	"github.com/gdamore/tcell/v2"
@@ -84,7 +85,10 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 	widgets.DefaultStyleButton(p.loadButton)
 
 	p.quitButton = tview.NewButton("Quit").SetSelectedFunc(func() {
-		go app.QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
+		go func() {
+			defer logging.HandlePanic()
+			app.QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
+		}()
 	})
 	widgets.DefaultStyleButton(p.quitButton)
 

@@ -39,7 +39,10 @@ func NewLayoutManager(app AppInterface, ctx context.Context) *LayoutManager {
 		prevWarningCount: -1,
 	}
 	lm.setupLayout()
-	go lm.startErrorCounterPolling(ctx)
+	go func() {
+		defer logging.HandlePanic()
+		lm.startErrorCounterPolling(ctx)
+	}()
 	return lm
 }
 
