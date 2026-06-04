@@ -6,8 +6,8 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -21,7 +21,7 @@ const PageHistoryID = "history_page"
 // HistoryPage displays the bisection history in a master-detail view.
 type HistoryPage struct {
 	*tview.Flex
-	app ui.AppInterface
+	app tui.TUIApp
 
 	masterList *widgets.FlexList
 
@@ -34,7 +34,7 @@ type HistoryPage struct {
 }
 
 // NewHistoryPage creates a new page for viewing bisection history.
-func NewHistoryPage(app ui.AppInterface) *HistoryPage {
+func NewHistoryPage(app tui.TUIApp) *HistoryPage {
 	p := &HistoryPage{
 		Flex: tview.NewFlex(),
 		app:  app,
@@ -93,7 +93,7 @@ func (p *HistoryPage) setInputCapture() {
 		switch event.Rune() {
 		case 'r', 'R':
 			resultPage := NewResultPage(p.app)
-			p.app.Navigation().ShowModal(ui.PageResultID, resultPage)
+			p.app.Navigation().ShowModal(tui.PageResultID, resultPage)
 		}
 
 		return event
@@ -221,8 +221,8 @@ func (p *HistoryPage) updateDetailView(index int) {
 }
 
 // Page interface implementation
-func (p *HistoryPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *HistoryPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "↑/↓", Action: "Navigate History"},
 		{Input: "R", Action: "Show Results"},
 	}

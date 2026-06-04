@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -19,7 +19,7 @@ const PageSetupID = "setup_page"
 // SetupPage represents the initial setup screen.
 type SetupPage struct {
 	*tview.Flex
-	app        ui.AppInterface
+	app        tui.TUIApp
 	statusText *tview.TextView
 
 	inputField       *tview.InputField
@@ -30,7 +30,7 @@ type SetupPage struct {
 }
 
 // NewSetupPage creates a new SetupPage instance.
-func NewSetupPage(app ui.AppInterface) *SetupPage {
+func NewSetupPage(app tui.TUIApp) *SetupPage {
 	p := &SetupPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -156,8 +156,8 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 }
 
 // GetActionPrompts returns the key actions for the setup page.
-func (p *SetupPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{}
+func (p *SetupPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

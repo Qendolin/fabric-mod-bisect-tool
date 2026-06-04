@@ -5,8 +5,9 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -17,7 +18,7 @@ const PageMainID = "main_page"
 // MainPage is the primary view for the bisection process.
 type MainPage struct {
 	*tview.Flex
-	app ui.AppInterface
+	app tui.TUIApp
 
 	// UI Components
 	overviewText   *tview.TextView
@@ -41,7 +42,7 @@ type MainPage struct {
 }
 
 // NewMainPage creates a new MainPage instance.
-func NewMainPage(app ui.AppInterface) *MainPage {
+func NewMainPage(app tui.TUIApp) *MainPage {
 	p := &MainPage{
 		Flex:           tview.NewFlex().SetDirection(tview.FlexRow),
 		app:            app,
@@ -193,8 +194,8 @@ func (p *MainPage) RefreshSearchState() {
 	p.updateOverviewWidget(&vm)
 }
 
-func (p *MainPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *MainPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "S", Action: "Step"},
 		{Input: "U", Action: "Undo"},
 		{Input: "M", Action: "Manage Mods"},
