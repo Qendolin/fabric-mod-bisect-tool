@@ -74,7 +74,9 @@ func NewSetupPage(app ui.AppInterface) *SetupPage {
 	p.loadButton = tview.NewButton("Load Mods").SetSelectedFunc(func() {
 		cleaned := strings.TrimSpace(p.inputField.GetText())
 		cleaned = strings.TrimPrefix(cleaned, "\"")
+		cleaned = strings.TrimPrefix(cleaned, "'")
 		cleaned = strings.TrimSuffix(cleaned, "\"")
+		cleaned = strings.TrimSuffix(cleaned, "'")
 		cleaned = strings.TrimSpace(cleaned)
 		if cleaned == "" {
 			app.Dialogs().ShowErrorDialog("Error", "The mods path cannot be empty.", nil, nil)
