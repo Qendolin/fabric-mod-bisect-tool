@@ -5,8 +5,8 @@ on:
     types: [created]
 
 permissions:
-    contents: write
-    packages: write
+  contents: write
+  packages: write
 
 jobs:
   releases-matrix:
@@ -29,6 +29,51 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: ${{ matrix.goos }}
         goarch: ${{ matrix.goarch }}
-        compress_assets: OFF
         project_path: ./cmd/fabric-mod-bisect-tool
+        compress_assets: OFF
+        md5sum: FALSE
 
+  update-release-notes:
+    name: Generate Friendly Release Dashboard
+    runs-on: ubuntu-latest
+    needs: releases-matrix
+    steps:
+      - name: Inject Download Table
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          
+          # Create dashboard pointing directly to uncompressed binaries
+          cat << EOF > new_release_notes.md
+          ## Quick Download
+          
+          Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
+          
+          | Platform | Architecture | Recommended Download |
+          | :--- | :--- | :--- |
+          | **Windows** | 64-bit (Standard) | [Download Executable](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-windows-amd64.exe) |
+          | **Linux** | 64-bit (Standard) | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-linux-amd64) |
+          | **macOS** | Apple Silicon (M1/M2/M3/M4) | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-darwin-arm64) |
+          | **macOS** | Intel | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-darwin-amd64) |
+          
+          ---
+          
+          ### Legacy & Other Builds
+          If you are running older 32-bit machinery (like Linux/Windows `386`), check the raw **Assets** checklist at the very bottom of this page.
+          
+          > ⚠️ **Note for Mac/Linux users:** Because these are raw binaries, you may need to grant execution permissions after downloading by running \`chmod +x fabric-mod-bisect-tool-*\` in your terminal.
+          
+          ---
+
+          ## Release Information
+          
+          EOF
+          
+          # Fetch your original release description and append it below the table
+          gh release view "${TAG}" --repo "${REPO}" --json body --jq '.body' >> new_release_notes.md
+          
+          # Update the GitHub release description
+          gh release edit "${TAG}" --repo "${REPO}" --notes-file new_release_notes.md
