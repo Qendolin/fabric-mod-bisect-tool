@@ -150,7 +150,7 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 	p.AddItem(widgets.NewTitleFrame(setupFlex, "Setup"), 10, 0, true).
 		AddItem(widgets.NewTitleFrame(instructions, "Info"), 0, 1, false)
 
-	p.statusText.SetText("Welcome to the Fabric Mod Bisect Tool by Qendolin! Paste the path to your 'mods' directory below.")
+	p.statusText.SetText("Welcome to the Mod Bisect Tool by Qendolin! Paste the path to your 'mods' directory below.")
 
 	return p
 }

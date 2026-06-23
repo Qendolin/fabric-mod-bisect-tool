@@ -14,24 +14,22 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # build and publish in parallel: linux/386, linux/amd64, linux/arm64, windows/386, windows/amd64, darwin/amd64, darwin/arm64
         goos: [linux, windows, darwin]
         goarch: ["386", amd64, arm64]
+        binary: [mod-bisect-gui, mod-bisect-tui]
         exclude:
           - goarch: "386"
             goos: darwin
-          - goarch: arm64
-            goos: windows
     steps:
-    - uses: actions/checkout@v4
-    - uses: wangyoucao577/go-release-action@v1
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: ${{ matrix.goos }}
-        goarch: ${{ matrix.goarch }}
-        project_path: ./cmd/fabric-mod-bisect-tool
-        compress_assets: OFF
-        md5sum: FALSE
+      - uses: actions/checkout@v4
+      - uses: wangyoucao577/go-release-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          project_path: ./cmd/${{ matrix.binary }}
+          compress_assets: OFF
+          md5sum: FALSE
 
   update-release-notes:
     name: Generate Friendly Release Dashboard
@@ -45,35 +43,35 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
-          
+
           # Create dashboard pointing directly to uncompressed binaries
           cat << EOF > new_release_notes.md
           ## Quick Download
-          
+
           Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
-          
-          | Platform | Architecture | Recommended Download |
-          | :--- | :--- | :--- |
-          | **Windows** | 64-bit (Standard) | [Download Executable](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-windows-amd64.exe) |
-          | **Linux** | 64-bit (Standard) | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-linux-amd64) |
-          | **macOS** | Apple Silicon (M1/M2/M3/M4) | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-darwin-arm64) |
-          | **macOS** | Intel | [Download Binary](${BASE_URL}/fabric-mod-bisect-tool-${TAG}-darwin-amd64) |
-          
+
+          | Platform | Architecture | Recommended GUI Download | Recommended TUI Download |
+          | :--- | :--- | :--- | :--- |
+          | **Windows** | 64-bit (Standard) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
+          | **Linux** | 64-bit (Standard) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
+          | **macOS** | Apple Silicon (M1/M2/M3/M4) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
+          | **macOS** | Intel | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
+
           ---
-          
+
           ### Legacy & Other Builds
           If you are running older 32-bit machinery (like Linux/Windows `386`), check the raw **Assets** checklist at the very bottom of this page.
-          
-          > ⚠️ **Note for Mac/Linux users:** Because these are raw binaries, you may need to grant execution permissions after downloading by running \`chmod +x fabric-mod-bisect-tool-*\` in your terminal.
-          
+
+          > ⚠️ **Note for Mac/Linux users:** Because these are raw binaries, you may need to grant execution permissions after downloading by running \`chmod +x mod-bisect-*\` in your terminal.
+
           ---
 
           ## Release Information
-          
+
           EOF
-          
+
           # Fetch your original release description and append it below the table
           gh release view "${TAG}" --repo "${REPO}" --json body --jq '.body' >> new_release_notes.md
-          
+
           # Update the GitHub release description
           gh release edit "${TAG}" --repo "${REPO}" --notes-file new_release_notes.md

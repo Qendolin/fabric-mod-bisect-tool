@@ -56,7 +56,7 @@ func (d *dialogResizeLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 
 func (s *SetupScreen) build() {
 	// --- Title ---
-	s.titleLabel = widget.NewLabelWithStyle("Fabric Mod Bisect Tool", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	s.titleLabel = widget.NewLabelWithStyle("Mod Bisect Tool", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
 	// --- Instruction ---
 	s.instructionLabel = widget.NewLabel("Select your mods folder to begin.")

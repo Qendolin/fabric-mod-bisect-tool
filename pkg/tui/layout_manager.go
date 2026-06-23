@@ -68,7 +68,7 @@ func (lm *LayoutManager) setupLayout() {
 		AddItem(tview.NewBox(), 1, 0, false)
 
 	lm.root.SetBorder(true).
-		SetTitle(" Fabric Mod Bisect Tool ").
+		SetTitle(" Mod Bisect Tool ").
 		SetTitleAlign(tview.AlignLeft)
 
 	lm.root.AddItem(lm.header, 1, 0, false).
