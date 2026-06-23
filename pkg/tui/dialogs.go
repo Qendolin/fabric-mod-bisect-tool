@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"errors"
@@ -6,16 +6,16 @@ import (
 	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
 type DialogManager struct {
-	app AppInterface
+	app TUIApp
 }
 
-func NewDialogManager(app AppInterface) *DialogManager {
+func NewDialogManager(app TUIApp) *DialogManager {
 	return &DialogManager{app: app}
 }
 

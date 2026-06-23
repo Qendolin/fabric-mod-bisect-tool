@@ -7,8 +7,8 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -18,7 +18,7 @@ const PageManageModsID = "manage_mods"
 // ManageModsPage allows viewing and changing the state of all mods.
 type ManageModsPage struct {
 	*tview.Flex
-	app     ui.AppInterface
+	app     tui.TUIApp
 	session *ManagementSession
 
 	modTable          *widgets.SearchableTable
@@ -28,7 +28,7 @@ type ManageModsPage struct {
 }
 
 // NewManageModsPage creates a new page for managing mod states.
-func NewManageModsPage(app ui.AppInterface) *ManageModsPage {
+func NewManageModsPage(app tui.TUIApp) *ManageModsPage {
 	p := &ManageModsPage{
 		Flex:              tview.NewFlex(),
 		app:               app,
@@ -287,8 +287,8 @@ func (p *ManageModsPage) RefreshState() {
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ManageModsPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *ManageModsPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "E", Action: "Force Enable"},
 		{Input: "D", Action: "Force Disable"},
 		{Input: "O", Action: "Omit"},

@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
@@ -8,7 +8,7 @@ import (
 // NavigationManager handles page state and transitions using a hybrid model
 // of persistent "workspace" pages and transient "modal" overlays.
 type NavigationManager struct {
-	app             AppInterface
+	app             TUIApp
 	pages           *tview.Pages // The tview.Pages primitive from the layout
 	persistentPages map[string]Page
 	history         []string
@@ -16,7 +16,7 @@ type NavigationManager struct {
 }
 
 // NewNavigationManager creates a new manager for page navigation.
-func NewNavigationManager(app AppInterface, pages *tview.Pages) *NavigationManager {
+func NewNavigationManager(app TUIApp, pages *tview.Pages) *NavigationManager {
 	return &NavigationManager{
 		app:             app,
 		pages:           pages,

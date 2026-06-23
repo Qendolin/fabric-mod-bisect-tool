@@ -2,11 +2,10 @@ package pages
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/rivo/tview"
 )
 
@@ -16,17 +15,14 @@ const PageLoadingID = "loading_page"
 // LoadingPage displays progress while mods are being loaded.
 type LoadingPage struct {
 	*tview.Flex
-	app          ui.AppInterface
+	app          tui.TUIApp
 	progressBar  *tview.TextView
 	progressText *tview.TextView
 	statusText   *tview.TextView
-
-	totalFiles     int
-	processedFiles int
 }
 
 // NewLoadingPage creates a new LoadingPage instance.
-func NewLoadingPage(app ui.AppInterface) *LoadingPage {
+func NewLoadingPage(app tui.TUIApp) *LoadingPage {
 	lp := &LoadingPage{
 		Flex:         tview.NewFlex().SetDirection(tview.FlexRow),
 		app:          app,
@@ -56,37 +52,14 @@ func NewLoadingPage(app ui.AppInterface) *LoadingPage {
 
 // StartLoading prepares the page for the loading process initiated by the App.
 func (lp *LoadingPage) StartLoading(modsPath string) {
-	lp.processedFiles = 0
-	lp.totalFiles = 0
-
-	files, err := os.ReadDir(modsPath)
-	if err != nil {
-		// The error will be handled by the App layer which initiated the loading.
-		// We just show a generic "starting" message here.
-		lp.UpdateProgress("Starting...")
-		return
-	}
-
-	// Pre-calculate total files for an accurate progress bar.
-	for _, file := range files {
-		if !file.IsDir() && (strings.HasSuffix(strings.ToLower(file.Name()), ".jar") || strings.HasSuffix(strings.ToLower(file.Name()), ".jar.disabled")) {
-			lp.totalFiles++
-		}
-	}
-	lp.UpdateProgress("Starting...") // Initial update
+	lp.UpdateProgress("Starting...", 0, 0)
 }
 
 // UpdateProgress updates the progress bar and text.
-func (lp *LoadingPage) UpdateProgress(currentFile string) {
-	lp.processedFiles++
-
+func (lp *LoadingPage) UpdateProgress(currentFile string, i, count int) {
 	var progress float32
-	if lp.totalFiles > 0 {
-		// Cap progress at total to prevent overflow if file count is off
-		if lp.processedFiles > lp.totalFiles {
-			lp.processedFiles = lp.totalFiles
-		}
-		progress = float32(lp.processedFiles) / float32(lp.totalFiles)
+	if count != 0 {
+		progress = float32(i) / float32(count)
 	}
 
 	_, _, barWidth, _ := lp.progressBar.GetInnerRect()
@@ -103,8 +76,8 @@ func (lp *LoadingPage) UpdateProgress(currentFile string) {
 }
 
 // GetActionPrompts returns the key actions for the loading page.
-func (lp *LoadingPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{}
+func (lp *LoadingPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{}
 }
 
 // GetStatusPrimitive returns the tview.Primitive that displays the page's status

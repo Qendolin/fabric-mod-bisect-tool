@@ -194,6 +194,11 @@ func (e *Engine) AddCandidates(additions sets.Set) {
 	e.state.Candidates = sets.MakeSlice(newCandidates)
 }
 
+// Returns the number of undos possible
+func (e *Engine) UndoCount() int {
+	return e.undoStack.Size()
+}
+
 // Undo reverts to the previous state in the search. It returns the state that
 // was just popped from the undo stack, allowing the caller to inspect the
 // change that was undone

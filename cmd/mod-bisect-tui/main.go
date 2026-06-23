@@ -11,17 +11,19 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/tuiapp"
 )
 
 func main() {
 	defer logging.HandlePanic()
 
 	var a *app.App
+	var tuiApp *tuiapp.App
 
 	go func() {
 		for p := range logging.PanicChannel {
-			if a != nil {
-				a.Stop()
+			if tuiApp != nil {
+				tuiApp.Stop()
 			}
 			fmt.Fprintf(os.Stderr, "panic: %v\n%s", p.Value, string(p.Stack))
 			os.Exit(2)
@@ -80,18 +82,20 @@ func main() {
 
 	// 3. Create the App structure, passing the configured logger
 	a = app.NewApp(mainLogger, cliArgs)
+	tuiApp = tuiapp.NewApp(a, mainLogger)
+	a.SetView(tuiApp)
 
 	// 4. Goroutine to handle OS signals
 	go func() {
 		<-sigChan
-		a.QueueUpdateDraw(func() {
-			a.Dialogs().ShowQuitDialog()
+		tuiApp.QueueUpdateDraw(func() {
+			tuiApp.ShowQuitDialog()
 		})
 	}()
 
 	// 5. Run the application
 	logging.Infof("Main: Application starting up.")
-	if err := a.Run(); err != nil {
+	if err := tuiApp.Run(); err != nil {
 		logging.Errorf("Main: Application exited with error: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -107,3 +111,4 @@ func main() {
 
 	logging.Infof("Main: Application exited gracefully.")
 }
+

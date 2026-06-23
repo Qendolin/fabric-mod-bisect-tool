@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 // LayoutManager handles the overall visual structure of the application.
 type LayoutManager struct {
-	app        AppInterface
+	app        TUIApp
 	root       *tview.Flex
 	header     *tview.Flex
 	status     *tview.Flex
@@ -27,7 +27,7 @@ type LayoutManager struct {
 }
 
 // NewLayoutManager creates and initializes the UI layout manager.
-func NewLayoutManager(app AppInterface, ctx context.Context) *LayoutManager {
+func NewLayoutManager(app TUIApp, ctx context.Context) *LayoutManager {
 	lm := &LayoutManager{
 		app:              app,
 		pages:            tview.NewPages(),
@@ -68,7 +68,7 @@ func (lm *LayoutManager) setupLayout() {
 		AddItem(tview.NewBox(), 1, 0, false)
 
 	lm.root.SetBorder(true).
-		SetTitle(" Fabric Mod Bisect Tool ").
+		SetTitle(" Mod Bisect Tool ").
 		SetTitleAlign(tview.AlignLeft)
 
 	lm.root.AddItem(lm.header, 1, 0, false).
