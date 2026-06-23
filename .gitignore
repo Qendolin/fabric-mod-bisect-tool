@@ -2,3 +2,10 @@
 *.exe
 *.txt
 *.jar
+*.tar.xz
+mod-bisect-gui
+!mod-bisect-gui/
+mod-bisect-tui
+!mod-bisect-tui/
+
+fyne_metadata_init.go

@@ -1,5 +1,3 @@
-# .github/workflows/release.yaml
-
 on:
   release:
     types: [created]
@@ -16,12 +14,7 @@ jobs:
     strategy:
       matrix:
         goos: [linux, windows, darwin]
-        goarch: ["386", amd64, arm64]
-        exclude:
-          - goarch: "386"
-            goos: darwin
-          - goarch: arm64
-            goos: windows
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: wangyoucao577/go-release-action@v1
@@ -30,81 +23,104 @@ jobs:
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           project_path: ./cmd/mod-bisect-tui
+          binary_name: mod-bisect-tui
           compress_assets: OFF
           md5sum: FALSE
 
-  # --- JOB 2: Build Standalone GUI Binaries using Fyne CLI ---
+  # --- JOB 2: Build Standalone GUI Binaries ---
   releases-matrix-gui:
-    name: Release Go GUI Binary
-    runs-on: ${{ matrix.os }}
+    name: Build GUI Release
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-linux-amd64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-windows-amd64.exe
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-darwin-amd64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-darwin-arm64
-    steps:
-      - uses: actions/checkout@v4
+          # Linux: native runners per arch
+          - { goos: linux, goarch: amd64, runner: ubuntu-latest }
+          - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm }
+          # Windows: cross-compile from Linux (mingw for amd64, Zig for arm64)
+          - { goos: windows, goarch: amd64, runner: ubuntu-latest }
+          - { goos: windows, goarch: arm64, runner: ubuntu-latest }
+          # macOS: native runners — cross-compiling macOS/CGO from Linux requires
+          # a full osxcross setup that is fragile and SDK-license-constrained.
+          # macos-13 = last Intel runner; macos-latest = Apple Silicon (arm64).
+          - { goos: darwin, goarch: amd64, runner: macos-15-intel }
+          - { goos: darwin, goarch: arm64, runner: macos-latest }
 
-      - uses: actions/setup-go@v5
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version: "1.26"
           cache: true
 
-      - name: Install Linux Dependencies
-        if: matrix.os == 'ubuntu-latest'
+      # Zig is the cleanest cross-compiler for Windows ARM64 CGO
+      - name: Install Zig (Windows ARM64 only)
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Install Linux GUI dependencies
+        if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev build-essential
+
+      - name: Install go-appimage (appimagetool)
+        if: matrix.goos == 'linux'
+        run: |
+          case "${{ matrix.goarch }}" in
+            amd64) tool_arch="x86_64" ;;
+            arm64) tool_arch="aarch64" ;;
+            *) echo "unsupported arch: ${{ matrix.goarch }}" ; exit 1 ;;
+          esac
+
+          asset_path=$(
+            wget -q \
+              https://github.com/probonopd/go-appimage/releases/expanded_assets/continuous \
+              -O - |
+            grep "appimagetool-.*-${tool_arch}\.AppImage" |
+            head -n 1 |
+            cut -d '"' -f 2
+          )
+
+          wget -c "https://github.com/${asset_path}"
+          chmod +x appimagetool-*.AppImage
+
+      - name: Install Windows cross-compiler (AMD64 only)
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
+        run: sudo apt-get install -y mingw-w64
 
       - name: Install Fyne CLI
         run: go install fyne.io/tools/cmd/fyne@latest
 
-      # Package using Fyne CLI, then extract only the naked binary
-      - name: Package & Extract GUI Binary
+      - name: Build and package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-        shell: bash
-        run: |
-          cd cmd/mod-bisect-gui
-          fyne package --name mod-bisect-gui --id com.github.qendolin.fabric-mod-bisect-tool --release
+        run: >
+          python3 scripts/build_gui.py
+          --goos    ${{ matrix.goos }}
+          --goarch  ${{ matrix.goarch }}
+          --tag     ${{ github.event.release.tag_name }}
 
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows outputs the .exe directly
-            mv mod-bisect-gui.exe ../../${{ matrix.out_file }}
-            
-          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux outputs a .tar.gz bundle; extract it to grab the naked binary
-            tar -xzf mod-bisect-gui.tar.gz
-            mv usr/bin/mod-bisect-gui ../../${{ matrix.out_file }}
-            
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS outputs a folder bundle (.app); copy the naked executable inside it
-            mv mod-bisect-gui.app/Contents/MacOS/mod-bisect-gui ../../${{ matrix.out_file }}
-          fi
-
-      - name: Upload GUI Asset to Release
+      # Upload binaries directly to the GitHub release (mirrors what go-release-action
+      # does for the TUI job). The workflow artifact upload below is a bonus cache.
+      - name: Upload to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: gh release upload ${{ github.event.release.tag_name }} ${{ matrix.out_file }} --clobber
+        run: gh release upload ${{ github.event.release.tag_name }} dist/* --clobber
 
-  # --- JOB 3: Update Release Dashboard ---
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
   update-release-notes:
     name: Generate Friendly Release Dashboard
     runs-on: ubuntu-latest
@@ -118,6 +134,7 @@ jobs:
         run: |
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
+          # Create dashboard
           cat << EOF > new_release_notes.md
           ## Quick Download
 
@@ -125,19 +142,19 @@ jobs:
 
           | Platform | Architecture | Recommended GUI Download | Recommended TUI Download |
           | :--- | :--- | :--- | :--- |
-          | **Windows** | 64-bit (Standard) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
-          | **Linux** | 64-bit (Standard) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
-          | **macOS** | Apple Silicon (M1/M2/M3/M4) | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
-          | **macOS** | Intel | [Download GUI](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64) | [Download TUI](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
+          | **Windows** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
+          | **Windows** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-arm64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-arm64.exe) |
+          | **Linux** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
+          | **Linux** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-arm64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-arm64) |
+          | **macOS** | Apple Silicon (arm64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
+          | **macOS** | Intel (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
 
           ---
 
           ### Legacy & Other Builds
-          If you are running older 32-bit machinery (like Linux/Windows `386`), check the raw **Assets** checklist at the very bottom of this page.
+          Check the raw **Assets** checklist at the very bottom of this page for alternative formats.
 
-          > ⚠️ **Note for Mac/Linux users:** Because these are single, unarchived binaries downloaded straight from a browser, your OS will block execution by default. 
-          > * **Linux:** Run \`chmod +x file-name\` to allow execution.
-          > * **macOS:** Run \`chmod +x file-name\`. If macOS prevents it from opening due to an "unidentified developer" warning, right-click the binary file in Finder, select **Open**, and confirm.
+          > ⚠️ **Note for Mac/Linux users:** After downloading, you may need to grant execution permissions: \`chmod +x <filename>\`.
 
           ---
 
@@ -145,6 +162,8 @@ jobs:
 
           EOF
 
-          # Fetch original notes and update
+          # Fetch your original release description and append it below the table
           gh release view "${TAG}" --repo "${REPO}" --json body --jq '.body' >> new_release_notes.md
+
+          # Update the GitHub release description
           gh release edit "${TAG}" --repo "${REPO}" --notes-file new_release_notes.md
