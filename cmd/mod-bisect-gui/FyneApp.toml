@@ -1,0 +1,7 @@
+Website = "https://github.com/Qendolin/fabric-mod-bisect-tool/"
+
+[Details]
+Icon = "Icon-Small.png"
+Name = "Mod Bisect Tool"
+ID = "com.github.qendolin.fabric-mod-bisect-tool"
+Build = 1
