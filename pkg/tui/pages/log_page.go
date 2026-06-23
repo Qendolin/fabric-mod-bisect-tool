@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -17,7 +17,7 @@ const PageLogID = "log_page"
 // LogPage displays application logs with filtering capabilities.
 type LogPage struct {
 	*tview.Flex
-	app               ui.AppInterface
+	app               tui.TUIApp
 	logView           *tview.TextView
 	statusText        *tview.TextView
 	currentFilter     logging.LogLevel
@@ -28,7 +28,7 @@ type LogPage struct {
 }
 
 // NewLogPage creates a new LogPage instance.
-func NewLogPage(app ui.AppInterface) *LogPage {
+func NewLogPage(app tui.TUIApp) *LogPage {
 	logView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -203,8 +203,8 @@ func (p *LogPage) updateStatus() {
 }
 
 // GetActionPrompts returns the key actions for the log page.
-func (p *LogPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *LogPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "A/I/W/E", Action: "Filter All/Info/Warn/Error"},
 		{Input: "R", Action: "Toggle Wrap"},
 		{Input: "↑/↓", Action: "Scroll"},

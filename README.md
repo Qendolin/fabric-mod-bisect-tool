@@ -1,4 +1,4 @@
-# Fabric Mod Bisect Tool
+# Mod Bisect Tool
 
 A powerful, easy-to-use tool to find conflicting Fabric, Quilt and NeoForge mods.
 
@@ -16,7 +16,7 @@ If your game is having issues, like crashing on startup or exhibiting strange bu
 ## How It Works
 
 > [!IMPORTANT]
-> Please read the following instructions carefully to effectively use the Fabric Mod Bisect Tool. Understanding these steps will help you quickly resolve your mod conflicts.
+> Please read the following instructions carefully to effectively use the Mod Bisect Tool. Understanding these steps will help you quickly resolve your mod conflicts.
 
 This tool is like a smart detective for your mods folder. Instead of you having to manually guess which mods to disable, it does the hard work for you through a methodical process.
 

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
@@ -38,9 +39,7 @@ func (b *logBuffer) add(level logging.LogLevel, format string, v ...interface{})
 
 // task to be processed by a worker goroutine.
 type processFileTask struct {
-	fileEntry    os.DirEntry
-	modsDir      string
-	progressFunc func(string)
+	fileEntry os.DirEntry
 }
 
 // result of a worker goroutine processing a single file.
@@ -51,8 +50,10 @@ type processFileResult struct {
 	logs         logBuffer // Use the new logBuffer type.
 }
 
+type ModLoadingProgressCallback = func(fileName string, i, count int)
+
 // LoadMods discovers mods, parses metadata, resolves basic conflicts, and builds provider maps.
-func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport func(fileNameBeingProcessed string)) (
+func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport ModLoadingProgressCallback) (
 	map[string]*Mod, PotentialProvidersMap, []string, error,
 ) {
 	if ml.QuiltParsing {
@@ -119,37 +120,45 @@ func filterJarFiles(diskFiles []os.DirEntry) []os.DirEntry {
 }
 
 // parseJarFilesConcurrently processes JAR files in parallel to extract mod metadata.
-func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, modsDir string, progressReport func(string)) []*processFileResult {
+func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, modsDir string, progressReport ModLoadingProgressCallback) []processFileResult {
 	numFiles := len(filesToProcess)
 	if numFiles == 0 {
 		return nil
 	}
 	numWorkers := min(numFiles, runtime.NumCPU())
 
-	tasks := make(chan processFileTask, numFiles)
-	results := make(chan processFileResult, numFiles)
+	tasks := make(chan processFileTask, numWorkers*2)
+	results := make(chan processFileResult, numWorkers*2)
+	progressChan := make(chan processFileTask, numWorkers*2)
 	var wg sync.WaitGroup
+	var progress atomic.Int32
+
+	go func() {
+		for task := range progressChan {
+			progressReport(task.fileEntry.Name(), int(progress.Add(1)-1), numFiles)
+		}
+	}()
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer logging.HandlePanic()
-			ml.jarProcessingWorker(&wg, tasks, results)
+			ml.jarProcessingWorker(modsDir, &wg, tasks, progressChan, results)
 		}()
 	}
 
-	for _, file := range filesToProcess {
-		tasks <- processFileTask{fileEntry: file, modsDir: modsDir, progressFunc: progressReport}
-	}
-	close(tasks)
-
 	go func() {
 		defer logging.HandlePanic()
+		for _, file := range filesToProcess {
+			tasks <- processFileTask{fileEntry: file}
+		}
+		close(tasks)
 		wg.Wait()
 		close(results)
+		close(progressChan)
 	}()
 
-	var collectedResults []*processFileResult
+	var collectedResults []processFileResult
 	for res := range results {
 		// Drain the log buffer from the worker first. This ensures log messages
 		// appear before the final status message for that file.
@@ -172,7 +181,7 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 		}
 		if res.mod != nil {
 			ml.logParsedFile(res)
-			collectedResults = append(collectedResults, &res)
+			collectedResults = append(collectedResults, res)
 		}
 	}
 	return collectedResults
@@ -198,14 +207,18 @@ func (ml *ModLoader) logParsedFile(res processFileResult) {
 }
 
 // jarProcessingWorker is a goroutine worker that processes file tasks.
-func (ml *ModLoader) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan processFileTask, results chan<- processFileResult) {
+func (ml *ModLoader) jarProcessingWorker(modsDir string, wg *sync.WaitGroup, tasks <-chan processFileTask, progress chan<- processFileTask, results chan<- processFileResult) {
 	defer wg.Done()
 	for task := range tasks {
-		if task.progressFunc != nil {
-			task.progressFunc(task.fileEntry.Name())
+		if progress != nil {
+			// Non blocking
+			select {
+			case progress <- task:
+			default:
+			}
 		}
 
-		fullPath := filepath.Join(task.modsDir, task.fileEntry.Name())
+		fullPath := filepath.Join(modsDir, task.fileEntry.Name())
 		isJarFile := strings.HasSuffix(strings.ToLower(task.fileEntry.Name()), ".jar")
 		baseFilename := strings.TrimSuffix(task.fileEntry.Name(), ".jar.disabled")
 		baseFilename = strings.TrimSuffix(baseFilename, ".jar")
@@ -234,7 +247,7 @@ func (ml *ModLoader) jarProcessingWorker(wg *sync.WaitGroup, tasks <-chan proces
 }
 
 // resolveModConflicts handles multiple JAR files providing the same mod ID, choosing a winner.
-func resolveModConflicts(parsedFileResults []*processFileResult, allMods map[string]*Mod, modsDir string) error {
+func resolveModConflicts(parsedFileResults []processFileResult, allMods map[string]*Mod, modsDir string) error {
 	// Group all parsed results by the primary mod ID they represent.
 	candidatesByID := make(map[string][]*Mod)
 	for _, res := range parsedFileResults {

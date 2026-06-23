@@ -6,8 +6,9 @@ import (
 	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -17,7 +18,7 @@ const PageResultID = "result_page"
 // ResultPage displays the final or intermediate results of the bisection search.
 type ResultPage struct {
 	*tview.Flex
-	app            ui.AppInterface
+	app            tui.TUIApp
 	statusText     *tview.TextView
 	resultView     *tview.TextView
 	closeButton    *tview.Button
@@ -25,7 +26,7 @@ type ResultPage struct {
 }
 
 // NewResultPage creates a new ResultPage.
-func NewResultPage(app ui.AppInterface) *ResultPage {
+func NewResultPage(app tui.TUIApp) *ResultPage {
 	p := &ResultPage{
 		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
 		app:        app,
@@ -277,8 +278,8 @@ func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, e
 }
 
 // GetActionPrompts returns the key actions for the page.
-func (p *ResultPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *ResultPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "↑/↓", Action: "Scroll Text"},
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -15,7 +15,7 @@ const PageTestID = "test_page"
 // TestPage instructs the user to perform a manual test.
 type TestPage struct {
 	*tview.Flex
-	app ui.AppInterface
+	app tui.TUIApp
 
 	successBtn *tview.Button
 	failBtn    *tview.Button
@@ -29,7 +29,7 @@ type TestPage struct {
 }
 
 // NewTestPage creates a new TestPage.
-func NewTestPage(app ui.AppInterface, isVerification bool, onSuccess, onFailure, onCancel func()) *TestPage {
+func NewTestPage(app tui.TUIApp, isVerification bool, onSuccess, onFailure, onCancel func()) *TestPage {
 	p := &TestPage{
 		Flex:       tview.NewFlex(),
 		app:        app,
@@ -137,8 +137,8 @@ Please launch Minecraft and confirm the failure persists.`
 }
 
 // GetActionPrompts returns the key actions for the test page.
-func (p *TestPage) GetActionPrompts() []ui.ActionPrompt {
-	return []ui.ActionPrompt{
+func (p *TestPage) GetActionPrompts() []tui.ActionPrompt {
+	return []tui.ActionPrompt{
 		{Input: "ESC", Action: "Back (Cancel Step)"},
 		{Input: "A", Action: "Success"},
 		{Input: "D", Action: "Failure"},

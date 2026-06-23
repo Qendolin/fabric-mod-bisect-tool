@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import "github.com/rivo/tview"
 
@@ -10,11 +10,11 @@ type FocusChainEntry struct {
 
 // FocusManager handles cycling focus between a dynamic set of primitives.
 type FocusManager struct {
-	app AppInterface
+	app TUIApp
 }
 
 // NewFocusManager creates a new focus manager.
-func NewFocusManager(app AppInterface) *FocusManager {
+func NewFocusManager(app TUIApp) *FocusManager {
 	return &FocusManager{app: app}
 }
 
