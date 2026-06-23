@@ -12,6 +12,8 @@ import (
 
 	exlayout "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/layout"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/probe"
+
+	"github.com/ncruces/zenity"
 )
 
 type SetupScreen struct {
@@ -65,26 +67,14 @@ func (s *SetupScreen) build() {
 	s.pathEntry.SetPlaceHolder("Enter or browse for mods folder path...")
 
 	s.browseBtn = widget.NewButtonWithIcon("", theme.FolderIcon(), func() {
-		pickerWindow := s.app.NewWindow("Select Mods Folder")
-		pickerWindow.Resize(fyne.NewSize(800, 600))
-
-		d := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err == nil && uri != nil {
-				s.pathEntry.SetText(uri.Path())
-			}
-			pickerWindow.Close()
-		}, pickerWindow)
-
-		layoutControl := &dialogResizeLayout{dialog: d}
-		pickerWindow.SetContent(container.New(layoutControl))
-		pickerWindow.SetPadded(false)
-
-		pickerWindow.Show()
-		d.Show()
+		path, err := zenity.SelectFile(zenity.Title("Select Mods Folder"), zenity.Directory(), zenity.Modal(), zenity.Filename(s.pathEntry.Text))
+		if err == nil && path != "" {
+			s.pathEntry.SetText(path)
+		}
 	})
 
 	// Path Input Row: Entry grows, browse button uses MinSize
-	pathFlex := exlayout.NewFlexLayout(true, 10) // 10px gap between input and button
+	pathFlex := exlayout.NewFlexLayout(true, 10)
 	pathFlex.Set(s.pathEntry, 1, 0)
 	pathFlex.Set(s.browseBtn, 0, 0)
 	pathInputContainer := container.New(pathFlex, s.pathEntry, s.browseBtn)

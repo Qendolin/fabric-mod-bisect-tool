@@ -219,7 +219,7 @@ func (s *MainScreen) UpdateState() {
 		s.btnStep.Enable()
 		s.btnStep.SetText("▶  Verification Step")
 		s.statusLbl.SetText("Verifying final set...")
-		s.detailsLbl.SetText("Verifying the discovered conflict set.\n\nThis test verifies that the found set of mods is the cause of the issue. If the issue DOES NOT persist, then a new round of tests is started to find the other problematic mods.")
+		s.detailsLbl.SetText("The next test verifies that the found set of mods is the cause of the issue. If the issue DOES NOT persist, then a new round of tests is started to find the other problematic mods.")
 		return
 	}
 
@@ -250,7 +250,9 @@ func (s *MainScreen) UpdateState() {
 			s.btnStep.SetText("▶  Start Bisection")
 			s.statusLbl.SetText("Ready to begin")
 
-			s.detailsLbl.SetText(fmt.Sprintf("TODO: Brief explainer of what's about to happen.", len(vm.AllModIDs)))
+			s.detailsLbl.SetText("This tool uses binary search to isolate problematic mods.\n" +
+				"Each test halves the candidate set, finding conflicts efficiently.\n" +
+				"Be ready to test the game when prompted.")
 		} else {
 			s.btnStep.SetText("▶  Next Step")
 			s.statusLbl.SetText(fmt.Sprintf("Round %d · Iteration %d", vm.Round, vm.Iteration))
@@ -264,12 +266,12 @@ func (s *MainScreen) ShowTestPrompt(isVerification bool, onSuccess, onFailure, o
 	var markdown string
 
 	if isVerification {
-		s.testHeader.SetText("Verification Protocol")
+		s.testHeader.SetText("Verification Test")
 		markdown = "Start Minecraft with the current active mod set and verify whether your issue is **still present**.\n\n" +
 			"*   **Failure** — The issue is **still there** (confirms the found conflict set is correct).\n" +
 			"*   **Success** — The issue is **gone** (suggests the set is incomplete)."
 	} else {
-		s.testHeader.SetText("Test Protocol")
+		s.testHeader.SetText("Bisection Test")
 		markdown = "Start Minecraft with the current active mod set and verify whether your issue is **resolved**.\n\n" +
 			"*   **Success** — The game runs fine and the issue is **gone**.\n" +
 			"*   **Failure** — The issue is **still present** in the game."
