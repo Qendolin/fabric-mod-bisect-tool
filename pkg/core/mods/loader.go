@@ -135,7 +135,9 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 
 	go func() {
 		for task := range progressChan {
-			progressReport(task.fileEntry.Name(), int(progress.Add(1)-1), numFiles)
+			if progressReport != nil {
+				progressReport(task.fileEntry.Name(), int(progress.Add(1)-1), numFiles)
+			}
 		}
 	}()
 
