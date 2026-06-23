@@ -9,17 +9,19 @@ permissions:
   packages: write
 
 jobs:
-  releases-matrix:
-    name: Release Go Binary
+  # --- JOB 1: Build & Release TUI Binaries (Pure Go) ---
+  releases-matrix-tui:
+    name: Release Go TUI Binary
     runs-on: ubuntu-latest
     strategy:
       matrix:
         goos: [linux, windows, darwin]
         goarch: ["386", amd64, arm64]
-        binary: [mod-bisect-gui, mod-bisect-tui]
         exclude:
           - goarch: "386"
             goos: darwin
+          - goarch: arm64
+            goos: windows
     steps:
       - uses: actions/checkout@v4
       - uses: wangyoucao577/go-release-action@v1
@@ -27,14 +29,86 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
-          project_path: ./cmd/${{ matrix.binary }}
+          project_path: ./cmd/mod-bisect-tui
           compress_assets: OFF
           md5sum: FALSE
 
+  # --- JOB 2: Build Standalone GUI Binaries using Fyne CLI ---
+  releases-matrix-gui:
+    name: Release Go GUI Binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-linux-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-windows-amd64.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            out_file: mod-bisect-gui-${{ github.event.release.tag_name }}-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: true
+
+      - name: Install Linux Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: Install Fyne CLI
+        run: go install fyne.io/tools/cmd/fyne@latest
+
+      # Package using Fyne CLI, then extract only the naked binary
+      - name: Package & Extract GUI Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        shell: bash
+        run: |
+          cd cmd/mod-bisect-gui
+          fyne package --name mod-bisect-gui --id com.github.qendolin.fabric-mod-bisect-tool --release
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows outputs the .exe directly
+            mv mod-bisect-gui.exe ../../${{ matrix.out_file }}
+            
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            # Linux outputs a .tar.gz bundle; extract it to grab the naked binary
+            tar -xzf mod-bisect-gui.tar.gz
+            mv usr/bin/mod-bisect-gui ../../${{ matrix.out_file }}
+            
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS outputs a folder bundle (.app); copy the naked executable inside it
+            mv mod-bisect-gui.app/Contents/MacOS/mod-bisect-gui ../../${{ matrix.out_file }}
+          fi
+
+      - name: Upload GUI Asset to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload ${{ github.event.release.tag_name }} ${{ matrix.out_file }} --clobber
+
+  # --- JOB 3: Update Release Dashboard ---
   update-release-notes:
     name: Generate Friendly Release Dashboard
     runs-on: ubuntu-latest
-    needs: releases-matrix
+    needs: [releases-matrix-tui, releases-matrix-gui]
     steps:
       - name: Inject Download Table
         env:
@@ -44,7 +118,6 @@ jobs:
         run: |
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Create dashboard pointing directly to uncompressed binaries
           cat << EOF > new_release_notes.md
           ## Quick Download
 
@@ -62,7 +135,9 @@ jobs:
           ### Legacy & Other Builds
           If you are running older 32-bit machinery (like Linux/Windows `386`), check the raw **Assets** checklist at the very bottom of this page.
 
-          > ⚠️ **Note for Mac/Linux users:** Because these are raw binaries, you may need to grant execution permissions after downloading by running \`chmod +x mod-bisect-*\` in your terminal.
+          > ⚠️ **Note for Mac/Linux users:** Because these are single, unarchived binaries downloaded straight from a browser, your OS will block execution by default. 
+          > * **Linux:** Run \`chmod +x file-name\` to allow execution.
+          > * **macOS:** Run \`chmod +x file-name\`. If macOS prevents it from opening due to an "unidentified developer" warning, right-click the binary file in Finder, select **Open**, and confirm.
 
           ---
 
@@ -70,8 +145,6 @@ jobs:
 
           EOF
 
-          # Fetch your original release description and append it below the table
+          # Fetch original notes and update
           gh release view "${TAG}" --repo "${REPO}" --json body --jq '.body' >> new_release_notes.md
-
-          # Update the GitHub release description
           gh release edit "${TAG}" --repo "${REPO}" --notes-file new_release_notes.md
