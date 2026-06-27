@@ -228,9 +228,9 @@ func formatCompleteContent(vm *ui.BisectionViewModel, allFoundSets []sets.Set, m
 	generallyUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
 
 	if len(allFoundSets) == 1 {
-		fmt.Fprintf(&b, "Found [yellow::b]%d[-:-:-] mod(s) involved in a conflict:\n", len(allFoundSets[0]))
+		fmt.Fprintf(&b, "Found [yellow::b]1[-:-:-] conflict set:\n")
 	} else {
-		fmt.Fprintf(&b, "Found [yellow::b]%d[-:-:-] independent conflicts:\n", len(allFoundSets))
+		fmt.Fprintf(&b, "Found [yellow::b]%d[-:-:-] independent conflict sets:\n", len(allFoundSets))
 	}
 
 	for i, conflictSet := range allFoundSets {
