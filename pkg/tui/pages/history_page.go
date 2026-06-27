@@ -86,7 +86,7 @@ func (p *HistoryPage) setInputCapture() {
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 
 		if event.Key() == tcell.KeyEscape || (event.Key() == tcell.KeyCtrlH && event.Modifiers()&tcell.ModCtrl != 0) {
-			p.app.Navigation().GoBack()
+			p.app.Navigation().CloseModal()
 			return nil
 		}
 

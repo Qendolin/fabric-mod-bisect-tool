@@ -123,7 +123,7 @@ func (p *LogPage) setKeybindings() {
 		// Handle navigation keys.
 		if event.Key() == tcell.KeyEscape || (event.Key() == tcell.KeyCtrlL && event.Modifiers()&tcell.ModCtrl != 0) {
 			p.stopPolling()
-			p.app.Navigation().GoBack()
+			p.app.Navigation().CloseModal()
 			return nil
 		}
 
