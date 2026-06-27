@@ -63,10 +63,8 @@ func NewApp(controller ui.Controller, logger *logging.Logger) *App {
 
 	a.navManager.Register(tui.PageSetupID, a.setupPage)
 	a.navManager.Register(tui.PageMainID, a.mainPage)
-	a.navManager.Register(tui.PageLogID, a.logPage)
 	a.navManager.Register(tui.PageLoadingID, a.loadingPage)
 	a.navManager.Register(tui.PageManageModsID, a.manageModsPage)
-	a.navManager.Register(tui.PageHistoryID, a.historyPage)
 
 	a.setupGlobalInputCapture()
 
@@ -177,8 +175,8 @@ func (a *App) setupGlobalInputCapture() {
 		if event.Modifiers()&tcell.ModCtrl != 0 {
 			switch event.Key() {
 			case tcell.KeyCtrlL:
-				if a.navManager.GetCurrentPageID(false) != tui.PageLogID {
-					a.navManager.SwitchTo(tui.PageLogID)
+				if a.navManager.GetCurrentPageID(true) != tui.PageLogID {
+					a.navManager.ShowModal(tui.PageLogID, a.logPage)
 					return nil
 				}
 			case tcell.KeyCtrlC:
@@ -187,9 +185,9 @@ func (a *App) setupGlobalInputCapture() {
 					a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
 				}()
 				return nil
-			case tcell.KeyCtrlH:
-				if a.navManager.GetCurrentPageID(false) != tui.PageHistoryID {
-					a.navManager.SwitchTo(tui.PageHistoryID)
+			case tcell.KeyCtrlH, tcell.KeyDEL: // For some fucked up reason Ctrl+H is sent as DEL in some terminals
+				if a.navManager.GetCurrentPageID(true) != tui.PageHistoryID {
+					a.navManager.ShowModal(tui.PageHistoryID, a.historyPage)
 					return nil
 				}
 			}
