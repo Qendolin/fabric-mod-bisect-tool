@@ -55,10 +55,10 @@ def gogio_build(
         app_id,
         "-o",
         out,
-        ".",
     ]
     if ldflags:
         args.extend(["-ldflags", ldflags])
+    args.append(".")
     run(*args, extra_env=extra_env, cwd=project_dir)
 
 
