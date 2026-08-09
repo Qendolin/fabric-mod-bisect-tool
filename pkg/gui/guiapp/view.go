@@ -1,5 +1,10 @@
 package guiapp
 
+import (
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/screens"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
+)
+
 func (a *App) Update() {
 	a.window.Invalidate()
 }
@@ -15,6 +20,12 @@ func (a *App) OnLoadingProgress(fileName string, i int, count int) {
 
 func (a *App) OnBisectionReady() {
 	a.SetActiveScreen(a.modSelectionScreen)
+}
+
+func (a *App) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
+	a.Run(func() {
+		a.SetActiveScreen(screens.NewUnresolvableScreen(a, mods))
+	})
 }
 
 func (a *App) OnTestReady() {

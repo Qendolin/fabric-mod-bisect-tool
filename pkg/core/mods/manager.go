@@ -232,6 +232,31 @@ func (sm *StateManager) SetOmittedBatch(modIDs []string, omitted bool) {
 	}
 }
 
+// RemoveDependencies removes the given dependency IDs from a mod's metadata.
+// This is used when the user chooses to keep a mod active despite its
+// unresolvable dependencies: once the failing requirements are gone, the mod
+// becomes activatable and a search candidate again. It bumps the state revision
+// so the next reconciliation picks up the change.
+func (sm *StateManager) RemoveDependencies(modID string, depIDs []string) {
+	if len(depIDs) == 0 {
+		return
+	}
+	mod, ok := sm.allMods[modID]
+	if !ok {
+		return
+	}
+	changed := false
+	for _, depID := range depIDs {
+		if _, exists := mod.Metadata.Depends[depID]; exists {
+			delete(mod.Metadata.Depends, depID)
+			changed = true
+		}
+	}
+	if changed {
+		sm.stateRevision++
+	}
+}
+
 // GetModStatus returns the current ModStatus for a given modID.
 // Returns nil and false if the modID is not found.
 func (sm *StateManager) GetModStatus(modID string) (*ModStatus, bool) {

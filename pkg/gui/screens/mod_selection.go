@@ -27,6 +27,11 @@ type ModSelectionScreen struct {
 	checkboxStates    map[string]*widget.Bool
 	checkboxClicks    map[string]*widget.Clickable
 	statesInitialized bool
+
+	// unresolvableMods records which mods could not be activated due to
+	// unresolvable dependencies. They cannot be force-enabled here and are
+	// shown greyed out.
+	unresolvableMods map[string]bool
 }
 
 func NewModSelectionScreen(app App) *ModSelectionScreen {
@@ -45,6 +50,12 @@ func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layo
 
 	// Initialize a checkbox for every mod once the mod list is known.
 	if !s.statesInitialized && vm.IsReady {
+		s.unresolvableMods = make(map[string]bool)
+		for id, status := range s.app.GetModStatusController().GetModStatuses() {
+			if status.IsUnresolvable {
+				s.unresolvableMods[id] = true
+			}
+		}
 		for _, id := range vm.AllModIDs {
 			s.checkboxStates[id] = &widget.Bool{}
 			s.checkboxClicks[id] = &widget.Clickable{}
@@ -56,7 +67,7 @@ func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layo
 		// Collect the selection on the frame, then commit off the frame.
 		var forceEnabled []string
 		for mod, boolState := range s.checkboxStates {
-			if boolState.Value {
+			if boolState.Value && !s.unresolvableMods[mod] {
 				forceEnabled = append(forceEnabled, mod)
 			}
 		}
@@ -165,6 +176,26 @@ func (s *ModSelectionScreen) layoutRightPanel(gtx layout.Context, th *material.T
 			return material.List(th, &s.listState).Layout(gtx, len(filteredMods), func(gtx layout.Context, index int) layout.Dimensions {
 				modName := filteredMods[index]
 				modInfo := vm.ModsInfo[modName]
+
+				// Unresolvable mods cannot be force-enabled; show them greyed out.
+				if s.unresolvableMods[modName] {
+					return layout.Inset{Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, modInfo.Name)
+								lbl.Color = theme.TextMutedColor
+								lbl.MaxLines = 1
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, modInfo.ID+" (unresolvable)")
+								lbl.Color = theme.TextMutedColor
+								lbl.MaxLines = 1
+								return lbl.Layout(gtx)
+							}),
+						)
+					})
+				}
 
 				// The checkbox and its clickable were initialized eagerly.
 				boolState := s.checkboxStates[modName]

@@ -10,6 +10,12 @@ import (
 type AppController interface {
 	StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool)
 
+	// CompleteLoading finishes the loading phase. After the unresolvable mods
+	// screen's decisions have been applied, it merges any re-added mods so they
+	// participate in the search immediately, and signals the UI that loading is
+	// done.
+	CompleteLoading()
+
 	GetViewModel() BisectionViewModel
 	GetResultViewModel() ResultViewModel
 
@@ -49,7 +55,16 @@ type ModStatusController interface {
 	// Discard drops all staged overrides without applying them.
 	Discard()
 
+	// ResolveEffectiveSet calculates the full set of mods that would be active
+	// for a test of the given target mods, including any dependencies pulled in transitively.
 	ResolveEffectiveSet(targetSet sets.Set) (effectiveSet sets.Set)
+
+	// ResolveUnresolvableMods applies the decisions made on the unresolvable
+	// mods screen. Mods marked UnresolvableModActionIgnore have their failing
+	// dependencies dropped and stay active; everything else stays disabled. The
+	// state is reconciled afterwards. It has no other side effects and can be
+	// called at any time.
+	ResolveUnresolvableMods(decisions map[string]UnresolvableModAction)
 }
 
 // View defines the operations that the business logic can request from the UI.
@@ -72,6 +87,11 @@ type View interface {
 
 	OnLoadingStarted()
 	OnLoadingProgress(fileName string, i, count int)
+	// OnUnresolvableMods is called after loading when one or more mods could not
+	// be activated due to unresolvable dependencies. The UI presents each mod
+	// with an ignore/disable choice; once the user is done, it must call
+	// AppController.ResolveUnresolvableMods to continue.
+	OnUnresolvableMods(mods []UnresolvableModInfo)
 	OnBisectionReady()
 	OnTestReady()
 	OnIterationComplete()

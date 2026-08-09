@@ -79,13 +79,17 @@ type MockView struct {
 	dialogCh  chan DialogInvocation
 	readyCh   chan struct{}
 	readyOnce sync.Once
+
+	// unresolvableCh receives the mods passed to OnUnresolvableMods (once).
+	unresolvableCh chan []ui.UnresolvableModInfo
 }
 
 // NewMockView creates an empty recording view.
 func NewMockView() *MockView {
 	return &MockView{
-		dialogCh: make(chan DialogInvocation),
-		readyCh:  make(chan struct{}),
+		dialogCh:       make(chan DialogInvocation),
+		readyCh:        make(chan struct{}),
+		unresolvableCh: make(chan []ui.UnresolvableModInfo, 1),
 	}
 }
 
@@ -131,6 +135,19 @@ func (m *MockView) WaitReady(t *testing.T, timeout time.Duration) {
 	case <-time.After(timeout):
 		t.Fatalf("MockView: timed out waiting for OnBisectionReady; calls: %v", m.Calls())
 	}
+}
+
+// WaitUnresolvable blocks until OnUnresolvableMods fires and returns the mods
+// that were reported, or fails the test on timeout.
+func (m *MockView) WaitUnresolvable(t *testing.T, timeout time.Duration) []ui.UnresolvableModInfo {
+	t.Helper()
+	select {
+	case mods := <-m.unresolvableCh:
+		return mods
+	case <-time.After(timeout):
+		t.Fatalf("MockView: timed out waiting for OnUnresolvableMods; calls: %v", m.Calls())
+	}
+	return nil
 }
 
 // WaitDialog blocks until the next blocking dialog is requested and returns it.
@@ -224,6 +241,14 @@ func (m *MockView) OnLoadingProgress(fileName string, i, count int) {
 func (m *MockView) OnBisectionReady() {
 	m.record("OnBisectionReady")
 	m.readyOnce.Do(func() { close(m.readyCh) })
+}
+
+func (m *MockView) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
+	m.record("OnUnresolvableMods")
+	select {
+	case m.unresolvableCh <- mods:
+	default:
+	}
 }
 
 func (m *MockView) OnTestReady() {

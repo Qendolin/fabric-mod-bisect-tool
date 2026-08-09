@@ -190,6 +190,40 @@ func (fl *FlexList) Draw(screen tcell.Screen) {
 			break
 		}
 	}
+
+	// Scroll indicators in the top-right and bottom-right corners signal that
+	// there is more content above or below the visible area.
+	totalContentHeight := 0
+	for _, h := range fl.itemHeights {
+		totalContentHeight += h
+	}
+	drawScrollIndicators(screen, x, y, width, height, fl.offsetY, totalContentHeight)
+}
+
+// MouseHandler forwards mouse events to the child items so that built-in
+// clickable primitives (e.g. buttons) inside the list work normally, and moves
+// the selection on mouse wheel scrolls.
+func (fl *FlexList) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (consumed bool, capture tview.Primitive) {
+	return fl.WrapMouseHandler(func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (consumed bool, capture tview.Primitive) {
+		if !fl.InRect(event.Position()) {
+			return false, nil
+		}
+		switch action {
+		case tview.MouseScrollUp:
+			fl.SetCurrentItem(fl.selectedIndex - 1)
+			return true, fl
+		case tview.MouseScrollDown:
+			fl.SetCurrentItem(fl.selectedIndex + 1)
+			return true, fl
+		}
+		for _, item := range fl.items {
+			consumed, capture = item.MouseHandler()(action, event, setFocus)
+			if consumed {
+				return true, capture
+			}
+		}
+		return false, nil
+	})
 }
 
 // InputHandler handles keyboard input for selection and scrolling.

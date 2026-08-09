@@ -43,9 +43,9 @@ func NewApp(controller ui.AppController, logger *logging.Logger) *App {
 	a := &App{
 		AppController: controller,
 		tviewApp:      tview.NewApplication(),
-		appCtx:     appCtx,
-		cancelApp:  cancelApp,
-		logger:     logger,
+		appCtx:        appCtx,
+		cancelApp:     cancelApp,
+		logger:        logger,
 	}
 
 	a.layoutManager = tui.NewLayoutManager(a, a.appCtx)
@@ -228,6 +228,12 @@ func (a *App) OnLoadingStarted() {
 
 func (a *App) OnLoadingProgress(fileName string, i, count int) {
 	a.ExecuteAndDraw(func() { a.loadingPage.UpdateProgress(fileName, i, count) })
+}
+
+func (a *App) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
+	a.ExecuteAndDraw(func() {
+		a.navManager.ShowModal(tui.PageUnresolvableID, pages.NewUnresolvablePage(a, mods))
+	})
 }
 
 func (a *App) OnBisectionReady() {

@@ -3,8 +3,11 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
@@ -89,7 +92,84 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 	a.bisectSvc = svc
 	a.bisectSvc.ResetSearch()
-	a.Reconcile()
+
+	// Initial reconciliation scans the full mod set for unresolvable mods and
+	// reports the directly-unresolvable roots so the UI can ask the user what
+	// to do with each of them.
+	report := a.bisectSvc.ReconcileState()
+	if len(report.ModsUnresolvable) > 0 {
+		a.view.OnUnresolvableMods(a.buildUnresolvableModInfos(report.ModsUnresolvable))
+		return
+	}
+	a.view.OnBisectionReady()
+}
+
+// buildUnresolvableModInfos converts the reconcile report's directly-unresolvable
+// mods (mod id -> failing dependencies) into a deterministic list for the UI.
+func (a *App) buildUnresolvableModInfos(mods map[string][]string) []ui.UnresolvableModInfo {
+	allMods := a.bisectSvc.StateManager().GetAllMods()
+	ids := make([]string, 0, len(mods))
+	for id := range mods {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	infos := make([]ui.UnresolvableModInfo, 0, len(ids))
+	for _, id := range ids {
+		infos = append(infos, ui.UnresolvableModInfo{
+			Mod:         makeModVM(id, allMods),
+			DepsDisplay: formatDependencyRefs(allMods[id], mods[id]),
+		})
+	}
+	return infos
+}
+
+// formatDependencyRefs renders each failing dependency id together with its
+// version predicates, e.g. "nonexistent (>=1.0)", one entry per dependency.
+func formatDependencyRefs(mod *mods.Mod, depIDs []string) []string {
+	refs := make([]string, 0, len(depIDs))
+	for _, depID := range depIDs {
+		ref := depID
+		if mod != nil {
+			if predicates := mod.Metadata.Depends[depID]; len(predicates) > 0 {
+				parts := make([]string, 0, len(predicates))
+				for _, p := range predicates {
+					parts = append(parts, p.String())
+				}
+				ref = fmt.Sprintf("%s (%s)", depID, strings.Join(parts, ", "))
+			}
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// ResolveUnresolvableMods applies the user's decisions from the unresolvable
+// mods screen. Mods marked UnresolvableModActionIgnore have their failing
+// dependencies dropped and stay active; everything else stays disabled. The
+// state is reconciled afterwards.
+func (a *App) ResolveUnresolvableMods(decisions map[string]ui.UnresolvableModAction) {
+	if !a.IsBisectionReady() {
+		return
+	}
+	details := a.bisectSvc.DirectlyUnresolvableMods()
+	for modID, action := range decisions {
+		if action == ui.UnresolvableModActionIgnore {
+			a.bisectSvc.StateManager().RemoveDependencies(modID, details[modID])
+		}
+	}
+	a.bisectSvc.ReconcileState()
+}
+
+// CompleteLoading finishes the loading phase. After the unresolvable mods
+// screen's decisions have been applied, it merges any re-added mods so they
+// participate in the search immediately, and signals the UI that loading is
+// done.
+func (a *App) CompleteLoading() {
+	if !a.IsBisectionReady() {
+		return
+	}
+	a.bisectSvc.Engine().MergePendingAdditions()
 	a.view.OnBisectionReady()
 }
 
@@ -173,11 +253,11 @@ func (a *App) GetModStatuses() map[string]ui.ModStatusViewModel {
 
 	for id, status := range a.bisectSvc.StateManager().GetModStatusesSnapshot() {
 		vm := ui.ModStatusViewModel{
-			ModViewModel:    makeModVM(id, allMods),
-			IsMissing:       status.IsMissing,
-			IsProblematic:   status.IsProblematic,
-			IsUnresolvable:  status.IsUnresolvable,
-			IsUserEditable:  !status.IsMissing,
+			ModViewModel:   makeModVM(id, allMods),
+			IsMissing:      status.IsMissing,
+			IsProblematic:  status.IsProblematic,
+			IsUnresolvable: status.IsUnresolvable,
+			IsUserEditable: !status.IsMissing,
 		}
 		if override, ok := staged[id]; ok {
 			vm.Override = override
@@ -238,6 +318,11 @@ func (a *App) Commit() {
 			a.bisectSvc.StateManager().SetForceDisabled(id, false)
 			a.bisectSvc.StateManager().SetOmitted(id, false)
 		case ui.ModOverrideForceEnabled:
+			// Unresolvable mods cannot be force-enabled; they are dealt with on
+			// the unresolvable mods screen instead.
+			if status, ok := a.bisectSvc.StateManager().GetModStatus(id); ok && status.IsUnresolvable {
+				continue
+			}
 			a.bisectSvc.StateManager().SetForceEnabled(id, true)
 			a.bisectSvc.StateManager().SetOmitted(id, false)
 		case ui.ModOverrideForceDisabled:
@@ -272,8 +357,12 @@ func (a *App) ContinueSearch() {
 		return
 	}
 
-	if len(report.ModsSetUnresolvable) > 0 {
-		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(report.ModsSetUnresolvable)
+	if len(report.ModsUnresolvable) > 0 {
+		disabled := make(sets.Set, len(report.ModsUnresolvable))
+		for id := range report.ModsUnresolvable {
+			disabled[id] = struct{}{}
+		}
+		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(disabled)
 	}
 	a.view.Update()
 }
@@ -412,8 +501,12 @@ func (a *App) handleStepError(err error) {
 }
 
 func (a *App) showReconciliationReport(report *bisect.ActionReport) {
-	if len(report.ModsSetUnresolvable) > 0 {
-		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(report.ModsSetUnresolvable)
+	if len(report.ModsUnresolvable) > 0 {
+		disabled := make(sets.Set, len(report.ModsUnresolvable))
+		for id := range report.ModsUnresolvable {
+			disabled[id] = struct{}{}
+		}
+		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(disabled)
 		return
 	}
 	logging.Info("App: Reconciliation report has no 'Unresolvable Mods' changes. This is odd.")

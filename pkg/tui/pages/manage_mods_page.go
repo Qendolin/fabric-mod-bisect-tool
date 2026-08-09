@@ -179,11 +179,29 @@ func (p *ManageModsPage) handleTableInput(event *tcell.EventKey) *tcell.EventKey
 func (p *ManageModsPage) toggleOverride(modID string, isBulk bool, target ui.ModStatusOverride) {
 	ctrl := p.app.GetModStatusController()
 
+	// Unresolvable mods cannot be force-enabled; they are dealt with on the
+	// unresolvable mods screen right after loading.
+	forceEnabledUnresolvable := func(status ui.ModStatusViewModel) bool {
+		return target == ui.ModOverrideForceEnabled && status.IsUnresolvable
+	}
+
+	if !isBulk {
+		if status, ok := p.statuses[modID]; ok && forceEnabledUnresolvable(status) {
+			p.app.Dialogs().ShowInfoDialog(
+				"Cannot Force Enable",
+				"This mod has unresolvable dependencies and cannot be force-enabled.\nIt was offered for Ignore/Disable on the unresolvable mods screen after loading.",
+				"",
+				nil,
+			)
+			return
+		}
+	}
+
 	if isBulk {
 		// If every mod already has the target state, clear them all instead.
 		allHaveTarget := true
 		for _, status := range p.statuses {
-			if status.IsUserEditable && status.Override != target {
+			if status.IsUserEditable && !forceEnabledUnresolvable(status) && status.Override != target {
 				allHaveTarget = false
 				break
 			}
@@ -193,7 +211,7 @@ func (p *ManageModsPage) toggleOverride(modID string, isBulk bool, target ui.Mod
 			goal = ui.ModOverrideNone
 		}
 		for id, status := range p.statuses {
-			if status.IsUserEditable {
+			if status.IsUserEditable && !forceEnabledUnresolvable(status) {
 				ctrl.SetOverride(id, goal)
 			}
 		}

@@ -18,9 +18,13 @@ var ErrUndoStackEmpty = errors.New("cannot undo: undo stack is empty")
 // ActionReport describes the outcome of a state-changing operation like
 // reconciliation or advancing to the next search round.
 type ActionReport struct {
-	ModsSetProblematic  sets.Set
-	ModsSetUnresolvable sets.Set
-	HasChanges          bool
+	ModsSetProblematic sets.Set
+	// ModsUnresolvable maps each newly-flagged, directly unresolvable mod to
+	// the list of dependencies that failed to resolve. Transitively broken
+	// mods are marked unresolvable but are not listed here; they resolve once
+	// their root cause is dealt with.
+	ModsUnresolvable map[string][]string
+	HasChanges       bool
 }
 
 // Service encapsulates the entire bisection business logic.
@@ -69,6 +73,12 @@ func (s *Service) GetCurrentState() imcs.SearchState {
 	return s.engine.GetCurrentState()
 }
 
+// DirectlyUnresolvableMods returns each directly-unresolvable mod mapped to the
+// list of dependencies that failed to resolve.
+func (s *Service) DirectlyUnresolvableMods() map[string][]string {
+	return s.state.Resolver().CalculateDirectlyUnresolvableModsWithDetails(s.getUnresolvableEvaluationSet())
+}
+
 // NeedsReconciliation returns true if the mod statuses have changed since the
 // last reconciliation, meaning the service state may be inconsistent and must
 // be reconciled before the next step is planned.
@@ -81,8 +91,18 @@ func (s *Service) NeedsReconciliation() bool {
 func (s *Service) ReconcileState() (report ActionReport) {
 	logging.Debugf("BisectService: Reconciling system state.")
 
-	// Calculate what the set of unresolvable mods should be.
-	expectedUnresolvable := s.state.Resolver().CalculateTransitivelyUnresolvableMods(s.getActivatableMods())
+	// Calculate the set of unresolvable mods with per-mod dependency details.
+	// The evaluation pool includes mods that are already flagged unresolvable,
+	// so their status is stable across reconciles (they are only cleared once
+	// their dependencies actually become resolvable).
+	details := s.state.Resolver().CalculateUnresolvableModsDetails(s.getUnresolvableEvaluationSet())
+	expectedUnresolvable := make(sets.Set)
+	for id := range details.DirectlyUnresolvable {
+		expectedUnresolvable[id] = struct{}{}
+	}
+	for id := range details.TransitivelyUnresolvable {
+		expectedUnresolvable[id] = struct{}{}
+	}
 
 	// Get the set of mods currently marked as unresolvable.
 	currentlyUnresolvable := make(sets.Set)
@@ -115,7 +135,12 @@ func (s *Service) ReconcileState() (report ActionReport) {
 	s.lastReconcileRevision = s.state.StateRevision()
 
 	report.HasChanges = modStateChanged || engineStateChanged
-	report.ModsSetUnresolvable = newlyUnresolvable
+	report.ModsUnresolvable = make(map[string][]string)
+	for id, deps := range details.DirectlyUnresolvable {
+		if _, isNew := newlyUnresolvable[id]; isNew {
+			report.ModsUnresolvable[id] = deps
+		}
+	}
 
 	return
 }
@@ -260,7 +285,7 @@ func (s *Service) ContinueSearch() (ActionReport, error) {
 		logging.Debugf("  - Last Conflict Found %d: %v", len(lastConflictSet), sets.FormatSet(lastConflictSet))
 		logging.Debugf("  - All Found Conflict Sets %d: %v", len(s.enumState.FoundConflictSets), s.enumState.FoundConflictSets)
 		logging.Debugf("  - Mods Marked Problematic This Round %d: %v", len(report.ModsSetProblematic), sets.FormatSet(report.ModsSetProblematic))
-		logging.Debugf("  - Mods Newly Unresolvable (Auto-Disabled) This Round %d: %v", len(report.ModsSetUnresolvable), sets.FormatSet(report.ModsSetUnresolvable))
+		logging.Debugf("  - Mods Newly Unresolvable (Auto-Disabled) This Round %d: %v", len(report.ModsUnresolvable), report.ModsUnresolvable)
 		logging.Debugf("  - Final Candidate List for New Engine %d: %v", len(finalCandidates), sets.FormatSet(finalCandidates))
 		logging.Debugf("BisectService: ===========================================")
 	}
@@ -344,4 +369,19 @@ func (s *Service) getActivatableMods() sets.Set {
 		}
 	}
 	return activatableMods
+}
+
+// getUnresolvableEvaluationSet returns the mods that should be evaluated for
+// unresolvability during reconciliation. Unlike getActivatableMods it does not
+// exclude mods that are already flagged unresolvable, so those mods stay
+// flagged across reconciles until their dependencies actually become
+// resolvable (e.g. after the user chooses to ignore them).
+func (s *Service) getUnresolvableEvaluationSet() sets.Set {
+	evaluationSet := make(sets.Set)
+	for id, status := range s.state.GetModStatusesSnapshot() {
+		if !status.ForceDisabled && !status.IsMissing && !status.IsProblematic {
+			evaluationSet[id] = struct{}{}
+		}
+	}
+	return evaluationSet
 }

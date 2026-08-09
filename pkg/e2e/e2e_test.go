@@ -151,10 +151,11 @@ func TestLoadAndBisectionReady(t *testing.T) {
 	}
 }
 
-// TestDisabledModsReportRightAfterLoading asserts behavior (3): the "Disabled
-// Mods" report dialog is shown right after loading (during onLoadingComplete's
-// reconcile), not on the first step.
-func TestDisabledModsReportRightAfterLoading(t *testing.T) {
+// TestUnresolvableModsAtLoad asserts that mods with unresolvable dependencies
+// are surfaced on the unresolvable mods screen right after loading (not on the
+// first step), and that choosing to ignore the failing dependencies keeps the
+// mod active and in the search pool.
+func TestUnresolvableModsAtLoad(t *testing.T) {
 	specs := map[string]modSpec{
 		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
 		"mod-b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
@@ -163,28 +164,122 @@ func TestDisabledModsReportRightAfterLoading(t *testing.T) {
 	}
 	a, mock, _ := newTestApp(t, specs)
 
-	// The dialog must arrive without any Step having been invoked.
-	inv := mock.WaitDialog(t, timeout)
-	if inv.Kind != DialogInfoBisectionUnresolvableModsDisabled {
-		t.Fatalf("expected Disabled Mods report dialog, got %s", inv.Kind)
+	// The unresolvable mods must be reported without any Step having run.
+	mods := mock.WaitUnresolvable(t, timeout)
+	if len(mods) != 1 || mods[0].Mod.ID != "mod_c" {
+		t.Fatalf("expected only mod_c as unresolvable, got %+v", mods)
 	}
-	if _, ok := inv.DisabledMods["mod_c"]; !ok {
-		t.Errorf("expected mod_c in disabled set, got %v", sets.MakeSlice(inv.DisabledMods))
+	if len(mods[0].DepsDisplay) != 1 ||
+		!strings.Contains(mods[0].DepsDisplay[0], "nonexistent") ||
+		!strings.Contains(mods[0].DepsDisplay[0], ">=1.0") {
+		t.Fatalf("expected the dependency display to include the version predicate, got %q", mods[0].DepsDisplay)
 	}
 	if mock.HasCall("OnTestReady") {
-		t.Error("dialog should have been shown before any Step (no OnTestReady yet)")
+		t.Error("OnUnresolvableMods should have fired before any Step (no OnTestReady yet)")
 	}
-	inv.Respond(true)
 
+	// Ignore the failing dependency: mod_c is kept active and becomes a candidate.
+	a.GetModStatusController().ResolveUnresolvableMods(map[string]ui.UnresolvableModAction{
+		"mod_c": ui.UnresolvableModActionIgnore,
+	})
+	a.CompleteLoading()
+	mock.WaitReady(t, timeout)
+
+	statuses := a.GetModStatuses()
+	if statuses["mod_c"].IsUnresolvable {
+		t.Error("expected mod_c to no longer be unresolvable after ignoring its deps")
+	}
+	vm := a.GetViewModel()
+	if _, inCandidates := vm.CandidateSet["mod_c"]; !inCandidates {
+		t.Error("expected mod_c to be a candidate after ignoring its deps")
+	}
+}
+
+// TestUnresolvableModsDisableAtLoad asserts that choosing to disable an
+// unresolvable mod at load keeps it excluded from the search.
+func TestUnresolvableModsDisableAtLoad(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0", "depends": {"nonexistent": ">=1.0"}}`},
+	}
+	a, mock, _ := newTestApp(t, specs)
+
+	mock.WaitUnresolvable(t, timeout)
+	// Empty decisions map == every mod stays disabled (the default).
+	a.GetModStatusController().ResolveUnresolvableMods(nil)
+	a.CompleteLoading()
 	mock.WaitReady(t, timeout)
 
 	statuses := a.GetModStatuses()
 	if !statuses["mod_c"].IsUnresolvable {
-		t.Error("expected mod_c to be marked unresolvable")
+		t.Error("expected mod_c to remain marked unresolvable")
 	}
 	vm := a.GetViewModel()
 	if _, inCandidates := vm.CandidateSet["mod_c"]; inCandidates {
-		t.Error("expected mod_c to be excluded from candidates")
+		t.Error("expected mod_c to stay excluded from candidates")
+	}
+}
+
+// TestForceEnableUnresolvableBlocked asserts that an unresolvable mod cannot be
+// force-enabled through the mod status controller.
+func TestForceEnableUnresolvableBlocked(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0", "depends": {"nonexistent": ">=1.0"}}`},
+	}
+	a, mock, _ := newTestApp(t, specs)
+
+	mock.WaitUnresolvable(t, timeout)
+	a.GetModStatusController().ResolveUnresolvableMods(nil) // keep mod_c disabled
+	a.CompleteLoading()
+	mock.WaitReady(t, timeout)
+
+	ctrl := a.GetModStatusController()
+	ctrl.SetOverride("mod_c", ui.ModOverrideForceEnabled)
+	ctrl.Commit()
+
+	statuses := a.GetModStatuses()
+	if statuses["mod_c"].Override == ui.ModOverrideForceEnabled {
+		t.Error("expected force-enabling an unresolvable mod to be blocked")
+	}
+	if !statuses["mod_c"].IsUnresolvable {
+		t.Error("expected mod_c to still be unresolvable after the blocked commit")
+	}
+}
+
+// TestUnresolvableModsMidSessionDisabledNoChoice asserts that an unresolvable
+// mod that appears mid-session (not at load) is simply disabled and reported
+// via the info dialog, without offering a per-mod choice.
+func TestUnresolvableModsMidSessionDisabledNoChoice(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0", "depends": {"mod_b": ">=1.0"}}`},
+		"mod-b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+	}
+	a, mock, _ := newLoadedApp(t, specs)
+
+	// Force-disable mod_b: mod_a's only provider disappears mid-session.
+	// Commit blocks on the report dialog, so run it in a goroutine.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.GetModStatusController().SetOverride("mod_b", ui.ModOverrideForceDisabled)
+		a.GetModStatusController().Commit()
+	}()
+
+	// The app reports it via the plain "Disabled Mods" info dialog (no choice).
+	inv := mock.WaitDialog(t, timeout)
+	if inv.Kind != DialogInfoBisectionUnresolvableModsDisabled {
+		t.Fatalf("expected Disabled Mods info dialog, got %s", inv.Kind)
+	}
+	if _, ok := inv.DisabledMods["mod_a"]; !ok {
+		t.Errorf("expected mod_a in disabled set, got %v", sets.MakeSlice(inv.DisabledMods))
+	}
+	inv.Respond(true)
+	<-done
+
+	statuses := a.GetModStatuses()
+	if !statuses["mod_a"].IsUnresolvable {
+		t.Error("expected mod_a to be marked unresolvable")
 	}
 }
 

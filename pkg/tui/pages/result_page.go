@@ -27,7 +27,7 @@ type ResultPage struct {
 	*tview.Flex
 	app            tui.TUIApp
 	statusText     *tview.TextView
-	resultView     *tview.TextView
+	resultView     *widgets.ScrollTextView
 	closeButton    *tview.Button
 	continueButton *tview.Button
 }
@@ -44,10 +44,10 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 
 	title, message, explanation := p.formatContent(&vm)
 
-	p.resultView = tview.NewTextView().
-		SetDynamicColors(true).
-		SetWordWrap(true).
-		SetText(message)
+	p.resultView = widgets.NewScrollTextView()
+	p.resultView.SetDynamicColors(true)
+	p.resultView.SetWordWrap(true)
+	p.resultView.SetText(message)
 	p.resultView.SetBorderPadding(1, 0, 1, 1)
 
 	explanationView := tview.NewTextView().

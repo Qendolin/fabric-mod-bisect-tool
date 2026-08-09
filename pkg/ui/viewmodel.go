@@ -64,6 +64,25 @@ type UnresolvedDependencyReport struct {
 	RequiredByTransitive []ModViewModel // Other mods that break downstream if this mod is disabled
 }
 
+// UnresolvableModAction is the per-mod decision on the unresolvable mods screen.
+type UnresolvableModAction string
+
+const (
+	// UnresolvableModActionDisable keeps the mod disabled and out of the search.
+	UnresolvableModActionDisable UnresolvableModAction = "disable"
+	// UnresolvableModActionIgnore keeps the mod active by dropping its failing dependencies.
+	UnresolvableModActionIgnore UnresolvableModAction = "ignore"
+)
+
+// UnresolvableModInfo describes a mod that cannot be activated because some of
+// its dependencies failed to resolve, along with those failing dependencies.
+type UnresolvableModInfo struct {
+	Mod ModViewModel
+	// DepsDisplay is a human-readable rendering of each failing dependency
+	// including its version predicate, e.g. "nonexistent (>=1.0)", one entry per dependency.
+	DepsDisplay []string
+}
+
 type ResultViewModel struct {
 	State                 SearchState
 	IsVerificationStep    bool                         // True if awaiting user confirmation test
