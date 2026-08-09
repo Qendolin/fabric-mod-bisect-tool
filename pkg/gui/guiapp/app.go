@@ -127,7 +127,7 @@ func (a *App) ShowQuitDialog() {
 	}
 	defer a.quitDialogOpen.Store(false)
 	opts := append(a.dialogOptions(), zenity.Title("Quit"))
-	err := zenity.Question("Are you sure you want to quit?\nUnsaved progress will be lost.", opts...)
+	err := zenity.Question("Are you sure you want to quit?\nThe current search progress will be lost.", opts...)
 	if err == nil {
 		a.Stop()
 	}

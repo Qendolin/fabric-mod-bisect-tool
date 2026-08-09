@@ -3,6 +3,7 @@ package widgets
 import (
 	"image"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -12,7 +13,26 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 )
 
-// ModList is a scrollable list of string items rendered with a card background,
+// ModListTag marks how a mod row should be styled relative to a plain entry.
+type ModListTag string
+
+const (
+	ModListTagNone          ModListTag = ""
+	ModListTagDependency    ModListTag = "dependency"
+	ModListTagAlwaysEnabled ModListTag = "always"
+)
+
+// ModListItem is a single row in a ModList: a friendly name with the mod ID
+// below, mirroring the mod selection screen.
+type ModListItem struct {
+	Name string
+	ID   string
+	// Tag styles the row. Rows tagged with ModListTagDependency render the name
+	// muted and italic; the tag itself is appended to the ID line as a hint.
+	Tag ModListTag
+}
+
+// ModList is a scrollable list of mod items rendered with a card background,
 // a rounded border, and 1dp separator lines between rows.
 type ModList struct {
 	list widget.List
@@ -28,7 +48,7 @@ func NewModList() *ModList {
 	return ml
 }
 
-func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []string) layout.Dimensions {
+func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []ModListItem) layout.Dimensions {
 	for len(ml.selections) < len(items) {
 		ml.selections = append(ml.selections, new(widget.Selectable))
 	}
@@ -49,13 +69,34 @@ func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []string
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return material.List(th, &ml.list).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+					item := items[i]
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(th, items[i])
+							name := item.Name
+							if name == "" {
+								name = item.ID
+							}
+							lbl := material.Body2(th, name)
 							lbl.State = ml.selections[i]
 							lbl.SelectionColor = theme.PrimaryColor
 							lbl.Color = theme.FgColor
-							return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, lbl.Layout)
+							lbl.MaxLines = 1
+							if item.Tag == ModListTagDependency {
+								lbl.Color = theme.TextMutedColor
+								lbl.Font.Style = font.Italic
+							}
+							return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						}),
+						// ID line with an optional tag hint.
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							idText := item.ID
+							if item.Tag != ModListTagNone {
+								idText += " (" + string(item.Tag) + ")"
+							}
+							lbl := material.Body2(th, idText)
+							lbl.Color = theme.TextMutedColor
+							lbl.MaxLines = 1
+							return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, lbl.Layout)
 						}),
 						// Separator, omitted on the last item.
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"sort"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -38,6 +39,10 @@ type MainScreen struct {
 	cancelClick  widget.Clickable
 
 	isTestPromptActive bool
+	// activeMods holds the mod list for the current test prompt. It is computed
+	// once in ShowTestPrompt (which runs when a test becomes ready) rather than
+	// on every frame, because building it requires a dependency resolution.
+	activeMods []exwidgets.ModListItem
 }
 
 func NewMainScreen(app App) *MainScreen {
@@ -48,11 +53,35 @@ func NewMainScreen(app App) *MainScreen {
 }
 
 func (s *MainScreen) ShowTestPrompt() {
+	vm := s.app.GetViewModel()
+	if vm.CurrentTestPlan == nil {
+		return
+	}
+	statuses := s.app.GetModStatusController().GetModStatuses()
+	effectiveSet := s.app.GetModStatusController().ResolveEffectiveSet(vm.CurrentTestPlan.ModIDsToTest)
+	primary := vm.CurrentTestPlan.ModIDsToTest
+
+	items := make([]exwidgets.ModListItem, 0, len(effectiveSet))
+	for id := range effectiveSet {
+		item := modListItem(id, vm.ModsInfo[id])
+		if _, isPrimary := primary[id]; !isPrimary {
+			if statuses[id].Override == ui.ModOverrideForceEnabled {
+				item.Tag = exwidgets.ModListTagAlwaysEnabled
+			} else {
+				item.Tag = exwidgets.ModListTagDependency
+			}
+		}
+		items = append(items, item)
+	}
+	sortModItems(items)
+
+	s.activeMods = items
 	s.isTestPromptActive = true
 }
 
 func (s *MainScreen) HideTestPrompt() {
 	s.isTestPromptActive = false
+	s.activeMods = nil
 }
 
 func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
@@ -103,13 +132,13 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 func (s *MainScreen) layoutNormalView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
 	title, desc, stepBtnText, progress := normalViewContent(vm)
 
-	var candidates []string
+	var candidates []exwidgets.ModListItem
 	var listHeader string
 	if vm.IsVerificationStep {
 		listHeader = "Conflict Set"
-		candidates = sets.MakeSlice(vm.CurrentConflictSet)
+		candidates = modItemsFromSet(vm.ModsInfo, vm.CurrentConflictSet)
 	} else {
-		candidates = sets.MakeSlice(vm.CandidateSet)
+		candidates = modItemsFromSet(vm.ModsInfo, vm.CandidateSet)
 		listHeader = fmt.Sprintf("Remaining Candidates (%d)", len(candidates))
 	}
 
@@ -234,19 +263,14 @@ func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme
 			"✗ Broken\n  The issue is still present in the game."
 	}
 
-	var activeMods []string
-	if vm.CurrentTestPlan != nil {
-		activeMods = sets.MakeSlice(vm.CurrentTestPlan.ModIDsToTest)
-	}
-
 	return s.layoutTwoPanel(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			return s.layoutTestPromptLeft(gtx, th, header, desc)
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			return s.layoutListPanel(gtx, th, &s.activeModsList,
-				fmt.Sprintf("Active Mod Set (%d mods active)", len(activeMods)),
-				activeMods,
+				fmt.Sprintf("Active mods (%d)", len(s.activeMods)),
+				s.activeMods,
 			)
 		},
 	)
@@ -319,7 +343,7 @@ func (s *MainScreen) layoutTwoPanel(gtx layout.Context, left, right layout.Widge
 }
 
 // layoutListPanel renders a bold header label above a ModList.
-func (s *MainScreen) layoutListPanel(gtx layout.Context, th *material.Theme, list *exwidgets.ModList, header string, items []string) layout.Dimensions {
+func (s *MainScreen) layoutListPanel(gtx layout.Context, th *material.Theme, list *exwidgets.ModList, header string, items []exwidgets.ModListItem) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body1(th, header)
@@ -331,6 +355,40 @@ func (s *MainScreen) layoutListPanel(gtx layout.Context, th *material.Theme, lis
 			return list.Layout(gtx, th, items)
 		}),
 	)
+}
+
+// modListItem converts a mod id into a ModListItem, using the friendly name
+// from ModsInfo when available.
+func modListItem(id string, info ui.ModViewModel) exwidgets.ModListItem {
+	return exwidgets.ModListItem{Name: info.Name, ID: info.ID}
+}
+
+// modItemsFromSet converts a set of mod ids into a ModList of items, ordered
+// alphabetically by name.
+func modItemsFromSet(modsInfo map[string]ui.ModViewModel, modSet sets.Set) []exwidgets.ModListItem {
+	items := make([]exwidgets.ModListItem, 0, len(modSet))
+	for id := range modSet {
+		items = append(items, modListItem(id, modsInfo[id]))
+	}
+	sortModItems(items)
+	return items
+}
+
+// sortModItems orders mod items alphabetically by name, falling back to the id.
+func sortModItems(items []exwidgets.ModListItem) {
+	sort.Slice(items, func(i, j int) bool {
+		a, b := items[i].Name, items[j].Name
+		if a == "" {
+			a = items[i].ID
+		}
+		if b == "" {
+			b = items[j].ID
+		}
+		if a != b {
+			return a < b
+		}
+		return items[i].ID < items[j].ID
+	})
 }
 
 // layoutDivider draws a full-width 1dp horizontal separator line.
