@@ -25,6 +25,7 @@ type Page interface {
 	tview.Primitive
 	GetActionPrompts() []ActionPrompt
 	GetStatusPrimitive() *tview.TextView
+	Update()
 }
 
 // PageActivator defines an interface for pages that need to perform an action

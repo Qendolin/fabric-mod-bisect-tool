@@ -3,9 +3,9 @@ package app
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
@@ -23,6 +23,13 @@ type App struct {
 
 	// Core Service (only initialized after successful loading)
 	bisectSvc *bisect.Service
+	adapter   *mods.FileAdapter
+
+	// Staged, not yet committed, per-mod overrides for the manage mods page.
+	// stagedMu guards stagedOverrides: staging is done on the UI event loop,
+	// but Commit may run on a worker goroutine.
+	stagedOverrides map[string]ui.ModStatusOverride
+	stagedMu        sync.Mutex
 
 	cliArgs CLIArgs
 }
@@ -41,77 +48,58 @@ func (a *App) SetView(view ui.View) {
 }
 
 func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool) {
-	a.view.SwitchToLoadingPage()
+	a.view.OnLoadingStarted()
+
+	a.adapter = &mods.FileAdapter{BaseDirectory: modsPath}
 
 	go func() {
 		defer logging.HandlePanic()
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}}
-		logging.Infof("App: Loading mods from '%s', Quilt Support: %v", modsPath, a.cliArgs.QuiltSupport)
-		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, a.view.UpdateLoadingProgress)
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}, Adapter: a.adapter}
+		logging.Infof("App: Loading mods from '%s', Quilt Support: %v, NeoForge Support: %v", modsPath, quiltSupport, neoForgeSupport)
+		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, a.view.OnLoadingProgress)
 
-		// Signal the main thread to handle the result.
-		a.view.QueueUpdateDraw(func() {
-			a.onLoadingComplete(modsPath, allMods, providers, loadErr)
-		})
+		a.onLoadingComplete(modsPath, allMods, providers, loadErr)
 	}()
 }
 
 func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, providers mods.PotentialProvidersMap, err error) {
 	if err != nil {
 		logging.Errorf("App: Failed to load mods: %v", err)
-		a.view.ShowErrorDialog("Loading Error", "Failed to load mods!", err, func() {
-			a.view.SwitchToSetupPage()
-		})
+		a.view.ShowDialogErrorModLoadingGeneric(modsPath, err)
 		return
 	}
 	if len(allMods) == 0 {
 		logging.Errorf("App: No mods were found in '%s'.", modsPath)
-		a.view.ShowErrorDialog("Information", fmt.Sprintf("No mods were found in '%s'.\nPlease ensure that you've entered the path correctly.", modsPath), nil, func() {
-			a.view.SwitchToSetupPage()
-		})
+		a.view.ShowDialogErrorModLoadingNoMods(modsPath)
 		return
 	}
 
 	// Loading was successful, now create the runtime services.
 	stateMgr := mods.NewStateManager(allMods, providers)
-	activator := mods.NewModActivator(modsPath, allMods)
+	activator := mods.NewModActivator(a.adapter, allMods)
 
 	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {
 		logging.Errorf("App: Failed to initialize the bisection service: %v", err)
-		a.view.ShowErrorDialog("Initialization Error", "Failed to initialize the bisection!", err, func() {
-			a.view.SwitchToSetupPage()
-		})
+		a.view.ShowDialogErrorBisectionInitialization(err)
 		return
 	}
 
 	a.bisectSvc = svc
-	a.bisectSvc.OnStateChange = a.handleCoreStateChange
 	a.bisectSvc.ResetSearch()
-	a.view.SwitchToMainPage()
-	a.handleCoreStateChange()
+	a.Reconcile()
+	a.view.OnBisectionReady()
 }
 
-func (a *App) handleCoreStateChange() {
-	if a.view != nil {
-		a.view.RefreshSearchState()
+func (a *App) Reconcile() {
+	logging.Debugf("App: Reconciliation triggered.")
+	report := a.bisectSvc.ReconcileState()
+	if report.HasChanges {
+		a.showReconciliationReport(&report)
 	}
-}
-
-func (a *App) Reconcile(callback func()) {
-	if a.bisectSvc.NeedsReconciliation() {
-		logging.Debugf("App: Reconciliation triggered and needed.")
-		report := a.bisectSvc.ReconcileState()
-		if report.HasChanges {
-			a.showReconciliationReport(&report, callback)
-			return
-		}
-	}
-	if callback != nil {
-		callback()
-	}
+	a.view.Update()
 }
 
 // Step orchestrates the next bisection test.
@@ -119,18 +107,156 @@ func (a *App) Step() {
 	if !a.IsBisectionReady() {
 		return
 	}
-	plan, changes, err := a.bisectSvc.PlanAndApplyNextTest()
+	err := a.bisectSvc.PlanAndApplyNextTest()
 	if err != nil {
 		a.bisectSvc.Engine().InvalidateActivePlan()
 		a.handleStepError(err)
+		a.view.Update()
 		return
 	}
 
-	onSuccess := func() { a.bisectSvc.SubmitTestResult(imcs.TestResultGood, changes) }
-	onFailure := func() { a.bisectSvc.SubmitTestResult(imcs.TestResultFail, changes) }
-	onCancel := func() { a.bisectSvc.CancelTest(changes) }
+	a.view.OnTestReady()
+	a.view.Update()
+}
 
-	a.view.ShowTestModal(plan.IsVerificationStep, onSuccess, onFailure, onCancel)
+func (a *App) SubmitTestResult(result imcs.TestResult) {
+	a.bisectSvc.SubmitTestResult(result)
+	a.displayResults()
+	a.view.Update()
+}
+
+func (a *App) CancelTest() {
+	a.bisectSvc.CancelTest()
+	a.view.Update()
+}
+
+func (a *App) GetBisectionController() ui.BisectionController {
+	return a
+}
+
+func (a *App) GetModStatusController() ui.ModStatusController {
+	return a
+}
+
+func (a *App) ResolveEffectiveSet(targetSet sets.Set) (effectiveSet sets.Set) {
+	if !a.IsBisectionReady() {
+		return sets.Set{}
+	}
+	return a.bisectSvc.StateManager().ResolveEffectiveSet(targetSet).EffectiveSet
+}
+
+// RestoreInitialModState restores the on-disk mod files to the state they were
+// in when the bisection first loaded them. It is best-effort: mods that cannot
+// be restored (e.g. missing files) are logged and skipped. Safe to call even if
+// no mods were loaded. It is intended to be called when the application exits,
+// so user mod files are left as they were found.
+func (a *App) RestoreInitialModState() {
+	if !a.IsBisectionReady() {
+		return
+	}
+	a.bisectSvc.Activator().RestoreInitialState()
+}
+
+// GetModStatuses returns a serializable snapshot of every mod's status, merged
+// with any staged (not yet committed) overrides.
+func (a *App) GetModStatuses() map[string]ui.ModStatusViewModel {
+	if !a.IsBisectionReady() {
+		return map[string]ui.ModStatusViewModel{}
+	}
+
+	allMods := a.bisectSvc.StateManager().GetAllMods()
+	result := make(map[string]ui.ModStatusViewModel, len(allMods))
+
+	a.stagedMu.Lock()
+	staged := a.stagedOverrides
+	a.stagedMu.Unlock()
+
+	for id, status := range a.bisectSvc.StateManager().GetModStatusesSnapshot() {
+		vm := ui.ModStatusViewModel{
+			ModViewModel:    makeModVM(id, allMods),
+			IsMissing:       status.IsMissing,
+			IsProblematic:   status.IsProblematic,
+			IsUnresolvable:  status.IsUnresolvable,
+			IsUserEditable:  !status.IsMissing,
+		}
+		if override, ok := staged[id]; ok {
+			vm.Override = override
+		} else {
+			vm.Override = overrideFromStatus(status)
+		}
+		result[id] = vm
+	}
+	return result
+}
+
+// overrideFromStatus maps a committed mod status to its override enum.
+func overrideFromStatus(status mods.ModStatus) ui.ModStatusOverride {
+	switch {
+	case status.ForceEnabled:
+		return ui.ModOverrideForceEnabled
+	case status.ForceDisabled:
+		return ui.ModOverrideForceDisabled
+	case status.Omitted:
+		return ui.ModOverrideOmitted
+	default:
+		return ui.ModOverrideNone
+	}
+}
+
+// SetOverride stages a new override for a single mod. It does not touch the
+// underlying state until Commit is called.
+func (a *App) SetOverride(id string, override ui.ModStatusOverride) {
+	if !a.IsBisectionReady() {
+		return
+	}
+	a.stagedMu.Lock()
+	defer a.stagedMu.Unlock()
+	if a.stagedOverrides == nil {
+		a.stagedOverrides = make(map[string]ui.ModStatusOverride)
+	}
+	a.stagedOverrides[id] = override
+}
+
+// Commit applies all staged overrides to the state manager and triggers a
+// reconciliation. Pending additions (mods that will re-enter the search pool)
+// are available via GetViewModel().PendingAdditions afterwards.
+func (a *App) Commit() {
+	if !a.IsBisectionReady() {
+		a.Discard()
+		return
+	}
+
+	a.stagedMu.Lock()
+	overrides := a.stagedOverrides
+	a.stagedOverrides = nil
+	a.stagedMu.Unlock()
+
+	for id, override := range overrides {
+		switch override {
+		case ui.ModOverrideNone:
+			a.bisectSvc.StateManager().SetForceEnabled(id, false)
+			a.bisectSvc.StateManager().SetForceDisabled(id, false)
+			a.bisectSvc.StateManager().SetOmitted(id, false)
+		case ui.ModOverrideForceEnabled:
+			a.bisectSvc.StateManager().SetForceEnabled(id, true)
+			a.bisectSvc.StateManager().SetOmitted(id, false)
+		case ui.ModOverrideForceDisabled:
+			a.bisectSvc.StateManager().SetForceDisabled(id, true)
+			a.bisectSvc.StateManager().SetOmitted(id, false)
+		case ui.ModOverrideOmitted:
+			a.bisectSvc.StateManager().SetOmitted(id, true)
+			a.bisectSvc.StateManager().SetForceEnabled(id, false)
+			a.bisectSvc.StateManager().SetForceDisabled(id, false)
+		}
+	}
+	a.Reconcile()
+}
+
+// Discard drops all staged overrides without applying them.
+func (a *App) Discard() {
+	a.stagedMu.Lock()
+	a.stagedOverrides = nil
+	a.stagedMu.Unlock()
 }
 
 func (a *App) ContinueSearch() {
@@ -141,39 +267,32 @@ func (a *App) ContinueSearch() {
 
 	report, err := a.bisectSvc.ContinueSearch()
 	if err != nil {
-		a.view.ShowErrorDialog("Unexpected Error", "Cannot continue the search!", err, nil)
+		a.view.ShowDialogErrorBisectionCannotContinue(err)
+		a.view.Update()
 		return
 	}
 
 	if len(report.ModsSetUnresolvable) > 0 {
-		a.view.ShowInfoDialog(
-			"Unresolvable Mods Disabled",
-			"To continue the search, the following mods were automatically disabled because their dependencies can no longer be met:",
-			sets.FormatSet(report.ModsSetUnresolvable).String(),
-			nil,
-		)
+		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(report.ModsSetUnresolvable)
 	}
+	a.view.Update()
 }
 
-func (a *App) Undo() bool {
-	logging.Debugf("App: Undo action triggered.")
+func (a *App) Undo() error {
 	err := a.bisectSvc.UndoLastStep()
-	if errors.Is(err, bisect.ErrUndoStackEmpty) {
-		a.view.ShowInfoDialog("Cannot Undo", "Nothing left to undo.", "", nil)
-		return false
-	}
 	if err != nil {
 		logging.Errorf("App: Undo failed: %v", err)
-		a.view.ShowInfoDialog("Cannot Undo", "The undo operation failed or there were no more steps to undo.", "", nil)
-		return false
+	} else {
+		logging.Debugf("App: Undo successful.")
+		a.Reconcile()
 	}
-	return true
+	return err
 }
 
 func (a *App) ResetSearch() {
 	logging.Debugf("App: ResetSearch faction triggered.")
 	a.bisectSvc.ResetSearch()
-	a.Reconcile(nil)
+	a.Reconcile()
 }
 
 func (a *App) IsBisectionReady() bool {
@@ -186,7 +305,7 @@ func (a *App) displayResults() {
 	}
 	state := a.bisectSvc.GetCurrentState()
 	if state.IsComplete || a.bisectSvc.Engine().WasLastTestVerification() {
-		a.view.SwitchToResultPage()
+		a.view.OnIterationComplete()
 	}
 }
 
@@ -258,28 +377,19 @@ func (a *App) handleStepError(err error) {
 		}
 
 		if len(unexpectedDeletions) > 0 {
-			a.view.ShowQuestionDialog(
-				"Missing Mod Files Detected",
-				"The following mod files were unexpectedly missing. Do you want to continue the search without them?",
-				sets.FormatSet(unexpectedDeletions).String(),
-				func() {
-					logging.Infof("App: Disabling %d mods that are undexpectedly missing: %v", len(missingIDs), missingIDs)
-					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
-					a.Step()
-				},
-				nil,
-			)
+			ok := a.view.ShowDialogQuestionBisectionContinueWithMissingMods(unexpectedDeletions)
+			if ok {
+				logging.Infof("App: Disabling %d mods that are unexpectedly missing: %v", len(missingIDs), missingIDs)
+				a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
+				a.Reconcile()
+				a.Step()
+			}
 		} else {
-			a.view.ShowInfoDialog(
-				"Known Problematic Mod(s) Removed",
-				"The following mod(s), which were part of a known conflict set, have been detected as missing. This is expected. The search will now proceed with the updated mod list.",
-				sets.FormatSet(expectedDeletions).String(),
-				func() {
-					logging.Infof("App: Disabling %d mods that are expectedly missing: %v", len(missingIDs), missingIDs)
-					a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
-					a.Step()
-				},
-			)
+			a.view.ShowDialogInfoBisectionModsMissingExpected(expectedDeletions)
+			logging.Infof("App: Disabling %d mods that are expectedly missing: %v", len(missingIDs), missingIDs)
+			a.bisectSvc.StateManager().SetMissingBatch(missingIDs, true)
+			a.Reconcile()
+			a.Step()
 		}
 		return
 	}
@@ -287,7 +397,8 @@ func (a *App) handleStepError(err error) {
 	if errors.Is(err, bisect.ErrNeedsReconciliation) {
 		report := a.bisectSvc.ReconcileState()
 		if report.HasChanges {
-			a.showReconciliationReport(&report, a.Step)
+			a.showReconciliationReport(&report)
+			a.Step()
 		} else {
 			logging.Error("App: Reconciliation triggered by ErrNeedsReconciliation but reconciliation yielded no changes.")
 			a.Step()
@@ -297,64 +408,15 @@ func (a *App) handleStepError(err error) {
 
 	logging.Errorf("App: Step error: %v", err)
 
-	a.view.ShowErrorDialog("Bisection Error", "An error occurred and the next step could not be prepared.\nIf another program, like Minecraft, is currently acessing your mods, please close it.\n\nPlease check the application log for details.", nil, nil)
+	a.view.ShowDialogErrorBisectionPrepare(err)
 }
 
-func (a *App) showReconciliationReport(report *bisect.ActionReport, callback func()) {
+func (a *App) showReconciliationReport(report *bisect.ActionReport) {
 	if len(report.ModsSetUnresolvable) > 0 {
-		a.view.ShowInfoDialog(
-			"Disabled Mods",
-			"The following mods were automatically disabled due to unmet dependencies:",
-			sets.FormatSet(report.ModsSetUnresolvable).String(),
-			callback,
-		)
+		a.view.ShowDialogInfoBisectionUnresolvableModsDisabled(report.ModsSetUnresolvable)
 		return
 	}
-	if callback != nil {
-		logging.Info("App: Reconciliation report has no 'Unresolvable Mods' changes. This is odd. Calling callback directly.")
-		callback()
-	}
+	logging.Info("App: Reconciliation report has no 'Unresolvable Mods' changes. This is odd.")
 }
 
 func (a *App) GetLogger() *logging.Logger { return a.logger }
-
-func (a *App) GetViewModel() ui.BisectionViewModel {
-	vm := ui.BisectionViewModel{
-		IsReady:         false,
-		QuiltSupport:    a.cliArgs.QuiltSupport,
-		NeoForgeSupport: a.cliArgs.NeoForgeSupport,
-	}
-	if !a.IsBisectionReady() {
-		return vm
-	}
-
-	engine := a.bisectSvc.Engine()
-	enumState := a.bisectSvc.EnumerationState()
-	state := engine.GetCurrentState()
-	currentPlan, _ := engine.GetCurrentTestPlan()
-
-	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
-
-	vm.IsReady = true
-	vm.IsComplete = state.IsComplete
-	vm.IsVerificationStep = isVerification
-	vm.StepCount = engine.GetStepCount()
-	vm.Iteration = state.Iteration
-	vm.Round = state.Round
-	vm.EstimatedMaxTests = engine.GetEstimatedMaxTests()
-	vm.LastTestResult = state.LastTestResult
-	vm.AllConflictSets = enumState.FoundConflictSets
-	vm.CurrentConflictSet = state.ConflictSet
-	vm.LastFoundElement = state.LastFoundElement
-	vm.AllModIDs = state.AllModIDs
-	vm.CandidateSet = state.GetCandidateSet()
-	vm.ClearedSet = state.GetClearedSet()
-	vm.PendingAdditions = engine.GetPendingAdditions()
-	vm.CurrentTestPlan = currentPlan
-	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
-	vm.CanUndo = a.bisectSvc.Engine().UndoCount() > 0
-
-	return vm
-}
-
-func (a *App) GetStateManager() *mods.StateManager { return a.bisectSvc.StateManager() }

@@ -1,10 +1,13 @@
 package pages
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
@@ -51,7 +54,7 @@ func NewMainPage(app tui.TUIApp) *MainPage {
 	}
 	p.setupLayout()
 	p.SetInputCapture(p.inputHandler())
-	p.RefreshSearchState()
+	p.Update()
 	p.statusText.SetText("Mods loaded, ready to start bisection.")
 	return p
 }
@@ -69,7 +72,12 @@ func (p *MainPage) setupLayout() {
 		AddItem(p.overviewWidget, 1, 0, false)
 
 	// --- Action Buttons ---
-	p.stepButton = tview.NewButton("Start").SetSelectedFunc(p.app.Step)
+	p.stepButton = tview.NewButton("Start").SetSelectedFunc(func() {
+		go func() {
+			defer logging.HandlePanic()
+			p.app.GetBisectionController().Step()
+		}()
+	})
 	widgets.DefaultStyleButton(p.stepButton)
 	p.undoButton = tview.NewButton("Undo").SetSelectedFunc(p.confirmUndo)
 	widgets.DefaultStyleButton(p.undoButton)
@@ -144,7 +152,10 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 		case tcell.KeyRune:
 			switch event.Rune() {
 			case 's', 'S':
-				p.app.Step()
+				go func() {
+					defer logging.HandlePanic()
+					p.app.GetBisectionController().Step()
+				}()
 				return nil
 			case 'u', 'U':
 				p.confirmUndo()
@@ -154,7 +165,10 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 				return nil
 			case 'r', 'R':
 				p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to reset the search?", "", func() {
-					p.app.ResetSearch()
+					go func() {
+						defer logging.HandlePanic()
+						p.app.GetBisectionController().ResetSearch()
+					}()
 				}, nil)
 				return nil
 			}
@@ -175,11 +189,11 @@ func (p *MainPage) GetFocusablePrimitives() []tview.Primitive {
 
 // Add this new method to the MainPage struct to implement the PageActivator interface.
 func (p *MainPage) OnPageActivated() {
-	p.RefreshSearchState()
+	p.Update()
 }
 
-// RefreshSearchState is the main entry point for updating the page's content based on the latest state of the search process.
-func (p *MainPage) RefreshSearchState() {
+// Update is the main entry point for updating the page's content based on the latest state of the search process.
+func (p *MainPage) Update() {
 	vm := p.app.GetViewModel()
 
 	if !vm.IsReady {
@@ -253,26 +267,26 @@ func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (stat
 func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
 	modCount := len(vm.AllModIDs)
 
-	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), fmt.Sprintf("Candidates: %d / %d", len(vm.CandidateSet), modCount))
-	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), fmt.Sprintf("Problematic Mods (Current Round): %d", len(vm.CurrentConflictSet)))
-	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.ClearedSet), fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
+	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), vm.ModsInfo, fmt.Sprintf("Candidates: %d / %d", len(vm.CandidateSet), modCount))
+	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), vm.ModsInfo, fmt.Sprintf("Problematic Mods (Current Round): %d", len(vm.CurrentConflictSet)))
+	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.ClearedSet), vm.ModsInfo, fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
 }
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.
 func (p *MainPage) updateTestGroupTab(vm *ui.BisectionViewModel) {
 	if vm.CurrentTestPlan == nil {
-		p.updateList(p.testGroupList, p.testGroupTitle, nil, "Mods in Next Test Group: 0")
-		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, "Implicitly Included Dependencies: 0")
+		p.updateList(p.testGroupList, p.testGroupTitle, nil, vm.ModsInfo, "Mods in Next Test Group: 0")
+		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, vm.ModsInfo, "Implicitly Included Dependencies: 0")
 		return
 	}
 
 	testSet := vm.CurrentTestPlan.ModIDsToTest
-	p.updateList(p.testGroupList, p.testGroupTitle, sets.MakeSlice(testSet), fmt.Sprintf("Mods in Next Test Group: %d", len(testSet)))
+	p.updateList(p.testGroupList, p.testGroupTitle, sets.MakeSlice(testSet), vm.ModsInfo, fmt.Sprintf("Mods in Next Test Group: %d", len(testSet)))
 
 	// Calculate and display implicit dependencies.
-	effectiveSet, _ := p.app.GetStateManager().ResolveEffectiveSet(testSet)
+	effectiveSet := p.app.GetModStatusController().ResolveEffectiveSet(testSet)
 	implicitDeps := sets.Subtract(effectiveSet, testSet)
-	p.updateList(p.implicitDepsList, p.implicitDepsTitle, sets.MakeSlice(implicitDeps), fmt.Sprintf("Implicitly Included Dependencies: %d", len(implicitDeps)))
+	p.updateList(p.implicitDepsList, p.implicitDepsTitle, sets.MakeSlice(implicitDeps), vm.ModsInfo, fmt.Sprintf("Implicitly Included Dependencies: %d", len(implicitDeps)))
 }
 
 // updateOverviewWidget updates the visual overview bar from the ViewModel.
@@ -282,7 +296,7 @@ func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
 	var effectiveSet sets.Set
 	if vm.CurrentTestPlan != nil {
 		// Calculate the full effective set for the test.
-		effectiveSet, _ = p.app.GetStateManager().ResolveEffectiveSet(vm.CurrentTestPlan.ModIDsToTest)
+		effectiveSet = p.app.GetModStatusController().ResolveEffectiveSet(vm.CurrentTestPlan.ModIDsToTest)
 	}
 
 	candidates := sets.Set{}
@@ -295,9 +309,9 @@ func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
 }
 
 // updateList is a helper to populate a SearchableList and its title.
-func (p *MainPage) updateList(list *widgets.SearchableList, titleFrame *widgets.TitleFrame, mods []string, title string) {
+func (p *MainPage) updateList(list *widgets.SearchableList, titleFrame *widgets.TitleFrame, mods []string, modsInfo map[string]ui.ModViewModel, title string) {
 	if len(mods) > 0 {
-		list.SetItems(p.formatModList(mods))
+		list.SetItems(p.formatModList(mods, modsInfo))
 	} else {
 		list.SetItems([]string{"---"})
 	}
@@ -306,13 +320,11 @@ func (p *MainPage) updateList(list *widgets.SearchableList, titleFrame *widgets.
 }
 
 // formatModList formats a list of mod IDs into user-friendly strings.
-func (p *MainPage) formatModList(modIDs []string) []string {
-	allMods := p.app.GetStateManager().GetAllMods()
-
+func (p *MainPage) formatModList(modIDs []string, modsInfo map[string]ui.ModViewModel) []string {
 	formatted := make([]string, len(modIDs))
 	for i, id := range modIDs {
-		if mod, ok := allMods[id]; ok {
-			formatted[i] = fmt.Sprintf("%s [gray](%s)[-:-:-]", id, mod.FriendlyName())
+		if mod, ok := modsInfo[id]; ok {
+			formatted[i] = fmt.Sprintf("%s [gray](%s)[-:-:-]", id, mod.Name)
 		} else {
 			formatted[i] = id
 		}
@@ -322,6 +334,18 @@ func (p *MainPage) formatModList(modIDs []string) []string {
 
 func (p *MainPage) confirmUndo() {
 	p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", "", func() {
-		p.app.Undo()
+		go func() {
+			defer logging.HandlePanic()
+			err := p.app.GetBisectionController().Undo()
+			if err != nil {
+				p.app.ExecuteAndDraw(func() {
+					if errors.Is(err, bisect.ErrUndoStackEmpty) {
+						p.app.Dialogs().ShowInfoDialog("Cannot Undo", "Nothing left to undo.", "", nil)
+					} else {
+						p.app.Dialogs().ShowErrorDialog("Cannot Undo", "The undo operation failed.", err, nil)
+					}
+				})
+			}
+		}()
 	}, nil)
 }

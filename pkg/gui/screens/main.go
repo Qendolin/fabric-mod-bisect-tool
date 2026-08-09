@@ -1,321 +1,342 @@
 package screens
 
 import (
+	"errors"
 	"fmt"
+	"image"
+	"image/color"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
-
+	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
-	exlayout "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/layout"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
+	exwidgets "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 )
 
+var colorWhite = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+
 type MainScreen struct {
-	app     App
-	content fyne.CanvasObject
+	app App
 
-	// Normal state widgets
-	statusLbl  *widget.Label
-	detailsLbl *widget.Label
-	btnStep    *widget.Button
-	btnUndo    *widget.Button
-	normalView *fyne.Container
+	candidatesList exwidgets.ModList
+	activeModsList exwidgets.ModList
 
-	// Normal view dashboard components
-	progressBar     *widget.ProgressBar
-	candidateHeader *widget.Label
-	candidateList   *widget.List
-	candidatesData  []string
+	stepClick widget.Clickable
+	undoClick widget.Clickable
 
-	// Test state components (Replaced custom dialog modal)
-	testView      *fyne.Container
-	testHeader    *widget.Label
-	testDesc      *widget.RichText // Upgraded to RichText
-	btnSuccess    *widget.Button
-	btnFailure    *widget.Button
-	btnCancel     *widget.Button
-	testModHeader *widget.Label
-	testModList   *widget.List
-	testModsData  []string
+	successClick widget.Clickable
+	failureClick widget.Clickable
+	cancelClick  widget.Clickable
+
+	isTestPromptActive bool
 }
 
 func NewMainScreen(app App) *MainScreen {
 	s := &MainScreen{app: app}
-	s.build()
+	s.candidatesList = *exwidgets.NewModList()
+	s.activeModsList = *exwidgets.NewModList()
 	return s
 }
 
-func (s *MainScreen) build() {
-	// ==========================================
-	// 1. Normal View Setup (Idle Between Tests)
-	// ==========================================
-	s.statusLbl = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	s.detailsLbl = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{})
-	s.detailsLbl.Wrapping = fyne.TextWrapWord
-
-	s.progressBar = widget.NewProgressBar()
-	s.progressBar.TextFormatter = func() string {
-		return fmt.Sprintf("%d / %d", int(s.progressBar.Value), int(s.progressBar.Max))
-	}
-
-	s.btnStep = widget.NewButton("▶  Next Step", func() {
-		s.app.Step()
-	})
-	s.btnStep.Importance = widget.HighImportance
-
-	s.btnUndo = widget.NewButton("↩  Undo", func() {
-		s.app.Undo()
-		s.UpdateState()
-	})
-
-	btnFlex := exlayout.NewFlexLayout(true, 10)
-	btnFlex.Set(s.btnUndo, 1, 0)
-	btnFlex.Set(s.btnStep, 1.5, 0)
-	btnContainer := container.New(btnFlex, s.btnUndo, s.btnStep)
-
-	leftFlex := exlayout.NewFlexLayout(false, 15)
-	leftFlex.Set(s.statusLbl, 0, 0)
-	leftFlex.Set(s.detailsLbl, 1, 0) // Let details expand to push content
-	leftFlex.Set(s.progressBar, 0, 0)
-	leftFlex.Set(btnContainer, 0, 0)
-
-	leftContainer := container.New(leftFlex, s.statusLbl, s.detailsLbl, s.progressBar, btnContainer)
-
-	s.candidateHeader = widget.NewLabelWithStyle("Remaining Candidates", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	s.candidatesData = []string{}
-	s.candidateList = widget.NewList(
-		func() int { return len(s.candidatesData) },
-		func() fyne.CanvasObject {
-			item := widget.NewLabel("")
-			item.Selectable = true
-			item.Truncation = fyne.TextTruncateEllipsis
-			return item
-		},
-		func(id widget.ListItemID, item fyne.CanvasObject) {
-			item.(*widget.Label).SetText(s.candidatesData[id])
-		},
-	)
-
-	rightFlex := exlayout.NewFlexLayout(false, 10)
-	rightFlex.Set(s.candidateHeader, 0, 0)
-	rightFlex.Set(s.candidateList, 1, 0)
-
-	rightContainer := container.New(rightFlex, s.candidateHeader, s.candidateList)
-
-	// Consistent 50/50 screen split
-	grid := exlayout.NewGridLayout(
-		[]exlayout.GridTrack{{Fraction: 1}},
-		[]exlayout.GridTrack{{Fraction: 1}, {Fixed: 320}}, // Left side fills screen, List is fixed to 320px
-		25,
-	)
-	grid.Set(leftContainer, 0, 0)
-	grid.Set(rightContainer, 0, 1)
-
-	s.normalView = container.New(grid, leftContainer, rightContainer)
-
-	// ==========================================
-	// 2. Active Test View Setup (Inline Screen)
-	// ==========================================
-	s.testHeader = widget.NewLabelWithStyle("Test Protocol", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-
-	// Professional RichText instruction renderer [10]
-	s.testDesc = widget.NewRichText()
-	s.testDesc.Wrapping = fyne.TextWrapWord
-
-	// Neutral styled buttons with clear colored icons [2, 10]
-	s.btnSuccess = widget.NewButtonWithIcon("Success", theme.ConfirmIcon(), nil)
-	s.btnSuccess.Importance = widget.SuccessImportance
-	s.btnFailure = widget.NewButtonWithIcon("Failure", theme.CancelIcon(), nil)
-	s.btnFailure.Importance = widget.DangerImportance
-	s.btnCancel = widget.NewButton("Cancel Test", nil)
-
-	// Horizontal action row for Success/Failure
-	actionFlex := exlayout.NewFlexLayout(true, 10)
-	actionFlex.Set(s.btnSuccess, 1, 0)
-	actionFlex.Set(s.btnFailure, 1, 0)
-	actionRow := container.New(actionFlex, s.btnSuccess, s.btnFailure)
-
-	// Bottom full-width Cancel row
-	cancelFlex := exlayout.NewFlexLayout(true, 0)
-	cancelFlex.Set(s.btnCancel, 1, 0)
-	cancelRow := container.New(cancelFlex, s.btnCancel)
-
-	testLeftFlex := exlayout.NewFlexLayout(false, 15)
-	testLeftFlex.Set(s.testHeader, 0, 0)
-	testLeftFlex.Set(widget.NewSeparator(), 0, 0)
-	testLeftFlex.Set(s.testDesc, 1, 0) // Grow: 1 expands text layout and pushes buttons downwards [10]
-	testLeftFlex.Set(actionRow, 0, 0)
-	testLeftFlex.Set(cancelRow, 0, 0)
-
-	testLeftContainer := container.New(testLeftFlex,
-		s.testHeader,
-		widget.NewSeparator(),
-		s.testDesc,
-		actionRow,
-		cancelRow,
-	)
-
-	s.testModHeader = widget.NewLabelWithStyle("Active Mod Set", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	s.testModsData = []string{}
-	s.testModList = widget.NewList(
-		func() int { return len(s.testModsData) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(id widget.ListItemID, item fyne.CanvasObject) {
-			item.(*widget.Label).SetText(s.testModsData[id])
-		},
-	)
-
-	testRightFlex := exlayout.NewFlexLayout(false, 10)
-	testRightFlex.Set(s.testModHeader, 0, 0)
-	testRightFlex.Set(s.testModList, 1, 0)
-
-	testRightContainer := container.New(testRightFlex, s.testModHeader, s.testModList)
-
-	testGrid := exlayout.NewGridLayout(
-		[]exlayout.GridTrack{{Fraction: 1}},
-		[]exlayout.GridTrack{{Fraction: 1}, {Fixed: 320}}, // Left side fills screen, List is fixed to 320px
-		25,
-	)
-	testGrid.Set(testLeftContainer, 0, 0)
-	testGrid.Set(testRightContainer, 0, 1)
-
-	s.testView = container.New(testGrid, testLeftContainer, testRightContainer)
-	s.testView.Hide()
-
-	s.content = container.NewStack(s.normalView, s.testView)
-}
-
-func (s *MainScreen) UpdateState() {
-	vm := s.app.GetViewModel()
-	if !vm.IsReady {
-		s.statusLbl.SetText("Initializing...")
-		s.detailsLbl.SetText("")
-		s.btnStep.Disable()
-		s.btnUndo.Disable()
-		s.progressBar.Max = 1.0
-		s.progressBar.SetValue(0)
-		s.candidatesData = []string{}
-		s.candidateList.Refresh()
-		s.candidateHeader.SetText("Remaining Candidates (0)")
-		return
-	}
-
-	if vm.CanUndo {
-		s.btnUndo.Enable()
-	} else {
-		s.btnUndo.Disable()
-	}
-
-	if vm.IsVerificationStep {
-		conflictsSlice := sets.MakeSlice(vm.CurrentConflictSet)
-		s.candidatesData = conflictsSlice
-		s.candidateList.Refresh()
-		s.candidateHeader.SetText("Conflict Set")
-		s.progressBar.Max = float64(vm.StepCount + 1)
-		s.progressBar.SetValue(float64(vm.StepCount))
-
-		s.btnStep.Enable()
-		s.btnStep.SetText("▶  Verification Step")
-		s.statusLbl.SetText("Verifying final set...")
-		s.detailsLbl.SetText("The next test verifies that the found set of mods is the cause of the issue. If the issue DOES NOT persist, then a new round of tests is started to find the other problematic mods.")
-		return
-	}
-
-	candidatesSlice := sets.MakeSlice(vm.CandidateSet)
-	s.candidatesData = candidatesSlice
-	s.candidateList.Refresh()
-	s.candidateHeader.SetText(fmt.Sprintf("Remaining Candidates (%d)", len(candidatesSlice)))
-
-	if vm.EstimatedMaxTests > 0 {
-		progress := float64(vm.StepCount)
-		s.progressBar.Max = float64(vm.EstimatedMaxTests)
-		if progress > s.progressBar.Max {
-			progress = s.progressBar.Max
-		}
-		s.progressBar.SetValue(progress)
-	} else {
-		s.progressBar.Max = 1.0
-		s.progressBar.SetValue(0)
-	}
-
-	if vm.IsComplete {
-		s.statusLbl.SetText("Bisection Complete")
-		s.detailsLbl.SetText("The results screen will show what was found.")
-		s.btnStep.Disable()
-		s.app.SwitchToResultPage()
-	} else {
-		if vm.StepCount == 0 {
-			s.btnStep.SetText("▶  Start Bisection")
-			s.statusLbl.SetText("Ready to begin")
-
-			s.detailsLbl.SetText("This tool uses binary search to isolate problematic mods.\n" +
-				"Each test halves the candidate set, finding conflicts efficiently.\n" +
-				"Be ready to test the game when prompted.")
-		} else {
-			s.btnStep.SetText("▶  Next Step")
-			s.statusLbl.SetText(fmt.Sprintf("Round %d · Iteration %d", vm.Round, vm.Iteration))
-			s.detailsLbl.SetText(fmt.Sprintf("Step %d of ~%d estimated tests.", vm.StepCount, vm.EstimatedMaxTests))
-		}
-		s.btnStep.Enable()
-	}
-}
-
-func (s *MainScreen) ShowTestPrompt(isVerification bool, onSuccess, onFailure, onCancel func()) {
-	var markdown string
-
-	if isVerification {
-		s.testHeader.SetText("Verification Test")
-		markdown = "Start Minecraft with the current active mod set and verify whether your issue is **still present**.\n\n" +
-			"*   **Failure** — The issue is **still there** (confirms the found conflict set is correct).\n" +
-			"*   **Success** — The issue is **gone** (suggests the set is incomplete)."
-	} else {
-		s.testHeader.SetText("Bisection Test")
-		markdown = "Start Minecraft with the current active mod set and verify whether your issue is **resolved**.\n\n" +
-			"*   **Success** — The game runs fine and the issue is **gone**.\n" +
-			"*   **Failure** — The issue is **still present** in the game."
-	}
-
-	// Update markdown instructions
-	s.testDesc.ParseMarkdown(markdown)
-
-	// Populate mod list data [11]
-	vm := s.app.GetViewModel()
-	if vm.CurrentTestPlan != nil {
-		testSlice := sets.MakeSlice(vm.CurrentTestPlan.ModIDsToTest)
-		s.testModsData = testSlice
-		s.testModList.Refresh()
-		s.testModHeader.SetText(fmt.Sprintf("Active Mod Set (%d mods loaded)", len(testSlice)))
-	} else {
-		s.testModsData = []string{}
-		s.testModList.Refresh()
-		s.testModHeader.SetText("Active Mod Set (0)")
-	}
-
-	s.btnSuccess.OnTapped = func() {
-		s.HideTestPrompt()
-		onSuccess()
-	}
-	s.btnFailure.OnTapped = func() {
-		s.HideTestPrompt()
-		onFailure()
-	}
-	s.btnCancel.OnTapped = func() {
-		s.HideTestPrompt()
-		onCancel()
-	}
-
-	s.normalView.Hide()
-	s.testView.Show()
+func (s *MainScreen) ShowTestPrompt() {
+	s.isTestPromptActive = true
 }
 
 func (s *MainScreen) HideTestPrompt() {
-	s.testView.Hide()
-	s.normalView.Show()
-	s.UpdateState()
+	s.isTestPromptActive = false
 }
 
-func (s *MainScreen) GetContent() fyne.CanvasObject {
-	return s.content
+func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	vm := s.app.GetViewModel()
+
+	if s.undoClick.Clicked(gtx) && vm.CanUndo {
+		go func() {
+			defer logging.HandlePanic()
+			err := s.app.GetBisectionController().Undo()
+			if err != nil {
+				if errors.Is(err, bisect.ErrUndoStackEmpty) {
+					s.app.ShowInfoDialog("Cannot Undo", "Nothing left to undo.", "")
+				} else {
+					s.app.ShowErrorDialog("Cannot Undo", "The undo operation failed.", err)
+				}
+			}
+		}()
+	}
+	if s.stepClick.Clicked(gtx) && vm.IsReady && !vm.IsComplete {
+		go func() {
+			defer logging.HandlePanic()
+			s.app.GetBisectionController().Step()
+		}()
+	}
+	if s.successClick.Clicked(gtx) && s.isTestPromptActive {
+		s.isTestPromptActive = false
+		s.app.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
+	}
+	if s.failureClick.Clicked(gtx) && s.isTestPromptActive {
+		s.isTestPromptActive = false
+		s.app.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
+	}
+	if s.cancelClick.Clicked(gtx) && s.isTestPromptActive {
+		s.isTestPromptActive = false
+		s.app.GetBisectionController().CancelTest()
+	}
+
+	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if s.isTestPromptActive {
+			return s.layoutTestPromptView(gtx, th, &vm)
+		}
+		return s.layoutNormalView(gtx, th, &vm)
+	})
+}
+
+// ── Normal view ───────────────────────────────────────────────────────────────
+
+func (s *MainScreen) layoutNormalView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
+	title, desc, stepBtnText, progress := normalViewContent(vm)
+
+	var candidates []string
+	var listHeader string
+	if vm.IsVerificationStep {
+		listHeader = "Conflict Set"
+		candidates = sets.MakeSlice(vm.CurrentConflictSet)
+	} else {
+		candidates = sets.MakeSlice(vm.CandidateSet)
+		listHeader = fmt.Sprintf("Remaining Candidates (%d)", len(candidates))
+	}
+
+	return s.layoutTwoPanel(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutNormalLeft(gtx, th, vm, title, desc, stepBtnText, progress)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutListPanel(gtx, th, &s.candidatesList, listHeader, candidates)
+		},
+	)
+}
+
+// normalViewContent derives all display strings and progress from the view model.
+// Kept as a plain function (no receiver) since it is pure data transformation.
+func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText string, progress float32) {
+	switch {
+	case !vm.IsReady:
+		return "Initializing...", "", "▶  Start Bisection", 0
+
+	case vm.IsVerificationStep:
+		return "Verifying final set...",
+			"The next test verifies that the found set of mods is the cause of the issue. " +
+				"If the issue DOES NOT persist, a new round of tests is started to find other problematic mods.",
+			"▶  Verification Step",
+			float32(vm.StepCount) / float32(vm.StepCount+1)
+
+	case vm.StepCount == 0:
+		return "Ready to begin",
+			"This tool uses binary search to isolate problematic mods.\n" +
+				"Each test halves the candidate set, finding conflicts efficiently.\n" +
+				"Close the game if it is currently open!\n" +
+				"Be ready to start the game when prompted.",
+			"▶  Start Bisection",
+			0
+
+	default:
+		var prog float32
+		if vm.EstimatedMaxTests > 0 {
+			prog = float32(vm.StepCount) / float32(vm.EstimatedMaxTests)
+			if prog > 1.0 {
+				prog = 1.0
+			}
+		}
+		return fmt.Sprintf("Round %d · Iteration %d", vm.Round, vm.Iteration),
+			fmt.Sprintf("Step %d of ~%d estimated tests.", vm.StepCount, vm.EstimatedMaxTests),
+			"▶  Next Step",
+			prog
+	}
+}
+
+func (s *MainScreen) layoutNormalLeft(
+	gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel,
+	title, desc, stepBtnText string, progress float32,
+) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.H6(th, title)
+			lbl.Color = theme.PrimaryColor
+			lbl.Font.Weight = font.Bold
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(s.layoutDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, desc)
+			lbl.Color = theme.FgColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			pb := material.ProgressBar(th, progress)
+			pb.Color = theme.PrimaryColor
+			pb.TrackColor = theme.BorderColor
+			return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, pb.Layout)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return s.layoutUndoStepButtons(gtx, th, vm, stepBtnText)
+		}),
+	)
+}
+
+func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel, stepText string) layout.Dimensions {
+	undoBtn := material.Button(th, &s.undoClick, "↩  Undo")
+	if vm.CanUndo {
+		undoBtn.Background = theme.CardBgColor
+		undoBtn.Color = theme.FgColor
+	} else {
+		undoBtn.Background = theme.BorderColor
+		undoBtn.Color = theme.TextMutedColor
+	}
+
+	stepBtn := material.Button(th, &s.stepClick, stepText)
+	if vm.IsReady && !vm.IsComplete {
+		stepBtn.Background = theme.PrimaryColor
+		stepBtn.Color = colorWhite
+	} else {
+		stepBtn.Background = theme.BorderColor
+		stepBtn.Color = theme.TextMutedColor
+	}
+
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, undoBtn.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Flexed(1.5, stepBtn.Layout),
+	)
+}
+
+// ── Test prompt view ──────────────────────────────────────────────────────────
+
+func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
+	var header, desc string
+	if vm.IsVerificationStep {
+		header = "Verification Test"
+		desc = "Start Minecraft with the current active mod set and verify whether your issue is still present.\n\n" +
+			"✗ Broken\n  The issue is still there (confirms the found conflict set is correct).\n\n" +
+			"✓ Works\n  The issue is gone (suggests the set is incomplete)."
+	} else {
+		header = "Bisection Test"
+		desc = "Start Minecraft with the current active mod set and verify whether your issue is resolved.\n\n" +
+			"✓ Works\n  The game runs fine and the issue is gone.\n\n" +
+			"✗ Broken\n  The issue is still present in the game."
+	}
+
+	var activeMods []string
+	if vm.CurrentTestPlan != nil {
+		activeMods = sets.MakeSlice(vm.CurrentTestPlan.ModIDsToTest)
+	}
+
+	return s.layoutTwoPanel(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutTestPromptLeft(gtx, th, header, desc)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return s.layoutListPanel(gtx, th, &s.activeModsList,
+				fmt.Sprintf("Active Mod Set (%d mods active)", len(activeMods)),
+				activeMods,
+			)
+		},
+	)
+}
+
+func (s *MainScreen) layoutTestPromptLeft(gtx layout.Context, th *material.Theme, header, desc string) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.H6(th, header)
+			lbl.Color = theme.PrimaryColor
+			lbl.Font.Weight = font.Bold
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(s.layoutDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, desc)
+			lbl.Color = theme.FgColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return s.layoutSuccessFailureButtons(gtx, th)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return s.layoutCancelButton(gtx, th)
+		}),
+	)
+}
+
+func (s *MainScreen) layoutSuccessFailureButtons(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	successBtn := material.Button(th, &s.successClick, "✓ Works")
+	successBtn.Background = theme.SuccessColor
+	successBtn.Color = colorWhite
+
+	failureBtn := material.Button(th, &s.failureClick, "✗ Broken")
+	failureBtn.Background = theme.DangerColor
+	failureBtn.Color = colorWhite
+
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, successBtn.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Flexed(1, failureBtn.Layout),
+	)
+}
+
+func (s *MainScreen) layoutCancelButton(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	btn := material.Button(th, &s.cancelClick, "Cancel Test")
+	btn.Background = theme.CardBgColor
+	btn.Color = theme.FgColor
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, btn.Layout),
+	)
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+// layoutTwoPanel renders a flexible left panel beside a fixed 320dp right panel.
+func (s *MainScreen) layoutTwoPanel(gtx layout.Context, left, right layout.Widget) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Flexed(1, left),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(24)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Dp(320)
+			gtx.Constraints.Max.X = gtx.Dp(320)
+			return right(gtx)
+		}),
+	)
+}
+
+// layoutListPanel renders a bold header label above a ModList.
+func (s *MainScreen) layoutListPanel(gtx layout.Context, th *material.Theme, list *exwidgets.ModList, header string, items []string) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, header)
+			lbl.Font.Weight = font.Bold
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(10)}.Layout(gtx, lbl.Layout)
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return list.Layout(gtx, th, items)
+		}),
+	)
+}
+
+// layoutDivider draws a full-width 1dp horizontal separator line.
+// Its signature matches layout.Widget so it can be passed directly to layout.Rigid.
+func (s *MainScreen) layoutDivider(gtx layout.Context) layout.Dimensions {
+	sz := image.Point{X: gtx.Constraints.Max.X, Y: gtx.Dp(1)}
+	paint.FillShape(gtx.Ops, theme.BorderColor, clip.Rect{Max: sz}.Op())
+	return layout.Dimensions{Size: sz}
 }

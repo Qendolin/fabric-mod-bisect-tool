@@ -31,9 +31,33 @@ type resolutionSession struct {
 	resolutionPath   map[string]ResolutionInfo
 	dfsStack         map[string]bool
 	cachedProviders  map[string]*ProviderInfo
-	unresolvableDeps map[string]bool
+	unresolvableDeps map[string]UnresolvableDependency
 	resolutionFailed bool
 	failureReason    string
+}
+
+// UnresolvableDependency describes a dependency that could not be satisfied
+// during a resolution attempt.
+type UnresolvableDependency struct {
+	DepID           string
+	RequiringModID  string
+	Predicates      []*version.VersionPredicate
+}
+
+// String formats the dependency for logging.
+func (d UnresolvableDependency) String() string {
+	return fmt.Sprintf("Could not resolve dependency '%s %s' for mod '%s': no valid providers could be activated.",
+		d.DepID, formatPredicates(d.Predicates), d.RequiringModID)
+}
+
+// ResolutionResult bundles the outcome of a single resolution attempt.
+type ResolutionResult struct {
+	EffectiveSet sets.Set
+	Path         ResolutionPath
+	// UnresolvableDeps lists every dependency that could not be satisfied
+	// during the attempt, deduplicated by dependency ID and sorted for
+	// deterministic output.
+	UnresolvableDeps []UnresolvableDependency
 }
 
 // NewDependencyResolver creates a new DependencyResolver service.
@@ -45,7 +69,7 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 }
 
 // ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
-func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) (sets.Set, ResolutionPath) {
+func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) ResolutionResult {
 	startTime := time.Now()
 	logging.Infof("Resolver: Resolving effective set for %d mods: %v", len(targetSet), sets.FormatSet(targetSet))
 
@@ -57,7 +81,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 		resolutionPath:     make(map[string]ResolutionInfo),
 		dfsStack:           make(map[string]bool),
 		cachedProviders:    make(map[string]*ProviderInfo),
-		unresolvableDeps:   make(map[string]bool),
+		unresolvableDeps:   make(map[string]UnresolvableDependency),
 	}
 
 	initialActivationSet := sets.Copy(targetSet)
@@ -82,14 +106,14 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 	duration := time.Since(startTime)
 	if s.resolutionFailed {
 		logging.Warnf("Resolver: Resolution failed in %v. Reason: %s", duration, s.failureReason)
-		return make(sets.Set), nil
+		return ResolutionResult{EffectiveSet: make(sets.Set), UnresolvableDeps: s.collectUnresolvableDeps()}
 	}
 
 	if err := s.validateBreaks(); err != nil {
 		s.resolutionFailed = true
 		s.failureReason = err.Error()
 		logging.Warnf("Resolver: Resolution failed 'breaks' validation in %v. Reason: %s", duration, s.failureReason)
-		return make(sets.Set), nil
+		return ResolutionResult{EffectiveSet: make(sets.Set), UnresolvableDeps: s.collectUnresolvableDeps()}
 	}
 
 	finalSet := make(sets.Set, len(s.effectiveSet))
@@ -101,7 +125,27 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 	sort.Strings(effectiveIDs)
 	logging.Infof("Resolver: Resolution complete in %v. Effective set (%d mods): %v", duration, len(effectiveIDs), effectiveIDs)
 
-	return finalSet, s.collectResolutionPath()
+	return ResolutionResult{
+		EffectiveSet:     finalSet,
+		Path:             s.collectResolutionPath(),
+		UnresolvableDeps: s.collectUnresolvableDeps(),
+	}
+}
+
+// collectUnresolvableDeps returns the recorded unresolvable dependencies,
+// sorted by dependency ID for deterministic output.
+func (s *resolutionSession) collectUnresolvableDeps() []UnresolvableDependency {
+	depIDs := make([]string, 0, len(s.unresolvableDeps))
+	for depID := range s.unresolvableDeps {
+		depIDs = append(depIDs, depID)
+	}
+	sort.Strings(depIDs)
+
+	deps := make([]UnresolvableDependency, 0, len(depIDs))
+	for _, depID := range depIDs {
+		deps = append(deps, s.unresolvableDeps[depID])
+	}
+	return deps
 }
 
 // ensureModActive is the main recursive function. It attempts to activate a mod and its dependencies.
@@ -167,19 +211,17 @@ func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDe
 
 // resolveDependency finds a valid provider for a dependency and activates it. This is the heart of the backtracking logic.
 func (s *resolutionSession) resolveDependency(depID string, predicates []*version.VersionPredicate, requiringModID string) bool {
-	if s.unresolvableDeps[depID] {
+	if _, ok := s.unresolvableDeps[depID]; ok {
 		return false
 	}
 
 	if cachedProvider, isCached := s.cachedProviders[depID]; isCached {
-		for _, p := range predicates {
-			if !p.Test(cachedProvider.VersionOfProvidedItem) {
-				s.resolutionFailed = true
-				s.failureReason = fmt.Sprintf("dependency conflict for '%s'. Mod '%s' requires '%s', but mod '%s' (v%s) was already chosen.",
-					depID, requiringModID, p, cachedProvider.TopLevelModID, cachedProvider.VersionOfProvidedItem)
-				logging.Warn("Resolver: " + s.failureReason)
-				return false
-			}
+		if !checkAnyPredicatesSatisfied(predicates, cachedProvider.VersionOfProvidedItem) {
+			s.resolutionFailed = true
+			s.failureReason = fmt.Sprintf("dependency conflict for '%s'. Mod '%s' requires '%s', but mod '%s' (v%s) was already chosen.",
+				depID, requiringModID, formatPredicates(predicates), cachedProvider.TopLevelModID, cachedProvider.VersionOfProvidedItem)
+			logging.Warn("Resolver: " + s.failureReason)
+			return false
 		}
 		// The cached provider is compatible, ensure it's active. This will handle cycles correctly.
 		return s.ensureModActive(cachedProvider.TopLevelModID, requiringModID, "Dependency", depID)
@@ -212,13 +254,15 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 		s.restoreState(originalState)
 	}
 
-	s.unresolvableDeps[depID] = true
+	s.unresolvableDeps[depID] = UnresolvableDependency{
+		DepID:           depID,
+		RequiringModID:  requiringModID,
+		Predicates:      predicates,
+	}
 	// Only set the failure reason if one hasn't already been set by a deeper, more specific error.
 	if !s.resolutionFailed {
 		s.failureReason = fmt.Sprintf("failed to resolve dependency '%s %s' for mod '%s'", depID, predicateStr, requiringModID)
 	}
-	// TODO: This error should be logged at a higher level. Doing it here causes the same issue to be reported multiple times
-	logging.Errorf("Resolver: Could not resolve dependency '%s %s' for mod '%s': no valid providers could be activated.", depID, predicateStr, requiringModID)
 	return false
 }
 
@@ -238,14 +282,7 @@ func (s *resolutionSession) findBestProviders(depID string, predicates []*versio
 			continue
 		}
 
-		versionIsSatisfactory := true
-		for _, p := range predicates {
-			if !p.Test(candidate.VersionOfProvidedItem) {
-				versionIsSatisfactory = false
-				break
-			}
-		}
-		if !versionIsSatisfactory {
+		if !checkAnyPredicatesSatisfied(predicates, candidate.VersionOfProvidedItem) {
 			continue
 		}
 
@@ -478,7 +515,7 @@ func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates
 				if providers, ok := dr.potentialProviders[depID]; ok {
 					for _, p := range providers {
 						// Check if this provider actually satisfied the version requirements
-						if checkAllPredicatesSatisfied(predicates, p.VersionOfProvidedItem) {
+						if checkAnyPredicatesSatisfied(predicates, p.VersionOfProvidedItem) {
 							// If this provider was removed because it is unresolvable, inherit its root causes
 							if causes, isUnresolvable := rootCauses[p.TopLevelModID]; isUnresolvable {
 								for cause := range causes {
@@ -611,7 +648,7 @@ func (dr *DependencyResolver) calculateDirectlyUnresolvable(availableMods sets.S
 }
 
 // findValidProviderInSet searches for at least one provider that satisfies the dependency,
-// is available in the given set, and matches all version predicates.
+// is available in the given set, and matches at least one version predicate.
 func (dr *DependencyResolver) findValidProviderInSet(depID string, predicates []*version.VersionPredicate, availableMods sets.Set) bool {
 	providerCandidates, found := dr.potentialProviders[depID]
 	if !found {
@@ -624,8 +661,8 @@ func (dr *DependencyResolver) findValidProviderInSet(depID string, predicates []
 			continue
 		}
 
-		// Condition 2: The provider's version must satisfy all predicates for this dependency.
-		if checkAllPredicatesSatisfied(predicates, provider.VersionOfProvidedItem) {
+		// Condition 2: The provider's version must satisfy at least one predicate for this dependency.
+		if checkAnyPredicatesSatisfied(predicates, provider.VersionOfProvidedItem) {
 			return true // Found a valid provider.
 		}
 	}
@@ -634,13 +671,14 @@ func (dr *DependencyResolver) findValidProviderInSet(depID string, predicates []
 	return false
 }
 
-// checkAllPredicatesSatisfied is a helper that returns true only if the version
-// satisfies every predicate in the slice.
-func checkAllPredicatesSatisfied(predicates []*version.VersionPredicate, v version.Version) bool {
+// checkAnyPredicatesSatisfied returns true if the version satisfies at least
+// one predicate in the slice. The predicates in a VersionRanges slice are ORed
+// together (see VersionRanges).
+func checkAnyPredicatesSatisfied(predicates []*version.VersionPredicate, v version.Version) bool {
 	for _, p := range predicates {
-		if !p.Test(v) {
-			return false // Early exit on first failure.
+		if p.Test(v) {
+			return true // At least one predicate was satisfied.
 		}
 	}
-	return true // All predicates were satisfied.
+	return false
 }

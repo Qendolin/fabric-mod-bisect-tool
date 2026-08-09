@@ -31,7 +31,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			break
 		}
 
-		effectiveSet, _ := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest)
+		effectiveSet := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest).EffectiveSet
 
 		allProvidedIDsByEffectiveSet := sets.Copy(effectiveSet)
 		for modID := range effectiveSet {
@@ -42,7 +42,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			}
 		}
 
-		// UPDATED: A test fails if *any* of the problematic sets are fully satisfied.
+		// A test fails if *any* of the problematic sets are fully satisfied.
 		isFailure := false
 		for _, pSet := range problematicSets {
 			if len(pSet) > 0 && len(sets.Subtract(pSet, allProvidedIDsByEffectiveSet)) == 0 {
@@ -170,14 +170,15 @@ func TestBisectService_Integration(t *testing.T) {
 			setupDummyMods(t, modsDir, tc.modSpecs)
 			defer os.RemoveAll(modsDir)
 
-			loader := mods.ModLoader{}
+			adapter := mods.FileAdapter{BaseDirectory: modsDir}
+			loader := mods.ModLoader{Adapter: &adapter}
 			allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
 			}
 
 			stateMgr := mods.NewStateManager(allMods, providers)
-			activator := mods.NewModActivator(modsDir, allMods)
+			activator := mods.NewModActivator(&adapter, allMods)
 
 			if tc.stateManagerSetup != nil {
 				tc.stateManagerSetup(stateMgr)
@@ -227,7 +228,8 @@ func TestBisectService_Enumeration(t *testing.T) {
 	setupDummyMods(t, modsDir, baseModSpecs)
 	defer os.RemoveAll(modsDir)
 
-	loader := mods.ModLoader{}
+	adapter := mods.FileAdapter{BaseDirectory: modsDir}
+	loader := mods.ModLoader{Adapter: &adapter}
 	allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 	if err != nil {
 		t.Fatalf("LoadMods failed: %v", err)
@@ -235,7 +237,7 @@ func TestBisectService_Enumeration(t *testing.T) {
 
 	// Initialize the service. NewService implicitly calls ResetSearch.
 	stateMgr := mods.NewStateManager(allMods, providers)
-	activator := mods.NewModActivator(modsDir, allMods)
+	activator := mods.NewModActivator(&adapter, allMods)
 	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {
 		t.Fatalf("NewService failed: %v", err)

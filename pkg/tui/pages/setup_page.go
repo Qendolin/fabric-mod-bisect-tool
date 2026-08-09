@@ -6,7 +6,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
@@ -58,14 +57,14 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 	})
 
 	p.quiltCheckbox = tview.NewCheckbox().SetLabel("Quilt Support: ")
-	p.quiltCheckbox.SetChecked(vm.QuiltSupport).
+	p.quiltCheckbox.SetChecked(vm.ForceQuiltSupport).
 		SetCheckedString("[green]Yes[-]").
 		SetUncheckedString("[red]No[-]").
 		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
 	p.neoForgeCheckbox = tview.NewCheckbox().SetLabel("NeoForge Support: ")
-	p.neoForgeCheckbox.SetChecked(vm.NeoForgeSupport).
+	p.neoForgeCheckbox.SetChecked(vm.ForceNeoForgeSupport).
 		SetCheckedString("[green]Yes[-]").
 		SetUncheckedString("[red]No[-]").
 		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
@@ -87,10 +86,7 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 	widgets.DefaultStyleButton(p.loadButton)
 
 	p.quitButton = tview.NewButton("Quit").SetSelectedFunc(func() {
-		go func() {
-			defer logging.HandlePanic()
-			app.QueueUpdateDraw(func() { app.Dialogs().ShowQuitDialog() })
-		}()
+		app.ExecuteAndDraw(func() { app.Dialogs().ShowQuitDialog() })
 	})
 	widgets.DefaultStyleButton(p.quitButton)
 
@@ -174,3 +170,6 @@ func (p *SetupPage) GetFocusablePrimitives() []tview.Primitive {
 		p.quitButton,
 	}
 }
+
+// Update implements the Page interface.
+func (p *SetupPage) Update() {}

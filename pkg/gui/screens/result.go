@@ -2,168 +2,597 @@ package screens
 
 import (
 	"fmt"
+	"image"
+	"image/color"
 	"strings"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
-
+	"gioui.org/font"
+	"gioui.org/layout"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
+	"golang.org/x/exp/shiny/materialdesign/icons"
 )
 
 type ResultScreen struct {
-	app        App
-	content    fyne.CanvasObject
-	resultsBox *fyne.Container
+	app App
+
+	// Clicks
+	restartClick  widget.Clickable
+	primaryClick  widget.Clickable
+	continueClick widget.Clickable
+	clearedClick  widget.Clickable
+
+	// Scroll lists
+	contentList widget.List
+
+	// Collapsible state
+	clearedExpanded bool
 }
 
 func NewResultScreen(app App) *ResultScreen {
 	s := &ResultScreen{app: app}
-	s.build()
+	s.contentList.Axis = layout.Vertical
 	return s
 }
 
-// buildModList generates the rows for problematic mods
-func (s *ResultScreen) buildModList(modsList []string) fyne.CanvasObject {
-	modListContainer := container.NewVBox()
+func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	bvm := s.app.GetViewModel()
+	rvm := s.app.GetResultViewModel()
 
-	modState := s.app.GetStateManager()
-	allMods := modState.GetAllMods()
+	// Handle button clicks
+	if s.restartClick.Clicked(gtx) {
+		s.app.GetBisectionController().ResetSearch()
+		s.app.SwitchToMainScreen()
+	}
 
-	for _, modID := range modsList {
-		icon := widget.NewIcon(theme.WarningIcon())
-
-		modName := modID
-		jarName := "Unknown Jar File"
-
-		if mod, ok := allMods[modID]; ok {
-			modName = fmt.Sprintf("%s (%s)", mod.FriendlyName(), mod.Metadata.Version)
-			jarName = fmt.Sprintf("%s.jar", mod.BaseFilename)
+	if s.primaryClick.Clicked(gtx) {
+		if rvm.State == ui.StateComplete {
+			// ShowQuitDialog blocks on a native dialog; do not run it on the
+			// gio frame goroutine.
+			go func() {
+				defer logging.HandlePanic()
+				s.app.ShowQuitDialog()
+			}()
+		} else {
+			s.app.SwitchToMainScreen()
 		}
-
-		label := widget.NewRichText()
-		label.Segments = append(label.Segments, &widget.TextSegment{Style: widget.RichTextStyle{TextStyle: fyne.TextStyle{Bold: true}}, Text: modName})
-		label.Segments = append(label.Segments, &widget.TextSegment{Style: widget.RichTextStyle{TextStyle: fyne.TextStyle{Italic: true}}, Text: jarName})
-
-		row := container.NewHBox(icon, label)
-		modListContainer.Add(row)
 	}
 
-	return container.NewPadded(modListContainer)
-}
-
-func (s *ResultScreen) build() {
-	title := widget.NewLabelWithStyle("Bisection Complete", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	header := container.NewVBox(title, widget.NewSeparator())
-
-	s.resultsBox = container.NewVBox()
-
-	// Put the dynamic VBox in a single page-level scroll container
-	scrollContainer := container.NewVScroll(container.NewPadded(s.resultsBox))
-
-	btnRestart := widget.NewButtonWithIcon("Restart Bisection", theme.MediaReplayIcon(), func() {
-		s.app.ResetSearch()
-		s.app.SwitchToMainPage()
-	})
-
-	btnQuit := widget.NewButtonWithIcon("Quit", theme.CancelIcon(), func() {
-		s.app.ShowQuitDialog()
-	})
-	// Make Quit the primary action button
-	btnQuit.Importance = widget.HighImportance
-
-	footerNav := container.NewHBox(layout.NewSpacer(), btnRestart, btnQuit)
-	footer := container.NewVBox(widget.NewSeparator(), footerNav)
-
-	mainContent := container.NewBorder(header, footer, nil, nil, scrollContainer)
-	s.content = container.NewPadded(mainContent)
-}
-
-func (s *ResultScreen) UpdateState() {
-	vm := s.app.GetViewModel()
-	s.resultsBox.RemoveAll()
-
-	hasConflicts := false
-
-	// 1. Current Active Conflict
-	if len(vm.CurrentConflictSet) > 0 {
-		hasConflicts = true
-		mods := sets.MakeSlice(vm.CurrentConflictSet)
-
-		s.resultsBox.Add(widget.NewLabelWithStyle("Current Conflict", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-		s.resultsBox.Add(widget.NewLabel("These mods are currently causing the issue:"))
-		s.resultsBox.Add(s.buildModList(mods))
-		s.resultsBox.Add(widget.NewSeparator())
+	if s.continueClick.Clicked(gtx) {
+		go func() {
+			ok := s.app.ShowQuestionDialog("Continue Search", "This will start a new search for the next conflict set within the remaining mods. Continue?", "")
+			if ok {
+				s.app.Run(func() {
+					s.app.GetBisectionController().ContinueSearch()
+					s.app.SwitchToMainScreen()
+				})
+			}
+		}()
 	}
 
-	// 2. Previously Found Conflict Sets
-	for i, conflictSet := range vm.AllConflictSets {
-		hasConflicts = true
-		mods := sets.MakeSlice(conflictSet)
-		title := fmt.Sprintf("Independent Conflict Set #%d", i+1)
+	if s.clearedClick.Clicked(gtx) {
+		s.clearedExpanded = !s.clearedExpanded
+	}
 
-		s.resultsBox.Add(widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-		s.resultsBox.Add(widget.NewLabel("This is a separate group of conflicting mods:"))
-		s.resultsBox.Add(s.buildModList(mods))
-		s.resultsBox.Add(widget.NewSeparator())
+	// Layout pinning header and footer, with middle body scrolling
+	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Header
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						titleText := "Search In Progress"
+						if bvm.IsComplete {
+							titleText = "Bisection Complete"
+						}
+						title := material.H5(th, titleText)
+						title.Color = theme.PrimaryColor
+						title.Font.Weight = font.Bold
+						return title.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						// Separator
+						return layout.Stack{}.Layout(gtx,
+							layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+								paint.FillShape(gtx.Ops, theme.BorderColor, clip.Rect{Max: gtx.Constraints.Min}.Op())
+								return layout.Dimensions{Size: gtx.Constraints.Min}
+							}),
+							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+								return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: gtx.Dp(1)}}
+							}),
+						)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				)
+			}),
+
+			// Middle Body (Scrollable List)
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				widgets := s.buildScrollableWidgets(gtx, th, &bvm, &rvm)
+				return material.List(th, &s.contentList).Layout(gtx, len(widgets), func(gtx layout.Context, index int) layout.Dimensions {
+					return widgets[index](gtx)
+				})
+			}),
+
+			// Footer
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						// Separator
+						return layout.Stack{}.Layout(gtx,
+							layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+								paint.FillShape(gtx.Ops, theme.BorderColor, clip.Rect{Max: gtx.Constraints.Min}.Op())
+								return layout.Dimensions{Size: gtx.Constraints.Min}
+							}),
+							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+								return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: gtx.Dp(1)}}
+							}),
+						)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						// Action Buttons
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Flexed(1, layout.Spacer{}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								btn := material.Button(th, &s.restartClick, "Restart Bisection")
+								btn.Background = theme.CardBgColor
+								btn.Color = theme.FgColor
+								return btn.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								btnText := "Quit"
+								if rvm.State != ui.StateComplete {
+									btnText = "Next Step"
+								}
+								btn := material.Button(th, &s.primaryClick, btnText)
+								btn.Background = theme.PrimaryColor
+								btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+								return btn.Layout(gtx)
+							}),
+						)
+					}),
+				)
+			}),
+		)
+	})
+}
+
+func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.Theme, bvm *ui.BisectionViewModel, rvm *ui.ResultViewModel) []layout.Widget {
+	var widgets []layout.Widget
+
+	// 1a. Render the Current Conflict Set (isolated from history)
+	if len(rvm.CurrentConflict.Mods) > 0 {
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, "Current Conflict")
+			lbl.Font.Weight = font.Bold
+			lbl.Color = theme.WarningColor
+			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "Disabling any single mod in this group will resolve the issue:")
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(8), Left: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				showIncompleteHints := rvm.State != ui.StateComplete
+				return s.layoutConflictSetEntries(gtx, th, rvm.CurrentConflict, showIncompleteHints, rvm.IsVerificationStep)
+			})
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return s.drawInnerSeparator(gtx)
+			})
+		})
+	}
+
+	// 1b. Render older/historical independent conflict sets
+	if len(rvm.PreviousConflictSets) > 0 {
+		// The current conflict is implicitly #1 when it has entries; otherwise
+		// the archived sets are numbered from #1.
+		numberOffset := 2
+		if len(rvm.CurrentConflict.Mods) == 0 {
+			numberOffset = 1
+		}
+		for i, conflictSet := range rvm.PreviousConflictSets {
+			currentSet := conflictSet
+			index := i
+
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				title := fmt.Sprintf("Independent Conflict Set #%d", index+numberOffset)
+				lbl := material.Body1(th, title)
+				lbl.Font.Weight = font.Bold
+				lbl.Color = theme.TextMutedColor
+				return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+			})
+
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, "Disabling any single mod in this group will resolve the issue:")
+				lbl.Color = theme.FgColor
+				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+			})
+
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return s.layoutConflictSetEntries(gtx, th, currentSet, false, false)
+				})
+			})
+
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return s.drawInnerSeparator(gtx)
+				})
+			})
+		}
+	}
+
+	// 2. Generally Unresolvable Mods (Dependency issues unrelated to active conflicts)
+	if len(rvm.GenerallyUnresolvable) > 0 {
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, "Mods with Unresolved Dependencies")
+			lbl.Font.Weight = font.Bold
+			lbl.Color = theme.TextMutedColor
+			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "These mods have separate dependency issues that may require manual review:")
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return s.layoutGenerallyUnresolvable(gtx, th, rvm.GenerallyUnresolvable)
+			})
+		})
+
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return s.drawInnerSeparator(gtx)
+			})
+		})
 	}
 
 	// 3. Next Steps / Actions Panel
-	if !hasConflicts {
-		s.resultsBox.Add(widget.NewLabelWithStyle("No Conflicts Found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-		successLabel := widget.NewLabel("The bisection process completed without isolating a specific cause for failure. The issue might be external to the mods in this folder.")
-		successLabel.Wrapping = fyne.TextWrapWord
-		s.resultsBox.Add(successLabel)
-	} else {
-		s.resultsBox.Add(widget.NewLabelWithStyle("What to do next", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	if len(rvm.CurrentConflict.Mods) == 0 && len(rvm.PreviousConflictSets) == 0 && len(rvm.GenerallyUnresolvable) == 0 {
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, "No Conflicts Found")
+			lbl.Font.Weight = font.Bold
+			lbl.Color = theme.PrimaryColor
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+		})
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "The bisection process completed without isolating a specific cause for failure. The issue might be external to the mods in this folder.")
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
+		})
+	} else if len(rvm.CurrentConflict.Mods) > 0 || len(rvm.PreviousConflictSets) > 0 {
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, "What to do next")
+			lbl.Font.Weight = font.Bold
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+		})
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			// Dynamically compute the explanation message block based on state criteria
+			var explanation string
+			switch {
+			case rvm.State == ui.StateComplete:
+				explanation = "To fix each conflict, disable one mod from that conflict's list and relaunch the game.\n\nOnce confirmed, please consider reporting the incompatibility to the respective mod authors."
+			case rvm.IsVerificationStep:
+				explanation = "A new conflicting mod was found, but it is not yet known if more are involved.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to verify whether the conflict set is complete."
+			default:
+				explanation = "The current conflict involves more mods than found so far.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to find the remaining mods."
+			}
 
-		instructionText := widget.NewLabel("To fix your issue, disable all the problematic mods listed above and relaunch the game.\n\nOnce confirmed, please consider reporting the incompatibility to the respective mod authors.")
-		instructionText.Wrapping = fyne.TextWrapWord
-		s.resultsBox.Add(instructionText)
+			lbl := material.Body2(th, explanation)
+			lbl.Color = theme.FgColor
+			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
+		})
 
 		// Display Continue Search Option if candidates remain
-		if vm.IsComplete && len(vm.CandidateSet) > 0 {
-			s.resultsBox.Add(widget.NewSeparator())
-
-			s.resultsBox.Add(widget.NewLabelWithStyle("Still having issues?", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-
-			continueExplainer := widget.NewLabel("If you disabled the mods above but your game still has the issue, there might be additional conflicting mods. You can continue the bisection process to find them among the remaining candidates.")
-			continueExplainer.Wrapping = fyne.TextWrapWord
-			s.resultsBox.Add(continueExplainer)
-
-			btnContinue := widget.NewButtonWithIcon("Continue Search", theme.SearchIcon(), func() {
-				dialog.ShowConfirm(
-					"Continue Search",
-					"This will start a new search for the next conflict set within the remaining mods. Continue?",
-					func(confirmed bool) {
-						if confirmed {
-							s.app.ContinueSearch()
-							s.app.SwitchToMainPage()
-						}
-					}, s.app.GetWindow())
+		if rvm.CanContinueSearch && len(bvm.CandidateSet) > 0 {
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return s.drawInnerSeparator(gtx)
+				})
 			})
-			// Wrapped in HBox so it doesn't stretch to the edges of the window
-			s.resultsBox.Add(container.NewHBox(btnContinue))
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, "Still having issues?")
+				lbl.Font.Weight = font.Bold
+				lbl.Color = theme.FgColor
+				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+			})
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, "If you disabled the mods above but your game still has the issue, there might be additional conflicting mods. You can continue the bisection process to find them among the remaining candidates.")
+				lbl.Color = theme.FgColor
+				return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, lbl.Layout)
+			})
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				btn := material.Button(th, &s.continueClick, "Continue Search")
+				btn.Background = theme.PrimaryColor
+				btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(btn.Layout),
+				)
+			})
 		}
 	}
 
-	// 4. Cleared Mods (Hidden behind Accordion)
-	clearedList := sets.MakeSlice(vm.ClearedSet)
+	// 4. Cleared Mods (Accordion without text glyph arrows)
+	clearedList := sets.MakeSlice(bvm.ClearedSet)
 	if len(clearedList) > 0 {
-		clearedText := widget.NewLabel(strings.Join(clearedList, ", "))
-		clearedText.Wrapping = fyne.TextWrapWord
-		accordionItem := widget.NewAccordionItem(fmt.Sprintf("View Cleared Mods (%d)", len(clearedList)), container.NewPadded(clearedText))
-
-		s.resultsBox.Add(widget.NewSeparator())
-		s.resultsBox.Add(widget.NewAccordion(accordionItem))
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return s.drawInnerSeparator(gtx)
+			})
+		})
+		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+			btnText := "Show Cleared Mods"
+			if s.clearedExpanded {
+				btnText = "Hide Cleared Mods"
+			}
+			btnText = fmt.Sprintf("%s (%d)", btnText, len(clearedList))
+			btn := material.Button(th, &s.clearedClick, btnText)
+			btn.Background = theme.CardBgColor
+			btn.Color = theme.FgColor
+			btn.Inset = layout.UniformInset(unit.Dp(10))
+			return btn.Layout(gtx)
+		})
+		if s.clearedExpanded {
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				clearedText := strings.Join(clearedList, ", ")
+				lbl := material.Body2(th, clearedText)
+				lbl.Color = theme.TextMutedColor
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
+			})
+		}
 	}
 
-	s.resultsBox.Refresh()
+	return widgets
 }
 
-func (s *ResultScreen) GetContent() fyne.CanvasObject {
-	return s.content
+func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material.Theme, set ui.ConflictSetReport, showIncompleteHints bool, isVerification bool) layout.Dimensions {
+	var children []layout.FlexChild
+
+	// Standard items loop
+	for _, entry := range set.Mods {
+		currentEntry := entry
+		modName := ui.FormatModRef(currentEntry.Mod)
+		jarName := "Unknown Jar File"
+		if !currentEntry.Mod.IsUnknown {
+			jarName = fmt.Sprintf("%s.jar", currentEntry.Mod.BaseFilename)
+		}
+
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						i, _ := widget.NewIcon(icons.AlertWarning)
+						return i.Layout(gtx, theme.WarningColor)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body1(th, modName)
+								lbl.Font.Weight = font.Bold
+								lbl.Color = theme.FgColor
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, jarName)
+								lbl.Color = theme.TextMutedColor
+								return lbl.Layout(gtx)
+							}),
+						)
+					}),
+				)
+			})
+		}))
+
+		// Graphical layout for per-mod cascades
+		if len(currentEntry.AlsoRequireDisable) > 0 {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(32), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					var cascadeChildren []layout.FlexChild
+					cascadeChildren = append(cascadeChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, "Disabling this mod also requires disabling:")
+						lbl.Font.Weight = font.Bold
+						lbl.Color = theme.TextMutedColor
+						return lbl.Layout(gtx)
+					}))
+
+					for _, cascadeMod := range currentEntry.AlsoRequireDisable {
+						m := cascadeMod
+						cascadeChildren = append(cascadeChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							name := m.ID
+							if !m.IsUnknown {
+								name = fmt.Sprintf("%s from '%s.jar'", m.ID, m.BaseFilename)
+							} else {
+								name = fmt.Sprintf("%s from unknown", m.ID)
+							}
+							lbl := material.Body2(th, name)
+							lbl.Color = theme.TextMutedColor
+							return layout.Inset{Left: unit.Dp(12), Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						}))
+					}
+
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, cascadeChildren...)
+				})
+			}))
+		}
+	}
+
+	// Graphical implementation of structural hints for incomplete / developing sets
+	if showIncompleteHints {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(32), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				hintText := "And at least one more..."
+				if isVerification {
+					hintText = "And possibly more..."
+				}
+
+				lbl := material.Body2(th, hintText)
+				lbl.Font.Style = font.Italic
+				lbl.Color = theme.TextMutedColor
+				return lbl.Layout(gtx)
+			})
+		}))
+	}
+
+	// Graphical layout for per-set cascades
+	if len(set.IfAllDisabledAlso) > 0 {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(16), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				var footerChildren []layout.FlexChild
+				footerChildren = append(footerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, "If you disable all mods in this conflict, you must also disable:")
+					lbl.Font.Weight = font.Bold
+					lbl.Color = theme.TextMutedColor
+					return lbl.Layout(gtx)
+				}))
+
+				for _, cascadeMod := range set.IfAllDisabledAlso {
+					m := cascadeMod
+					footerChildren = append(footerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						name := m.ID
+						if !m.IsUnknown {
+							name = fmt.Sprintf("%s from '%s.jar'", m.ID, m.BaseFilename)
+						} else {
+							name = fmt.Sprintf("%s from unknown", m.ID)
+						}
+						lbl := material.Body2(th, name)
+						lbl.Color = theme.TextMutedColor
+						return layout.Inset{Left: unit.Dp(12), Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+					}))
+				}
+
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, footerChildren...)
+			})
+		}))
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (s *ResultScreen) layoutGenerallyUnresolvable(gtx layout.Context, th *material.Theme, items []ui.UnresolvedDependencyReport) layout.Dimensions {
+	var children []layout.FlexChild
+
+	for _, item := range items {
+		currentItem := item
+		if currentItem.Mod.IsUnknown {
+			continue
+		}
+
+		modName := fmt.Sprintf("%s (%s)", currentItem.Mod.ID, currentItem.Mod.Name)
+		jarName := fmt.Sprintf("%s.jar", currentItem.Mod.BaseFilename)
+
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(th, modName)
+						lbl.Font.Weight = font.Bold
+						lbl.Color = theme.FgColor
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, jarName)
+						lbl.Color = theme.TextMutedColor
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+		}))
+
+		if len(currentItem.UnmetDependencies) > 0 {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(24), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					var innerChildren []layout.FlexChild
+					innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, "Unresolved or unmet dependencies:")
+						lbl.Font.Weight = font.Bold
+						lbl.Color = theme.TextMutedColor
+						return lbl.Layout(gtx)
+					}))
+
+					for _, dep := range currentItem.UnmetDependencies {
+						d := dep
+						innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							name := d.ID
+							if !d.IsUnknown {
+								name = fmt.Sprintf("%s from '%s.jar'", d.ID, d.BaseFilename)
+							} else {
+								name = fmt.Sprintf("%s from unknown", d.ID)
+							}
+							lbl := material.Body2(th, name)
+							lbl.Color = theme.TextMutedColor
+							return layout.Inset{Left: unit.Dp(12), Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						}))
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, innerChildren...)
+				})
+			}))
+		}
+
+		if len(currentItem.RequiredByTransitive) > 0 {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(24), Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					var innerChildren []layout.FlexChild
+					innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, "Disabling this mod would also require disabling:")
+						lbl.Font.Weight = font.Bold
+						lbl.Color = theme.TextMutedColor
+						return lbl.Layout(gtx)
+					}))
+
+					for _, dep := range currentItem.RequiredByTransitive {
+						d := dep
+						innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							name := d.ID
+							if !d.IsUnknown {
+								name = fmt.Sprintf("%s from '%s.jar'", d.ID, d.BaseFilename)
+							} else {
+								name = fmt.Sprintf("%s from unknown", d.ID)
+							}
+							lbl := material.Body2(th, name)
+							lbl.Color = theme.TextMutedColor
+							return layout.Inset{Left: unit.Dp(12), Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						}))
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, innerChildren...)
+				})
+			}))
+		}
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (s *ResultScreen) drawInnerSeparator(gtx layout.Context) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, theme.BorderColor, clip.Rect{Max: gtx.Constraints.Min}.Op())
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: gtx.Dp(1)}}
+		}),
+	)
 }

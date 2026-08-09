@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Build and package mod-bisect-gui for a target platform.
 
+Uses the gogio tool for Windows (icon embedding, GUI subsystem) and macOS (.app
+bundle + zip), and a plain `go build` for Linux (CGO), which is packaged as an
+AppImage.
+
 Usage:
     python3 scripts/build_gui.py --goos linux --goarch amd64 --tag v1.2.0
 """
@@ -9,99 +13,93 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shutil
 import stat
 import subprocess
-import sys
-import tarfile
-import urllib.request
 from pathlib import Path
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def run(*cmd: str | Path, extra_env: dict[str, str] | None = None) -> None:
+def run(
+    *cmd: str | Path,
+    extra_env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> None:
     """Print and execute a command, merging extra_env into the current environment."""
     env = {**os.environ, **(extra_env or {})}
     print("+", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run([str(c) for c in cmd], check=True, env=env)
+    subprocess.run([str(c) for c in cmd], check=True, env=env, cwd=cwd)
 
 
-def find_one(directory: Path, pattern: str) -> Path:
-    """Return the first glob match for pattern under directory, or exit with an error."""
-    hits = sorted(directory.glob(pattern))
-    if not hits:
-        sys.exit(f"ERROR: no '{pattern}' found in {directory}")
-    return hits[0]
-
-
-def patch_toml_version(toml: Path, version: str) -> None:
-    text = toml.read_text()
-    text = re.sub(r'Version\s*=\s*"[^"]*"', f'Version = "{version}"', text)
-    toml.write_text(text)
-
-
-def fyne_package(
-    target: str, git_rev: str, extra_env: dict[str, str] | None = None
+def gogio_build(
+    target: str,
+    arch: str,
+    icon: Path,
+    out: str,
+    project_dir: Path,
+    app_id: str,
+    ldflags: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
-    run(
-        "fyne",
-        "package",
-        "--target",
+    """Invoke gogio for Windows/macOS packaging. Must run from project_dir."""
+    args = [
+        "gogio",
+        "-target",
         target,
-        "--release",
-        "--metadata",
-        f"gitRevision={git_rev}",
-        extra_env=extra_env,
-    )
+        "-arch",
+        arch,
+        "-icon",
+        str(icon),
+        "-appid",
+        app_id,
+        "-o",
+        out,
+        ".",
+    ]
+    if ldflags:
+        args.extend(["-ldflags", ldflags])
+    run(*args, extra_env=extra_env, cwd=project_dir)
 
 
 # ── Linux ─────────────────────────────────────────────────────────────────────
 
 
 def build_linux(
-    goarch: str, git_tag: str, git_rev: str, project_dir: Path, dist: Path
+    goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path
 ) -> None:
-    fyne_package("linux", git_rev)
-
-    tarball = find_one(project_dir, "*.tar.xz")
-
-    # fyne wraps the FHS layout in an extra named subdirectory inside the archive,
-    # e.g. "Mod Bisect Tool.tar/mod-bisect-gui/usr/local/...".
-    extract_dir = project_dir / "_extract"
-    extract_dir.mkdir()
-    with tarfile.open(tarball, "r:xz") as tf:
-        tf.extractall(extract_dir)
-    inner = next(p for p in extract_dir.iterdir() if p.is_dir())
-
-    # Reconstruct a conformant AppDir from the extracted FHS layout.
+    # Reconstruct a conformant AppDir from the built binary.
     appdir = project_dir / "AppDir"
-    shutil.copytree(inner / "usr", appdir / "usr")
+    if appdir.exists():
+        shutil.rmtree(appdir)
+    bin_dir = appdir / "usr" / "bin"
+    bin_dir.mkdir(parents=True)
 
-    # AppImage spec: .desktop and icon must also live at the AppDir root.
-    for pattern in (
-        "usr/local/share/applications/*.desktop",
-        "usr/local/share/pixmaps/*.png",
-    ):
-        shutil.copy2(find_one(appdir, pattern), appdir)
-
-    # appimagetool hard-errors if Categories= is absent. fyne doesn\'t write it,
-    # so patch it into the copy at the AppDir root.
-    desktop = find_one(appdir, "*.desktop")
-    text = desktop.read_text()
-    if "Categories=" not in text:
-        desktop.write_text(text.rstrip("\n") + "\nCategories=Utility;\n")
+    run("go", "build", "-o", str(bin_dir / "mod-bisect-gui"), ".", cwd=project_dir)
 
     # Write AppRun — resolves the binary path relative to the AppImage at runtime.
-    binary_name = find_one(appdir / "usr/local/bin", "*").name
     apprun = appdir / "AppRun"
     apprun.write_text(
         "#!/bin/sh\n"
         'HERE="$(cd "$(dirname "$0")"; pwd)"\n'
-        f'exec "$HERE/usr/local/bin/{binary_name}" "$@"\n'
+        'exec "$HERE/usr/bin/mod-bisect-gui" "$@"\n'
     )
     apprun.chmod(apprun.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # AppImage spec: .desktop and icon must live at the AppDir root. appimagetool
+    # hard-errors if Categories= is absent, so it is written in up front.
+    desktop = appdir / "mod-bisect-gui.desktop"
+    desktop.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Mod Bisect Tool\n"
+        "Comment=Minecraft mod bisection tool\n"
+        "Exec=mod-bisect-gui\n"
+        "Icon=mod-bisect-gui\n"
+        "Terminal=false\n"
+        "Categories=Utility;\n"
+    )
+    shutil.copy2(icon, appdir / "mod-bisect-gui.png")
 
     tool_arch = "aarch64" if goarch == "arm64" else "x86_64"
     output = dist / f"mod-bisect-gui-{git_tag}-linux-{goarch}.AppImage"
@@ -118,7 +116,8 @@ def build_linux(
     run(
         str(appimagetool_path),
         str(appdir),
-        extra_env={"VERSION": git_rev, "ARCH": tool_arch},
+        extra_env={"VERSION": git_tag, "ARCH": tool_arch},
+        cwd=project_dir,
     )
 
     # Find the generated AppImage and move it to the expected output path.
@@ -132,22 +131,14 @@ def build_linux(
 
 
 def build_windows(
-    goarch: str, git_tag: str, git_rev: str, project_dir: Path, dist: Path
+    goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path, app_id: str
 ) -> None:
-    if goarch == "arm64":
-        extra_env = {
-            "CC": "zig cc -target aarch64-windows-gnu",
-            "CXX": "zig c++ -target aarch64-windows-gnu",
-        }
-    else:
-        extra_env = {
-            "CC": "x86_64-w64-mingw32-gcc",
-            "CXX": "x86_64-w64-mingw32-g++",
-        }
-
-    fyne_package("windows", git_rev, extra_env=extra_env)
-
-    exe = find_one(project_dir, "*.exe")
+    # Windows is built pure-Go (CGO_ENABLED=0): no cross-compiler needed. gogio
+    # embeds the icon and links with -H windowsgui.
+    exe = project_dir / "mod-bisect-gui.exe"
+    gogio_build(
+        "windows", goarch, icon, str(exe), project_dir, app_id, ldflags="-H windowsgui"
+    )
     shutil.move(exe, dist / f"mod-bisect-gui-{git_tag}-windows-{goarch}.exe")
 
 
@@ -155,14 +146,18 @@ def build_windows(
 
 
 def build_darwin(
-    goarch: str, git_tag: str, git_rev: str, project_dir: Path, dist: Path
+    goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path, app_id: str
 ) -> None:
-    fyne_package("darwin", git_rev)
+    # gogio produces <name>.app in project_dir; its intermediate zip lives in a
+    # temp dir that is deleted. Package the .app ourselves with ditto (preserves
+    # resource forks / extended attributes that plain zip drops).
+    app = project_dir / "Mod Bisect Tool.app"
+    gogio_build("macos", goarch, icon, str(app), project_dir, app_id)
+    if not app.exists():
+        raise FileNotFoundError(f"gogio did not produce the expected .app {app}")
 
-    app = find_one(project_dir, "*.app")
     output = dist / f"mod-bisect-gui-{git_tag}-darwin-{goarch}.zip"
-    # ditto preserves macOS resource forks and extended attributes that zip -r drops.
-    run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, output)
+    run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(output))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -189,24 +184,25 @@ def main() -> None:
         default="dist",
         help="Output directory for built artifacts (default: dist)",
     )
+    p.add_argument(
+        "--icon",
+        default=None,
+        help="Path to the icon (default: <project-dir>/Icon-Small.png)",
+    )
+    p.add_argument(
+        "--appid",
+        default="dev.qendolin.modbisecttool",
+        help="Application/bundle ID for gogio (Windows/macOS)",
+    )
     args = p.parse_args()
 
     project_dir = Path(args.project_dir).resolve()
     dist = Path(args.dist).resolve()
     dist.mkdir(parents=True, exist_ok=True)
 
-    version = args.tag.lstrip("v")
-    git_rev = subprocess.check_output(
-        ["git", "rev-parse", "--short", "HEAD"],
-        text=True,
-    ).strip()
+    icon = Path(args.icon).resolve() if args.icon else project_dir / "Icon-Small.png"
 
-    patch_toml_version(project_dir / "FyneApp.toml", version)
-
-    # fyne package must run from inside the project directory.
-    os.chdir(project_dir)
-
-    BUILDERS[args.goos](args.goarch, args.tag, git_rev, project_dir, dist)
+    BUILDERS[args.goos](args.goarch, args.tag, project_dir, dist, icon, args.appid)
     print(f"\nDone. Output in {dist}", flush=True)
 
 

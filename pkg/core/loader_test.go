@@ -31,7 +31,8 @@ func TestModLoader(t *testing.T) {
 
 	// Helper to load mods and perform common assertions
 	loadAndCheck := func(t *testing.T, modsDir string, expectedModIDs []string, expectedProviderCount int, expectError bool) (map[string]*mods.Mod, mods.PotentialProvidersMap) {
-		loader := mods.ModLoader{}
+		adapter := mods.FileAdapter{BaseDirectory: modsDir}
+		loader := mods.ModLoader{Adapter: &adapter}
 		allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 
 		if expectError {
@@ -168,6 +169,14 @@ func TestModLoader(t *testing.T) {
 			if loadedMods["conf_mod"].Metadata.Version.Version.String() != "2.0" {
 				t.Errorf("Expected conf_mod v2.0 to win conflict, got v%s", loadedMods["conf_mod"].Metadata.Version.Version.String())
 			}
+			// The losing active file must have been disabled on disk.
+			disabledPath := filepath.Join(modsDir, "conf_mod-1.0.jar.disabled")
+			if _, err := os.Stat(disabledPath); os.IsNotExist(err) {
+				t.Error("conf_mod-1.0.jar should have been disabled, but the .disabled file was not found.")
+			}
+			if _, err := os.Stat(filepath.Join(modsDir, "conf_mod-1.0.jar")); !os.IsNotExist(err) {
+				t.Error("conf_mod-1.0.jar should no longer exist as an active file.")
+			}
 		}
 	})
 
@@ -199,6 +208,35 @@ func TestModLoader(t *testing.T) {
 		}
 	})
 
+	t.Run("Same_Stem_Active_And_Disabled", func(t *testing.T) {
+		logging.Infof("Test: Running test case %q", t.Name())
+		modsDir := newTestDir(t.Name())
+		defer os.RemoveAll(modsDir)
+		// A disabled twin sharing the same base filename as an active file.
+		// The loader must relocate the disabled twin (foo-dup) so the pair is
+		// treated as ordinary duplicates instead of clobbering each other.
+		specs := map[string]modSpec{
+			"conf_mod.jar":           {JSONContent: `{"id": "conf_mod", "version": "1.0"}`},
+			"conf_mod.jar.disabled":  {JSONContent: `{"id": "conf_mod", "version": "2.0"}`},
+		}
+		setupDummyMods(t, modsDir, specs)
+
+		loadedMods, _ := loadAndCheck(t, modsDir, []string{"conf_mod"}, 1, false)
+		if loadedMods != nil {
+			if loadedMods["conf_mod"].Metadata.Version.Version.String() != "2.0" {
+				t.Errorf("Expected conf_mod v2.0 to win conflict, got v%s", loadedMods["conf_mod"].Metadata.Version.Version.String())
+			}
+			// The disabled twin must have been relocated to a distinct -dup stem.
+			if _, err := os.Stat(filepath.Join(modsDir, "conf_mod-dup.jar.disabled")); os.IsNotExist(err) {
+				t.Error("conf_mod.jar.disabled should have been relocated to conf_mod-dup.jar.disabled.")
+			}
+			// The active loser must have been disabled (no active file remains).
+			if _, err := os.Stat(filepath.Join(modsDir, "conf_mod.jar")); !os.IsNotExist(err) {
+				t.Error("conf_mod.jar (active loser) should have been disabled.")
+			}
+		}
+	})
+
 	t.Run("Mod_with_Quilt_Json_Priority", func(t *testing.T) {
 		logging.Infof("Test: Running test case %q", t.Name())
 		modsDir := newTestDir(t.Name())
@@ -212,7 +250,8 @@ func TestModLoader(t *testing.T) {
 			},
 		}
 		setupDummyMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: true}}
+		adapter := mods.FileAdapter{BaseDirectory: modsDir}
+		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: true}, Adapter: &adapter}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("LoadMods returned an unexpected error: %v", err)

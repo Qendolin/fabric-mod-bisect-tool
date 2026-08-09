@@ -151,7 +151,6 @@ type Mod struct {
 	Path              string
 	BaseFilename      string
 	Metadata          ModMetadata
-	IsInitiallyActive bool // Was the mod active (.jar) when first loaded?
 	NestedModules     []NestedModule
 	EffectiveProvides map[string]version.Version // Maps all unique IDs this mod provides to their version.
 }
@@ -303,12 +302,12 @@ type DependencyOverrides struct {
 
 // FileMissingError represents an error for a single missing mod file.
 type FileMissingError struct {
-	ModID    string
-	FilePath string
+	ModID        string
+	FileBasePath string
 }
 
 func (e *FileMissingError) Error() string {
-	return fmt.Sprintf("file not found for mod '%s': %s", e.ModID, e.FilePath)
+	return fmt.Sprintf("file not found for mod '%s': %s", e.ModID, e.FileBasePath)
 }
 
 // MissingFilesError is a wrapper error that contains one or more FileMissingError instances.
@@ -319,7 +318,7 @@ type MissingFilesError struct {
 func (e *MissingFilesError) Error() string {
 	missing := make([]string, len(e.Errors))
 	for i, err := range e.Errors {
-		missing[i] = fmt.Sprintf("%s at %s", err.ModID, err.FilePath)
+		missing[i] = fmt.Sprintf("%s at %s", err.ModID, err.FileBasePath)
 	}
 	return fmt.Sprintf("found %d missing mod files: %s", len(e.Errors), missing)
 }

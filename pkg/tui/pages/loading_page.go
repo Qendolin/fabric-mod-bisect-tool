@@ -84,3 +84,6 @@ func (lp *LoadingPage) GetActionPrompts() []tui.ActionPrompt {
 func (lp *LoadingPage) GetStatusPrimitive() *tview.TextView {
 	return lp.statusText
 }
+
+// Update implements the Page interface.
+func (lp *LoadingPage) Update() {}

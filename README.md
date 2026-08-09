@@ -83,8 +83,8 @@ The tool will now show you a "Test in Progress" screen. It has just enabled a sp
 1.  Launch Minecraft using your normal mod loader (Fabric, Quilt or NeoForge).
 2.  Check if the problem still occurs. Does the game crash? Does the bug you're hunting still happen?
 3.  Return to the tool and click the button that matches the outcome:
-  * **Success (No Issue):** The problem did *not* happen. The game loaded and worked as expected.
-  * **Failure (Issue Occurred):** The problem *did* happen (e.g., the game crashed or the bug was present).
+  * **✓ Works:** The problem did *not* happen. The game loaded and worked as expected.
+  * **✗ Broken:** The problem *did* happen (e.g., the game crashed or the bug was present).
 
 > [!IMPORTANT]
 > The tool will use your answer to narrow down the search and prepare the next test. **Repeat this process** until a result is found.
@@ -119,7 +119,7 @@ On the main screen, you can press **`M`** to go to the **Manage Mods** page. Thi
 
 ## History Page
 
-You can press **`Ctrl+H`** to go to the **History** page. This page provides a detailed log of all the tests performed during the current bisection session. For each test, you'll see which mods were enabled and the outcome you reported (Success or Failure). This is useful for reviewing your steps, understanding how the tool arrived at its conclusion, or for debugging purposes if you believe there was an error in the process.
+You can press **`Ctrl+H`** to go to the **History** page. This page provides a detailed log of all the tests performed during the current bisection session. For each test, you'll see which mods were enabled and the outcome you reported (Works or Broken). This is useful for reviewing your steps, understanding how the tool arrived at its conclusion, or for debugging purposes if you believe there was an error in the process.
 
 ![History Page](docs/img/history-page.jpg)
 

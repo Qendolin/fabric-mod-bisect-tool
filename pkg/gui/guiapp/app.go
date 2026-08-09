@@ -1,179 +1,210 @@
 package guiapp
 
 import (
-	"context"
-	"fmt"
 	"sync"
+	"sync/atomic"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/dialog"
+	gioapp "gioui.org/app"
+	"gioui.org/io/system"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/screens"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
+	"github.com/ncruces/zenity"
 )
 
-// App is the GUI implementation of ui.View using Fyne.
-type App struct {
-	ui.Controller
-	fyneApp    fyne.App
-	mainWindow fyne.Window
-	logger     *logging.Logger
-
-	// Screens
-	setupScreen   *screens.SetupScreen
-	loadingScreen *screens.LoadingScreen
-	mainScreen    *screens.MainScreen
-	resultScreen  *screens.ResultScreen
-
-	appCtx    context.Context
-	cancelApp context.CancelFunc
-
-	shutdownWg sync.WaitGroup
+type Screen interface {
+	Layout(gtx layout.Context, th *material.Theme) layout.Dimensions
 }
 
-func NewApp(controller ui.Controller, logger *logging.Logger) *App {
-	fyneApp := app.NewWithID("fabric-mod-bisect-tool")
-	mainWindow := fyneApp.NewWindow("Mod Bisect Tool")
-	mainWindow.Resize(fyne.NewSize(800, 600))
+// App is the GUI implementation of ui.View using Gio.
+type App struct {
+	ui.AppController
 
-	appCtx, cancelApp := context.WithCancel(context.Background())
+	window *gioapp.Window
+	theme  *material.Theme
+	logger *logging.Logger
+
+	// Screen pages
+	setupScreen        *screens.SetupScreen
+	loadingScreen      *screens.LoadingScreen
+	modSelectionScreen *screens.ModSelectionScreen
+	mainScreen         *screens.MainScreen
+	resultScreen       *screens.ResultScreen
+
+	activeScreen Screen
+
+	// Custom window decorations. The native title bar is disabled
+	// (Decorated(false)) so we can intercept the close action and show a quit
+	// confirmation; Gio's DestroyEvent cannot be cancelled.
+	decorations widget.Decorations
+
+	// Thread-safe callbacks
+	mu        sync.Mutex
+	callbacks []func()
+
+	shouldQuit bool
+
+	// quitDialogOpen guards against spawning multiple quit confirmation
+	// dialogs (e.g. from the decorations close button and an in-frame button).
+	quitDialogOpen atomic.Bool
+
+	// attachID is the platform window handle used to attach native zenity
+	// dialogs to the main window, making it inert while a dialog is open. It is
+	// captured from the platform ViewEvent (see view_handle_*.go) during the
+	// first frames, before any dialog can be triggered.
+	attachID any
+}
+
+func NewApp(controller ui.AppController, logger *logging.Logger) *App {
+	window := new(gioapp.Window)
+	window.Option(gioapp.Title("Mod Bisect Tool"), gioapp.Size(unit.Dp(800), unit.Dp(600)), gioapp.Decorated(false))
 
 	a := &App{
-		Controller: controller,
-		fyneApp:    fyneApp,
-		mainWindow: mainWindow,
-		logger:     logger,
-		appCtx:     appCtx,
-		cancelApp:  cancelApp,
+		AppController: controller,
+		window:        window,
+		theme:         theme.NewTheme(),
+		logger:        logger,
 	}
-
-	a.fyneApp.Settings().SetTheme(&CustomTheme{})
 
 	a.setupScreen = screens.NewSetupScreen(a)
 	a.loadingScreen = screens.NewLoadingScreen(a)
+	a.modSelectionScreen = screens.NewModSelectionScreen(a)
 	a.mainScreen = screens.NewMainScreen(a)
 	a.resultScreen = screens.NewResultScreen(a)
 
-	a.mainWindow.SetCloseIntercept(func() {
-		a.ShowQuitDialog()
-	})
+	a.activeScreen = a.setupScreen
 
 	return a
 }
 
-// GetWindow returns the Fyne window
-func (a *App) GetWindow() fyne.Window {
-	return a.mainWindow
-}
-
-// NewWindow returns a new Fyne window
-func (a *App) NewWindow(title string) fyne.Window {
-	return a.fyneApp.NewWindow(title)
-}
-
-// --- ui.View Interface implementation ---
-func (a *App) Run() error {
-	a.SwitchToSetupPage()
-	a.mainWindow.ShowAndRun()
-	return nil
-}
-
 func (a *App) Stop() {
-	a.cancelApp()
-	a.shutdownWg.Wait()
-	a.fyneApp.Quit()
+	a.shouldQuit = true
+	a.window.Invalidate()
 }
 
-func (a *App) QueueUpdateDraw(f func()) {
-	fyne.Do(f)
-}
-
-func (a *App) ShowErrorDialog(title, message string, err error, callback func()) {
-	fullMsg := message
-	if err != nil {
-		fullMsg = message + "\n\nError: " + err.Error()
-	}
-	d := dialog.NewError(fmt.Errorf("%s", fullMsg), a.mainWindow)
-	d.SetOnClosed(func() {
-		if callback != nil {
-			callback()
+func (a *App) Start() error {
+	var ops op.Ops
+	for {
+		if a.shouldQuit {
+			return nil
 		}
-	})
-	d.Show()
+		switch e := a.window.Event().(type) {
+		case gioapp.DestroyEvent:
+			return e.Err
+		case gioapp.ViewEvent:
+			a.setViewHandle(e)
+		case gioapp.ConfigEvent:
+			a.decorations.Maximized = e.Config.Mode == gioapp.Maximized
+		case gioapp.FrameEvent:
+			gtx := gioapp.NewContext(&ops, e)
+			a.processCallbacks()
+			if a.shouldQuit {
+				return nil
+			}
+			a.layout(gtx)
+			e.Frame(gtx.Ops)
+		}
+	}
 }
 
-func (a *App) ShowInfoDialog(title, message, details string, callback func()) {
-	fullMsg := message
-	if details != "" {
-		fullMsg += "\n\n" + details
-	}
-	d := dialog.NewInformation(title, fullMsg, a.mainWindow)
-	d.SetOnClosed(func() {
-		if callback != nil {
-			callback()
-		}
-	})
-	d.Show()
-}
-
-func (a *App) ShowQuestionDialog(title, message, details string, onYes, onNo func()) {
-	fullMsg := message
-	if details != "" {
-		fullMsg += "\n\n" + details
-	}
-	d := dialog.NewConfirm(title, fullMsg, func(yes bool) {
-		if yes && onYes != nil {
-			onYes()
-		} else if !yes && onNo != nil {
-			onNo()
-		}
-	}, a.mainWindow)
-	d.Show()
+func (a *App) Run(f func()) {
+	a.mu.Lock()
+	a.callbacks = append(a.callbacks, f)
+	a.mu.Unlock()
+	a.window.Invalidate()
 }
 
 func (a *App) ShowQuitDialog() {
-	dialog.ShowConfirm("Quit", "Are you sure you want to quit?\nUnsaved progress will be lost.", func(yes bool) {
-		if yes {
-			a.Stop()
-		}
-	}, a.mainWindow)
+	if !a.quitDialogOpen.CompareAndSwap(false, true) {
+		return
+	}
+	defer a.quitDialogOpen.Store(false)
+	opts := append(a.dialogOptions(), zenity.Title("Quit"))
+	err := zenity.Question("Are you sure you want to quit?\nUnsaved progress will be lost.", opts...)
+	if err == nil {
+		a.Stop()
+	}
 }
 
-func (a *App) SwitchToSetupPage() {
-	a.mainWindow.SetContent(a.setupScreen.GetContent())
+// dialogOptions returns the shared zenity options: the dialog is modal and
+// attached to the main window, so the OS disables the window while the dialog
+// is open, making it inert. On platforms without a usable window handle
+// (Wayland), the dialog is still modal but unattached.
+func (a *App) dialogOptions() []zenity.Option {
+	opts := []zenity.Option{zenity.Modal()}
+	if a.attachID != nil {
+		opts = append(opts, zenity.Attach(a.attachID))
+	}
+	return opts
 }
 
-func (a *App) SwitchToLoadingPage() {
-	a.mainWindow.SetContent(a.loadingScreen.GetContent())
+// WindowAttachID exposes the platform window handle to the screens package so
+// its own native dialogs (e.g. the setup folder browser) can attach to the
+// main window as well.
+func (a *App) WindowAttachID() any {
+	return a.attachID
 }
 
-func (a *App) UpdateLoadingProgress(fileName string, i, count int) {
-	a.loadingScreen.UpdateProgress(fileName, i, count)
+func (a *App) SetActiveScreen(screen Screen) {
+	a.activeScreen = screen
+	a.Update()
 }
 
-func (a *App) SwitchToMainPage() {
-	fyne.Do(func() {
-		a.mainScreen.UpdateState()
-		a.mainWindow.SetContent(a.mainScreen.GetContent())
-	})
+func (a *App) SwitchToMainScreen() {
+	a.SetActiveScreen(a.mainScreen)
 }
 
-func (a *App) SwitchToResultPage() {
-	fyne.Do(func() {
-		a.resultScreen.UpdateState()
-		a.mainWindow.SetContent(a.resultScreen.GetContent())
-	})
+func (a *App) processCallbacks() {
+	a.mu.Lock()
+	cbs := a.callbacks
+	a.callbacks = nil
+	a.mu.Unlock()
+
+	for _, cb := range cbs {
+		cb()
+	}
 }
 
-func (a *App) ShowTestModal(isVerification bool, onSuccess, onFailure, onCancel func()) {
-	a.mainScreen.ShowTestPrompt(isVerification, onSuccess, onFailure, onCancel)
-}
+func (a *App) layout(gtx layout.Context) {
+	// Draw deep slate background
+	paint.Fill(gtx.Ops, theme.BgColor)
 
-func (a *App) CloseModal() {
-	a.mainScreen.HideTestPrompt()
-}
+	// Custom title bar. The close action is intercepted and routed through
+	// ShowQuitDialog instead of closing the window directly. ShowQuitDialog
+	// blocks on a native dialog, so it must not run on the frame goroutine.
+	actions := a.decorations.Update(gtx)
+	if actions&system.ActionClose != 0 {
+		actions &^= system.ActionClose
+		go func() {
+			defer logging.HandlePanic()
+			a.ShowQuitDialog()
+		}()
+	}
+	if actions != 0 {
+		a.window.Perform(actions)
+	}
 
-func (a *App) RefreshSearchState() {
-	a.mainScreen.UpdateState()
+	decoStyle := material.Decorations(a.theme, &a.decorations,
+		system.ActionMinimize|system.ActionMaximize|system.ActionClose,
+		"Mod Bisect Tool")
+	decoStyle.Background = theme.BorderColor
+	decoStyle.Foreground = theme.FgColor
+	decoStyle.Title.Color = theme.TextMutedColor
+
+	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(decoStyle.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if a.activeScreen != nil {
+				return a.activeScreen.Layout(gtx, a.theme)
+			}
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		}),
+	)
 }

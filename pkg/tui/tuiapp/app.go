@@ -2,8 +2,10 @@ package tuiapp
 
 import (
 	"context"
-	"sync"
+	"fmt"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/pages"
@@ -14,7 +16,7 @@ import (
 
 // App is the TUI implementation of ui.View.
 type App struct {
-	ui.Controller
+	ui.AppController
 	tviewApp      *tview.Application
 	layoutManager *tui.LayoutManager
 	navManager    *tui.NavigationManager
@@ -32,17 +34,15 @@ type App struct {
 
 	appCtx    context.Context
 	cancelApp context.CancelFunc
-
-	shutdownWg sync.WaitGroup
 }
 
 // NewApp creates and initializes the TUI application.
-func NewApp(controller ui.Controller, logger *logging.Logger) *App {
+func NewApp(controller ui.AppController, logger *logging.Logger) *App {
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
 	a := &App{
-		Controller: controller,
-		tviewApp:   tview.NewApplication(),
+		AppController: controller,
+		tviewApp:      tview.NewApplication(),
 		appCtx:     appCtx,
 		cancelApp:  cancelApp,
 		logger:     logger,
@@ -72,8 +72,11 @@ func NewApp(controller ui.Controller, logger *logging.Logger) *App {
 }
 
 // --- TUIApp Interface implementation ---
-func (a *App) QueueUpdateDraw(f func()) {
-	a.tviewApp.QueueUpdateDraw(f)
+// ExecuteAndDraw runs f on the tview event loop. QueueUpdateDraw must not be
+// called from the event loop itself, so it is always invoked from a fresh
+// goroutine here.
+func (a *App) ExecuteAndDraw(f func()) {
+	go a.tviewApp.QueueUpdateDraw(f)
 }
 
 func (a *App) Navigation() *tui.NavigationManager { return a.navManager }
@@ -84,78 +87,182 @@ func (a *App) GetFocus() tview.Primitive          { return a.tviewApp.GetFocus()
 func (a *App) SetFocus(p tview.Primitive)         { a.tviewApp.SetFocus(p) }
 
 // --- ui.View Interface implementation ---
-func (a *App) Run() error {
+
+func (a *App) Start() error {
 	a.navManager.SwitchTo(tui.PageSetupID)
 	return a.tviewApp.Run()
 }
 
 func (a *App) Stop() {
 	a.cancelApp()
-	a.shutdownWg.Wait()
 	a.tviewApp.Stop()
 }
 
-func (a *App) ShowErrorDialog(title, message string, err error, callback func()) {
-	a.dialogManager.ShowErrorDialog(title, message, err, callback)
-}
-
-func (a *App) ShowInfoDialog(title, message, details string, callback func()) {
-	a.dialogManager.ShowInfoDialog(title, message, details, callback)
-}
-
-func (a *App) ShowQuestionDialog(title, message, details string, onYes, onNo func()) {
-	a.dialogManager.ShowQuestionDialog(title, message, details, onYes, onNo)
-}
-
-func (a *App) ShowQuitDialog() {
-	a.dialogManager.ShowQuitDialog()
-}
-
-func (a *App) SwitchToSetupPage() {
-	a.navManager.SwitchTo(tui.PageSetupID)
-}
-
-func (a *App) SwitchToLoadingPage() {
-	a.navManager.SwitchTo(tui.PageLoadingID)
-}
-
-func (a *App) UpdateLoadingProgress(fileName string, i, count int) {
-	a.QueueUpdateDraw(func() {
-		a.loadingPage.UpdateProgress(fileName, i, count)
+// Update dispatches to the current page so it can repaint itself with the
+// latest state. Everything, including reading the current page, runs on the
+// tview event loop, so navigation state is never touched from other goroutines.
+func (a *App) Update() {
+	a.ExecuteAndDraw(func() {
+		if page := a.navManager.GetCurrentPage(true); page != nil {
+			page.Update()
+		}
 	})
 }
 
-func (a *App) SwitchToMainPage() {
-	a.navManager.SwitchTo(tui.PageMainID)
+// showDialog displays a modal via the DialogManager and blocks until dismissed.
+func (a *App) showDialog(show func(onDismiss func())) {
+	showDialogValue(a, func(onDismiss func(struct{})) {
+		show(func() { onDismiss(struct{}{}) })
+	})
 }
 
-func (a *App) SwitchToResultPage() {
-	resultPage := pages.NewResultPage(a)
-	a.navManager.ShowModal(tui.PageResultID, resultPage)
+// showDialogValue displays a modal via the DialogManager and blocks until it is
+// dismissed, returning the value that was passed to onDismiss.
+func showDialogValue[T any](a *App, show func(onDismiss func(T))) (result T) {
+	done := make(chan T)
+	a.ExecuteAndDraw(func() { show(func(v T) { done <- v }) })
+	return <-done
 }
 
-func (a *App) ShowTestModal(isVerification bool, onSuccess, onFailure, onCancel func()) {
-	onSuccessWrapped := func() { a.navManager.CloseModal(); onSuccess() }
-	onFailureWrapped := func() { a.navManager.CloseModal(); onFailure() }
-	onCancelWrapped := func() { a.navManager.CloseModal(); onCancel() }
-
-	testPage := pages.NewTestPage(a, isVerification, onSuccessWrapped, onFailureWrapped, onCancelWrapped)
-	a.navManager.ShowModal(tui.PageTestID, testPage)
+func (a *App) ShowDialogErrorModLoadingGeneric(path string, err error) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowErrorDialog(
+			"Mod Loading Error",
+			fmt.Sprintf("Failed to load mods from '%s'", path),
+			err,
+			func() {
+				a.navManager.SwitchTo(tui.PageSetupID)
+				onDismiss()
+			},
+		)
+	})
 }
 
-func (a *App) CloseModal() {
-	a.navManager.CloseModal()
+func (a *App) ShowDialogErrorModLoadingNoMods(path string) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowErrorDialog(
+			"Mod Loading Error",
+			fmt.Sprintf("No mods were found at '%s'.\nPlease ensure that you've entered the path correctly.", path),
+			nil,
+			func() {
+				a.navManager.SwitchTo(tui.PageSetupID)
+				onDismiss()
+			},
+		)
+	})
 }
 
-func (a *App) RefreshSearchState() {
-	if obs, ok := a.navManager.GetCurrentPage(true).(tui.SearchStateObserver); ok {
-		go func() {
-			defer logging.HandlePanic()
-			a.QueueUpdateDraw(func() {
-				obs.RefreshSearchState()
-			})
-		}()
-	}
+func (a *App) ShowDialogErrorBisectionInitialization(err error) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowErrorDialog(
+			"Initialization Error",
+			"Failed to initialize the bisection!",
+			err,
+			func() {
+				a.navManager.SwitchTo(tui.PageSetupID)
+				onDismiss()
+			},
+		)
+	})
+}
+
+func (a *App) ShowDialogErrorBisectionCannotContinue(err error) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowErrorDialog(
+			"Bisection Error",
+			"Cannot continue the search!",
+			err,
+			onDismiss,
+		)
+	})
+}
+
+func (a *App) ShowDialogErrorBisectionPrepare(err error) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowErrorDialog(
+			"Bisection Error",
+			"An error occurred and the next step could not be prepared.\nIf another program, like Minecraft, is currently accessing your mods, please close it.\n\nPlease check the application log for details.",
+			err,
+			onDismiss,
+		)
+	})
+}
+
+func (a *App) ShowDialogInfoBisectionModsMissingExpected(missingMods sets.Set) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowInfoDialog(
+			"Known Problematic Mod(s) Removed",
+			"The following mod(s), which were part of a known conflict set, have been detected as missing. This is expected. The search will now proceed with the updated mod list.",
+			sets.FormatSet(missingMods).String(),
+			onDismiss,
+		)
+	})
+}
+
+func (a *App) ShowDialogInfoBisectionUnresolvableModsDisabled(disabledMods sets.Set) {
+	a.showDialog(func(onDismiss func()) {
+		a.dialogManager.ShowInfoDialog(
+			"Disabled Mods",
+			"The following mods were automatically disabled due to unmet dependencies:",
+			sets.FormatSet(disabledMods).String(),
+			onDismiss,
+		)
+	})
+}
+
+func (a *App) ShowDialogQuestionBisectionContinueWithMissingMods(missingMods sets.Set) bool {
+	return showDialogValue(a, func(onDismiss func(bool)) {
+		a.dialogManager.ShowQuestionDialog(
+			"Missing Mod Files Detected",
+			"The following mod files were unexpectedly missing. Do you want to continue the search without them?",
+			sets.FormatSet(missingMods).String(),
+			func() { onDismiss(true) },
+			func() { onDismiss(false) },
+		)
+	})
+}
+
+func (a *App) OnLoadingStarted() {
+	a.ExecuteAndDraw(func() { a.navManager.SwitchTo(tui.PageLoadingID) })
+}
+
+func (a *App) OnLoadingProgress(fileName string, i, count int) {
+	a.ExecuteAndDraw(func() { a.loadingPage.UpdateProgress(fileName, i, count) })
+}
+
+func (a *App) OnBisectionReady() {
+	a.ExecuteAndDraw(func() { a.navManager.SwitchTo(tui.PageMainID) })
+}
+
+func (a *App) OnTestReady() {
+	vm := a.GetViewModel()
+	isVerification := vm.IsVerificationStep
+	a.ExecuteAndDraw(func() {
+		testPage := pages.NewTestPage(
+			a,
+			isVerification,
+			func() {
+				a.navManager.CloseModal()
+				a.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
+			},
+			func() {
+				a.navManager.CloseModal()
+				a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
+			},
+			func() {
+				a.navManager.CloseModal()
+				a.GetBisectionController().CancelTest()
+			},
+		)
+		a.navManager.ShowModal(tui.PageTestID, testPage)
+	})
+}
+
+func (a *App) OnIterationComplete() {
+	a.ExecuteAndDraw(func() {
+		resultPage := pages.NewResultPage(a)
+		a.navManager.ShowModal(tui.PageResultID, resultPage)
+	})
 }
 
 // setupGlobalInputCapture defines application-wide keybindings.
@@ -180,10 +287,7 @@ func (a *App) setupGlobalInputCapture() {
 					return nil
 				}
 			case tcell.KeyCtrlC:
-				go func() {
-					defer logging.HandlePanic()
-					a.QueueUpdateDraw(a.dialogManager.ShowQuitDialog)
-				}()
+				a.ExecuteAndDraw(a.dialogManager.ShowQuitDialog)
 				return nil
 			case tcell.KeyCtrlH, tcell.KeyDEL: // For some fucked up reason Ctrl+H is sent as DEL in some terminals
 				if a.navManager.GetCurrentPageID(true) != tui.PageHistoryID {

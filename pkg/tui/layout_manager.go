@@ -120,7 +120,7 @@ func (lm *LayoutManager) updateErrorCounters() {
 
 	// prevent unnecessary draws
 	if lm.prevErrorCount != errorCount || lm.prevWarningCount != warningCount {
-		lm.app.QueueUpdateDraw(func() {
+		lm.app.ExecuteAndDraw(func() {
 			lm.SetErrorCounters(warningCount, errorCount)
 		})
 	}

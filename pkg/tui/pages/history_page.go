@@ -113,8 +113,7 @@ func (p *HistoryPage) refreshHistory() {
 	}
 
 	p.historyCache = vm.ExecutionLog
-	allMods := p.app.GetStateManager().GetAllModIDs()
-	p.detailOverviewWidget.SetAllMods(allMods)
+	p.detailOverviewWidget.SetAllMods(vm.AllModIDs)
 
 	if len(p.historyCache) == 0 {
 		p.masterList.AddItem(tview.NewTextView().SetText("No history yet."), 1, 0, false)
@@ -130,7 +129,7 @@ func (p *HistoryPage) refreshHistory() {
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
-		overview := widgets.NewOverviewWidget(allMods)
+		overview := widgets.NewOverviewWidget(vm.AllModIDs)
 		overview.SetBackgroundColor(tcell.ColorNone)
 		p.updateOverviewState(overview, &entry)
 
@@ -158,7 +157,7 @@ func (p *HistoryPage) refreshHistory() {
 }
 
 func (p *HistoryPage) updateOverviewState(overview *widgets.OverviewWidget, entry *imcs.CompletedTest) {
-	effective, _ := p.app.GetStateManager().ResolveEffectiveSet(entry.Plan.ModIDsToTest)
+	effective := p.app.GetModStatusController().ResolveEffectiveSet(entry.Plan.ModIDsToTest)
 
 	candidates := sets.Set{}
 	// This makes the display more intuitive
@@ -236,3 +235,6 @@ func (p *HistoryPage) GetFocusablePrimitives() []tview.Primitive {
 		p.detailSetsText,
 	}
 }
+
+// Update implements the Page interface.
+func (p *HistoryPage) Update() {}

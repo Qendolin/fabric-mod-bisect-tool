@@ -64,14 +64,14 @@ Please launch Minecraft and confirm the failure persists.`
 		SetTextAlign(tview.AlignCenter).
 		SetText(message)
 
-	p.successBtn = tview.NewButton("Success (Issue gone)").
+	p.successBtn = tview.NewButton("✓ Works").
 		SetSelectedFunc(p.onSuccess)
 	p.successBtn.SetDisabled(true)
 	p.successBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkGreen).Background(tcell.ColorWhite))
 	p.successBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen).Underline(true))
 
-	p.failBtn = tview.NewButton("Failure (Issue remains)").
+	p.failBtn = tview.NewButton("✗ Broken").
 		SetSelectedFunc(p.onFailure)
 	p.failBtn.SetDisabled(true)
 	p.failBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
@@ -89,7 +89,7 @@ Please launch Minecraft and confirm the failure persists.`
 	go func() {
 		defer logging.HandlePanic()
 		time.Sleep(300 * time.Millisecond)
-		p.app.QueueUpdateDraw(func() {
+		p.app.ExecuteAndDraw(func() {
 			p.successBtn.SetDisabled(false)
 			p.failBtn.SetDisabled(false)
 			p.backBtn.SetDisabled(false)
@@ -140,8 +140,8 @@ Please launch Minecraft and confirm the failure persists.`
 func (p *TestPage) GetActionPrompts() []tui.ActionPrompt {
 	return []tui.ActionPrompt{
 		{Input: "ESC", Action: "Back (Cancel Step)"},
-		{Input: "A", Action: "Success"},
-		{Input: "D", Action: "Failure"},
+		{Input: "A", Action: "Works (✓)"},
+		{Input: "D", Action: "Broken (✗)"},
 	}
 }
 
@@ -158,3 +158,6 @@ func (p *TestPage) GetFocusablePrimitives() []tview.Primitive {
 		p.failBtn,
 	}
 }
+
+// Update implements the Page interface.
+func (p *TestPage) Update() {}

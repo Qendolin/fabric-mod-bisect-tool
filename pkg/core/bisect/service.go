@@ -31,17 +31,15 @@ type Service struct {
 
 	enumState *Enumeration
 
-	// The OnStateChange callback is now only for simple UI redraw notifications.
-	OnStateChange func()
-
-	// A flag indicating that the system's dependency state may be inconsistent.
-	needsReconciliation bool
-	isReconciling       bool // Guard flag against infinite loops
+	// lastReconcileRevision is the StateManager revision at the last time the
+	// state was reconciled. NeedsReconciliation reports whether the revision
+	// has since advanced, i.e. whether mod statuses changed.
+	lastReconcileRevision int
 }
 
 // NewService creates a new bisect service from pre-loaded components.
 func NewService(stateMgr *mods.StateManager, activator *mods.Activator) (*Service, error) {
-	if err := activator.EnableAll(stateMgr.GetModStatusesSnapshot()); err != nil {
+	if err := activator.Initialize(stateMgr.GetModStatusesSnapshot()); err != nil {
 		return nil, fmt.Errorf("failed to enable all mods on startup: %w", err)
 	}
 
@@ -50,29 +48,12 @@ func NewService(stateMgr *mods.StateManager, activator *mods.Activator) (*Servic
 	initialState.Candidates = stateMgr.GetAllModIDs()
 	engine := imcs.NewEngine(initialState)
 
-	svc := &Service{
+	return &Service{
 		state:     stateMgr,
 		activator: activator,
 		engine:    engine,
 		enumState: NewEnumeration(),
-	}
-
-	// When the StateManager changes, mark the service as needing reconciliation
-	// and then forward the notification to the UI.
-	stateMgr.OnStateChanged = func() {
-		if svc.isReconciling {
-			return
-		}
-		svc.needsReconciliation = true
-		if svc.OnStateChange != nil {
-			svc.OnStateChange()
-		}
-	}
-
-	// Perform an initial reconciliation to ensure a clean starting state.
-	svc.ReconcileState()
-
-	return svc, nil
+	}, nil
 }
 
 // --- Direct Component Access ---
@@ -88,23 +69,16 @@ func (s *Service) GetCurrentState() imcs.SearchState {
 	return s.engine.GetCurrentState()
 }
 
-// NeedsReconciliation returns true if the system state may be inconsistent
-// and a call to ReconcileState is required before performing major operations.
+// NeedsReconciliation returns true if the mod statuses have changed since the
+// last reconciliation, meaning the service state may be inconsistent and must
+// be reconciled before the next step is planned.
 func (s *Service) NeedsReconciliation() bool {
-	return s.needsReconciliation
+	return s.state.StateRevision() != s.lastReconcileRevision
 }
 
 // ReconcileState checks for and resolves dependency inconsistencies. It is safe
-// to call multiple times; it will do nothing if the state is already consistent.
-// It returns a report of any mods whose state was changed.
+// to call multiple times. It returns a report of any mods whose state was changed.
 func (s *Service) ReconcileState() (report ActionReport) {
-	if !s.needsReconciliation {
-		return
-	}
-
-	s.isReconciling = true
-	defer func() { s.isReconciling = false }()
-
 	logging.Debugf("BisectService: Reconciling system state.")
 
 	// Calculate what the set of unresolvable mods should be.
@@ -136,51 +110,60 @@ func (s *Service) ReconcileState() (report ActionReport) {
 	// After reconciliation, the bisection engine's view of candidates might be stale.
 	engineStateChanged := s.engine.Reconcile(s.getSearchCandidates())
 
-	// The state is now consistent, so clear the flag.
-	s.needsReconciliation = false
+	// Record the current state revision so NeedsReconciliation is false until
+	// the next actual status change. This must happen after the mutations above.
+	s.lastReconcileRevision = s.state.StateRevision()
 
 	report.HasChanges = modStateChanged || engineStateChanged
 	report.ModsSetUnresolvable = newlyUnresolvable
 
-	// A reconciliation always implies the state may have changed in ways that
-	// require a UI refresh (e.g., engine's pending additions cleared).
-	// Notify the app so it can trigger a redraw.
-	if report.HasChanges && s.OnStateChange != nil {
-		s.OnStateChange()
-	}
-
 	return
+}
+
+func (s *Service) GetActiveTestPlan() *imcs.TestPlan {
+	return s.engine.GetActiveTestPlan()
 }
 
 // PlanAndApplyNextTest is the single entry point for the UI's "Step" action.
 // It will fail if the system state is inconsistent.
-func (s *Service) PlanAndApplyNextTest() (plan *imcs.TestPlan, changes []mods.BatchStateChange, err error) {
-	// 1. Guard Clause: Refuse to operate on an inconsistent state.
+func (s *Service) PlanAndApplyNextTest() error {
 	if s.NeedsReconciliation() {
-		return nil, nil, ErrNeedsReconciliation
+		return ErrNeedsReconciliation
 	}
 
-	// 2. Plan the very next logical test.
-	plan, err = s.engine.PlanNextTest()
+	// Plan the very next logical test.
+	plan, err := s.engine.PlanNextTest()
 	if err != nil {
-		return nil, nil, err // Search is complete or cannot proceed.
+		return err // Search is complete, test in progress or cannot proceed.
 	}
 
 	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
 
 	// 3. Resolve and activate the mod set for the test.
 	logging.Info("BisectService: Resolving effective set for test targets.")
-	effectiveSet, resolutionPath := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
-	logging.Infof("BisectService: %v", resolutionPath)
+	result := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+	logging.Infof("BisectService: %v", result.Path)
+	for _, dep := range result.UnresolvableDeps {
+		logging.Error("BisectService: " + dep.String())
+	}
 
 	statuses := s.state.GetModStatusesSnapshot()
-	finalEffectiveSet := s.finalizeEffectiveSet(effectiveSet, statuses)
+	finalEffectiveSet := s.finalizeEffectiveSet(result.EffectiveSet, statuses)
 
 	logging.Debugf("BisectService: Final effective set contains %d mods: %v", len(finalEffectiveSet), sets.FormatSet(finalEffectiveSet))
 
-	changes, err = s.activator.Apply(finalEffectiveSet, statuses)
+	restoreSnap := s.activator.Snapshot()
+	if err = s.activator.Activate(finalEffectiveSet); err != nil {
+		// Try restore, if that fails return original error
+		if ignored := s.activator.Restore(restoreSnap); ignored != nil {
+			logging.Debugf("BisectService: Activator.Apply failed and Restore too.")
+			return err
+		}
+		logging.Debugf("BisectService: Activator.Apply failed but Restore successful")
+		return err
+	}
 
-	return plan, changes, err
+	return nil
 }
 
 // finalizeEffectiveSet takes the resolver's proposed set and applies manual overrides.
@@ -201,8 +184,7 @@ func (s *Service) finalizeEffectiveSet(proposedSet sets.Set, statuses map[string
 }
 
 // SubmitTestResult processes the outcome of a test.
-func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchStateChange) {
-	s.activator.Revert(changes)
+func (s *Service) SubmitTestResult(result imcs.TestResult) {
 	plan := s.engine.GetActiveTestPlan()
 	if plan == nil {
 		logging.Error("BisectService: Attempted to submit result without an active plan.")
@@ -211,9 +193,6 @@ func (s *Service) SubmitTestResult(result imcs.TestResult, changes []mods.BatchS
 
 	if err := s.engine.SubmitTestResult(result); err != nil {
 		logging.Errorf("BisectService: Failed to submit test result to engine: %v", err)
-	}
-	if s.OnStateChange != nil {
-		s.OnStateChange()
 	}
 }
 
@@ -225,22 +204,18 @@ func (s *Service) UndoLastStep() error {
 
 	undoneFrame, ok := s.engine.Undo()
 	if !ok {
-		return errors.New("cannot undo: undo stack is empty")
+		return ErrUndoStackEmpty
 	}
 	logging.Infof("BisectService: Undone frame: Round %d, Iteration %d, Step %d.", undoneFrame.State.Round, undoneFrame.State.Iteration, undoneFrame.State.Step)
 
-	// Undoing a step can change what's considered unresolvable.
-	s.needsReconciliation = true
-	if s.OnStateChange != nil {
-		s.OnStateChange()
-	}
+	// Undoing a step can change what's considered unresolvable; the caller is
+	// expected to reconcile afterwards (see App.Undo).
 
 	return nil
 }
 
 // CancelTest reverts file changes and invalidates the current test plan.
-func (s *Service) CancelTest(changes []mods.BatchStateChange) {
-	s.activator.Revert(changes)
+func (s *Service) CancelTest() {
 	s.engine.InvalidateActivePlan()
 }
 
@@ -261,7 +236,8 @@ func (s *Service) ContinueSearch() (ActionReport, error) {
 	logging.Infof("BisectService: Starting 'Continue Search' for Round %d.", lastState.Round+1)
 
 	// Mark the found conflict set as problematic. This is a primary state change
-	// that will trigger our `OnStateChange` hook, setting `needsReconciliation` to true.
+	// that advances the StateManager revision; the reconcile below brings the
+	// service back in sync.
 	s.state.SetProblematicBatch(sets.MakeSlice(lastConflictSet), true)
 
 	// Archive the enumeration results for historical records.
@@ -315,12 +291,6 @@ func (s *Service) ResetSearch() {
 	initialState.AllModIDs = allModIDs
 	initialState.Candidates = allModIDs
 	s.engine = imcs.NewEngine(initialState)
-
-	// Mark state as dirty to force a full reconciliation on the next action.
-	s.needsReconciliation = true
-	if s.OnStateChange != nil {
-		s.OnStateChange()
-	}
 }
 
 // --- Helper Methods ---

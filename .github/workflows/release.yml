@@ -34,15 +34,15 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux: native runners per arch
+          # Linux: native runners per arch (CGO required)
           - { goos: linux, goarch: amd64, runner: ubuntu-latest }
           - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm }
-          # Windows: cross-compile from Linux (mingw for amd64, Zig for arm64)
+          # Windows: pure-Go cross-compilation (CGO disabled), packaged via gogio
           - { goos: windows, goarch: amd64, runner: ubuntu-latest }
           - { goos: windows, goarch: arm64, runner: ubuntu-latest }
           # macOS: native runners — cross-compiling macOS/CGO from Linux requires
           # a full osxcross setup that is fragile and SDK-license-constrained.
-          # macos-13 = last Intel runner; macos-latest = Apple Silicon (arm64).
+          # macos-15-intel = last Intel runner; macos-latest = Apple Silicon (arm64).
           - { goos: darwin, goarch: amd64, runner: macos-15-intel }
           - { goos: darwin, goarch: arm64, runner: macos-latest }
 
@@ -56,18 +56,11 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      # Zig is the cleanest cross-compiler for Windows ARM64 CGO
-      - name: Install Zig (Windows ARM64 only)
-        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
-
       - name: Install Linux GUI dependencies
         if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev build-essential
+          sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
 
       - name: Install go-appimage (appimagetool)
         if: matrix.goos == 'linux'
@@ -90,23 +83,22 @@ jobs:
           wget -c "https://github.com/${asset_path}"
           chmod +x appimagetool-*.AppImage
 
-      - name: Install Windows cross-compiler (AMD64 only)
-        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
-        run: sudo apt-get install -y mingw-w64
-
-      - name: Install Fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@latest
+      - name: Install gogio
+        if: matrix.goos != 'linux'
+        run: go install gioui.org/cmd/gogio@v0.10.0
 
       - name: Build and package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          # Windows is pure-Go; Linux and macOS require CGO.
+          CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
         run: >
           python3 scripts/build_gui.py
           --goos    ${{ matrix.goos }}
           --goarch  ${{ matrix.goarch }}
           --tag     ${{ github.event.release.tag_name }}
+          --icon    cmd/mod-bisect-gui/Icon-Small.png
 
       # Upload binaries directly to the GitHub release (mirrors what go-release-action
       # does for the TUI job). The workflow artifact upload below is a bonus cache.

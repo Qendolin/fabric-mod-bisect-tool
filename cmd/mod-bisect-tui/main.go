@@ -25,6 +25,9 @@ func main() {
 			if tuiApp != nil {
 				tuiApp.Stop()
 			}
+			if a != nil {
+				a.RestoreInitialModState()
+			}
 			fmt.Fprintf(os.Stderr, "panic: %v\n%s", p.Value, string(p.Stack))
 			os.Exit(2)
 		}
@@ -88,27 +91,28 @@ func main() {
 	// 4. Goroutine to handle OS signals
 	go func() {
 		<-sigChan
-		tuiApp.QueueUpdateDraw(func() {
-			tuiApp.ShowQuitDialog()
+		tuiApp.ExecuteAndDraw(func() {
+			tuiApp.Dialogs().ShowQuitDialog()
 		})
 	}()
 
 	// 5. Run the application
 	logging.Infof("Main: Application starting up.")
-	if err := tuiApp.Run(); err != nil {
+	if err := tuiApp.Start(); err != nil {
 		logging.Errorf("Main: Application exited with error: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		a.RestoreInitialModState()
 		os.Exit(1)
 	}
+	a.RestoreInitialModState()
 
 	if a.IsBisectionReady() {
 		finalReport := app.GenerateLogReport(
 			a.GetViewModel(),
-			a.GetStateManager(),
+			a.GetResultViewModel(),
 		)
 		logging.Infof("\n===== Bisection Report =====\n\n%s", finalReport)
 	}
 
 	logging.Infof("Main: Application exited gracefully.")
 }
-

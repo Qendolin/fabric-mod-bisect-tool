@@ -2,11 +2,9 @@ package pages
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
@@ -15,6 +13,14 @@ import (
 )
 
 const PageResultID = "result_page"
+
+// resultStyles decorates the shared conflict-set writers with tview color tags.
+// File names are omitted to save space in the terminal.
+var resultStyles = ui.TextStyles{
+	ModID:    func(s string) string { return "[red::b]" + s + "[-:-:-]" },
+	Muted:    func(s string) string { return "[gray]" + s + "[-:-:-]" },
+	ShowFile: false,
+}
 
 // ResultPage displays the final or intermediate results of the bisection search.
 type ResultPage struct {
@@ -34,7 +40,7 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 		statusText: tview.NewTextView().SetDynamicColors(true),
 	}
 
-	vm := app.GetViewModel()
+	vm := app.GetResultViewModel()
 
 	title, message, explanation := p.formatContent(&vm)
 
@@ -66,7 +72,10 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 				"",
 				func() { // OnYes
 					p.app.Navigation().CloseModal()
-					p.app.ContinueSearch()
+					go func() {
+						defer logging.HandlePanic()
+						p.app.GetBisectionController().ContinueSearch()
+					}()
 				},
 				nil, // OnNo
 			)
@@ -74,7 +83,7 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 	widgets.DefaultStyleButton(p.continueButton)
 
 	// Determine if the "Continue Search" button should be shown.
-	canContinue := vm.IsComplete && len(vm.CandidateSet) > 0
+	canContinue := vm.CanContinueSearch
 	buttonLayout := tview.NewFlex().
 		AddItem(tview.NewBox(), 0, 1, false)
 
@@ -106,27 +115,19 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 }
 
 // formatContent generates the appropriate text based on the bisection ViewModel.
-func (p *ResultPage) formatContent(vm *ui.BisectionViewModel) (title, message, explanation string) {
-	if !vm.IsReady {
+func (p *ResultPage) formatContent(vm *ui.ResultViewModel) (title, message, explanation string) {
+	if vm.State == ui.StateNotReady {
 		return formatNotReadyContent()
 	}
 
-	modState := p.app.GetStateManager()
-	modMap := modState.GetAllMods()
+	// Combine all found conflict sets for display. For a complete search, this includes the final set found.
 
-	// Combine all found conflict sets for display. For a complete search,
-	// this includes the final set found.
-	allFoundSets := vm.AllConflictSets
-	if vm.IsComplete && len(vm.CurrentConflictSet) > 0 {
-		allFoundSets = append(allFoundSets, vm.CurrentConflictSet)
+	if vm.State == ui.StateComplete {
+		return formatCompleteContent(vm)
 	}
 
-	if vm.IsComplete {
-		return formatCompleteContent(vm, allFoundSets, modMap, modState)
-	}
-
-	if vm.LastFoundElement != "" {
-		return formatInProgressContent(vm, modMap, modState)
+	if vm.State == ui.StateInProgress {
+		return formatInProgressContent(vm)
 	}
 
 	// No conflict element has been found yet.
@@ -155,7 +156,8 @@ func formatNoResultsYetContent() (title, message, explanation string) {
 }
 
 // formatInProgressContent: at least one conflict element has been found, but the
-// search is not yet complete. Handles two sub-states:
+// search is not yet complete.
+// Handles two sub-states:
 //
 //   - Element found, awaiting verification: a new element was just isolated but
 //     the verification test (does the set reproduce the issue alone?) has not run yet.
@@ -163,32 +165,19 @@ func formatNoResultsYetContent() (title, message, explanation string) {
 //
 //   - Set incomplete, searching for next element: verification returned GOOD (the current
 //     set is not sufficient by itself), or we are mid-bisection looking for the next
-//     element. At least one more mod is known to be involved.
+//     element.
+//     At least one more mod is known to be involved.
 //
 // In both sub-states the user can already fix the issue by disabling one of the found mods.
-func formatInProgressContent(vm *ui.BisectionViewModel, modMap map[string]*mods.Mod, modState *mods.StateManager) (title, message, explanation string) {
+func formatInProgressContent(vm *ui.ResultViewModel) (title, message, explanation string) {
 	title = "Intermediate Result"
 
 	var b strings.Builder
 
-	allModsSet := sets.MakeSet(modState.GetAllModIDs())
-	generallyUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
-
-	// Show any fully completed conflict sets from previous rounds.
-	if len(vm.AllConflictSets) > 0 {
-		fmt.Fprintf(&b, "Found [yellow::b]%d[-:-:-] complete conflict set(s) in previous rounds.\n", len(vm.AllConflictSets))
-		for i, cs := range vm.AllConflictSets {
-			if len(vm.AllConflictSets) > 1 {
-				fmt.Fprintf(&b, "\n[::u]Conflict #%d[-:-:-]\n", i+1)
-			}
-			writeConflictSet(&b, cs, allModsSet, modMap, generallyUnresolvable, modState)
-		}
-		b.WriteString("\n")
-	}
-
-	// Show the current, still-growing conflict set.
-	fmt.Fprintf(&b, "Current conflict - [yellow::b]%d[-:-:-] mod(s) found so far:\n", len(vm.CurrentConflictSet))
-	writeConflictSetMods(&b, vm.CurrentConflictSet, allModsSet, modMap, generallyUnresolvable, modState)
+	// Current, still-growing conflict set. It is kept separate from past sets,
+	// which are rendered by writePreviousConflictSets below.
+	fmt.Fprintf(&b, "[::u]Current Conflict[-:-:-] (%d mods found so far)\n", len(vm.CurrentConflict.Mods))
+	ui.WriteConflictSetMods(&b, vm.CurrentConflict.Mods, resultStyles)
 
 	switch {
 	case vm.IsVerificationStep:
@@ -206,52 +195,49 @@ func formatInProgressContent(vm *ui.BisectionViewModel, modMap map[string]*mods.
 			"You can already fix this conflict by disabling one of the mods above.\n" +
 			"Or continue the search to find the remaining mods."
 	}
+	ui.WriteConflictSetFooter(&b, vm.CurrentConflict.IfAllDisabledAlso, resultStyles)
+
+	writePreviousConflictSets(&b, vm)
 
 	message = b.String()
 	return
 }
 
 // formatCompleteContent: the search has finished.
-func formatCompleteContent(vm *ui.BisectionViewModel, allFoundSets []sets.Set, modMap map[string]*mods.Mod, modState *mods.StateManager) (title, message, explanation string) {
+func formatCompleteContent(vm *ui.ResultViewModel) (title, message, explanation string) {
 	title = "Search Complete"
 
 	var b strings.Builder
 
-	if len(allFoundSets) == 0 {
+	if len(vm.CurrentConflict.Mods) == 0 && len(vm.PreviousConflictSets) == 0 {
 		b.WriteString("No problematic mods were found.")
 		explanation = "The bisection process completed without isolating a specific cause for failure."
 		message = b.String()
 		return
 	}
 
-	allModsSet := sets.MakeSet(modState.GetAllModIDs())
-	generallyUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
-
-	if len(allFoundSets) == 1 {
-		fmt.Fprintf(&b, "Found [yellow::b]1[-:-:-] conflict set:\n")
-	} else {
-		fmt.Fprintf(&b, "Found [yellow::b]%d[-:-:-] independent conflict sets:\n", len(allFoundSets))
+	// The most recent conflict set. It is only archived into PreviousConflictSets
+	// once ContinueSearch runs, so it is rendered separately here.
+	if len(vm.CurrentConflict.Mods) > 0 {
+		fmt.Fprintf(&b, "[::u]Current Conflict[-:-:-] (%d mods)\n", len(vm.CurrentConflict.Mods))
+		ui.WriteConflictSet(&b, vm.CurrentConflict, resultStyles)
 	}
 
-	for i, conflictSet := range allFoundSets {
-		if len(allFoundSets) > 1 {
-			fmt.Fprintf(&b, "\n[::u]Conflict #%d[-:-:-]\n", i+1)
-		}
-		writeConflictSet(&b, conflictSet, allModsSet, modMap, generallyUnresolvable, modState)
-	}
+	// Independent conflict sets isolated in previous rounds.
+	writePreviousConflictSets(&b, vm)
 
 	// Generally unresolvable mods section (dependency issues unrelated to conflicts).
-	details := modState.Resolver().CalculateUnresolvableModsDetails(allModsSet)
-	if len(details.DirectlyUnresolvable) > 0 {
-		writeGenerallyUnresolvable(&b, details, modMap)
+	if len(vm.GenerallyUnresolvable) > 0 {
+		b.WriteString("\n[gray]Mods with unresolved or unmet dependencies (may need manual review):\n")
+		ui.WriteGenerallyUnresolvable(&b, vm.GenerallyUnresolvable, resultStyles)
 	}
 
-	if len(allFoundSets) == 1 {
+	if len(vm.PreviousConflictSets) == 0 {
 		explanation = "To fix this conflict, disable one of the mods listed above and relaunch the game.\nOnce resolved, please report the incompatibility to the mod authors."
 	} else {
 		explanation = "To fix each conflict, disable one mod from that conflict's list and relaunch the game.\nOnce resolved, please report the incompatibilities to the mod authors."
 	}
-	if len(vm.CandidateSet) > 0 {
+	if vm.CanContinueSearch {
 		explanation += "\n\nIf issues persist, use 'Continue Search' to find other conflicts."
 	}
 
@@ -259,136 +245,17 @@ func formatCompleteContent(vm *ui.BisectionViewModel, allFoundSets []sets.Set, m
 	return
 }
 
-// ---------------------------------------------------------------------------
-// Conflict-set section writers
-// ---------------------------------------------------------------------------
-
-// writeConflictSet writes the full block for a complete conflict set: per-mod entries
-// (each with its own "also require disabling" sub-list) followed by a footer listing
-// any extra mods that only cascade when the entire set is disabled together.
-func writeConflictSet(b *strings.Builder, conflictSet, allModsSet sets.Set, modMap map[string]*mods.Mod, generallyUnresolvable sets.Set, modState *mods.StateManager) {
-	perModUnresolvableUnion := writeConflictSetMods(b, conflictSet, allModsSet, modMap, generallyUnresolvable, modState)
-	writeConflictSetFooter(b, conflictSet, allModsSet, modMap, generallyUnresolvable, perModUnresolvableUnion, modState)
-}
-
-// writeConflictSetMods writes one entry per mod in the set, each with an indented
-// sub-list of any mods that would also need to be disabled as a side-effect.
-// Returns the union of all per-mod cascading sets, used by writeConflictSetFooter
-// to avoid showing duplicate information.
-func writeConflictSetMods(b *strings.Builder, conflictSet, allModsSet sets.Set, modMap map[string]*mods.Mod, generallyUnresolvable sets.Set, modState *mods.StateManager) (perModUnresolvableUnion sets.Set) {
-	perModUnresolvableUnion = sets.Set{}
-
-	for _, id := range sets.MakeSlice(conflictSet) {
-		modInfo := ""
-		if mod, ok := modMap[id]; ok {
-			modInfo = fmt.Sprintf("(%s %s) from '%s.jar'", mod.FriendlyName(), mod.Metadata.Version, mod.BaseFilename)
-		}
-		fmt.Fprintf(b, "  - [red::b]%s[-:-:-] %s\n", id, modInfo)
-
-		// Per-mod cascading: what else would need to be disabled if only this one mod is removed?
-		perModUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, sets.MakeSet([]string{id})))
-		perModSpecific := sets.Subtract(perModUnresolvable, generallyUnresolvable)
-
-		for extraID := range perModSpecific {
-			perModUnresolvableUnion[extraID] = struct{}{}
-		}
-
-		if len(perModSpecific) > 0 {
-			b.WriteString("    [gray]└ Disabling this mod would also require disabling:\n")
-			for _, depID := range sets.MakeSlice(perModSpecific) {
-				if dep, ok := modMap[depID]; ok {
-					fmt.Fprintf(b, "      [gray]- %s[-:-:-] from '%s.jar'\n", depID, dep.BaseFilename)
-				} else {
-					fmt.Fprintf(b, "      [gray]- %s[-:-:-] from unknown\n", depID)
-				}
-			}
-		}
+// writePreviousConflictSets renders the archived conflict sets from previous
+// rounds under numbered "Independent Conflict Set" headers. Numbering continues
+// after the current conflict set when it has entries.
+func writePreviousConflictSets(b *strings.Builder, vm *ui.ResultViewModel) {
+	start := 1
+	if len(vm.CurrentConflict.Mods) > 0 {
+		start = 2
 	}
-
-	return
-}
-
-// writeConflictSetFooter appends a note about mods that would only become unresolvable
-// when *all* mods in the conflict set are disabled simultaneously - i.e., extra cascading
-// mods not already surfaced by any individual mod's entry above.
-func writeConflictSetFooter(b *strings.Builder, conflictSet, allModsSet sets.Set, modMap map[string]*mods.Mod, generallyUnresolvable, perModUnresolvableUnion sets.Set, modState *mods.StateManager) {
-	fullSetUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(sets.Subtract(allModsSet, conflictSet))
-	fullSetSpecific := sets.Subtract(fullSetUnresolvable, generallyUnresolvable)
-
-	// Only show mods not already surfaced by the individual per-mod entries.
-	extraIfAll := sets.Subtract(fullSetSpecific, perModUnresolvableUnion)
-	if len(extraIfAll) == 0 {
-		return
-	}
-
-	b.WriteString("  [gray]If you disable all mods in this conflict, you would also need to disable:\n")
-	for _, depID := range sets.MakeSlice(extraIfAll) {
-		if dep, ok := modMap[depID]; ok {
-			fmt.Fprintf(b, "    [gray]- %s[-:-:-] from '%s.jar'\n", depID, dep.BaseFilename)
-		} else {
-			fmt.Fprintf(b, "    [gray]- %s[-:-:-] from unknown\n", depID)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Generally-unresolvable section writer
-// ---------------------------------------------------------------------------
-
-// writeGenerallyUnresolvable appends the section listing mods with broken dependencies
-// that are unrelated to any identified conflict set.
-func writeGenerallyUnresolvable(b *strings.Builder, details mods.UnresolvableModDetails, modMap map[string]*mods.Mod) {
-	b.WriteString("\n[gray]Mods with unresolved or unmet dependencies (may need manual review):\n")
-
-	// Invert the transitive mapping to easily look up "which mods does this root cause break?"
-	causedByRoot := make(map[string]sets.Set)
-	for transitiveID, roots := range details.TransitivelyUnresolvable {
-		for rootID := range roots {
-			if _, ok := causedByRoot[rootID]; !ok {
-				causedByRoot[rootID] = sets.Set{}
-			}
-			causedByRoot[rootID][transitiveID] = struct{}{}
-		}
-	}
-
-	// Sort top-level directly unresolvable mods for deterministic output.
-	topLevelSlice := make([]string, 0, len(details.DirectlyUnresolvable))
-	for modID := range details.DirectlyUnresolvable {
-		topLevelSlice = append(topLevelSlice, modID)
-	}
-	sort.Strings(topLevelSlice)
-
-	for _, modID := range topLevelSlice {
-		if mod, ok := modMap[modID]; ok {
-			fmt.Fprintf(b, "[gray]  - %s from '%s.jar'\n", modID, mod.BaseFilename)
-
-			// 1. Display directly missing dependencies.
-			if failedDeps := details.DirectlyUnresolvable[modID]; len(failedDeps) > 0 {
-				b.WriteString("[gray]    └ Unresolved or unmet dependencies:\n")
-				sort.Strings(failedDeps)
-				for _, depID := range failedDeps {
-					if providerMod, ok := modMap[depID]; ok {
-						fmt.Fprintf(b, "[gray]      - %s from '%s.jar'\n", depID, providerMod.BaseFilename)
-					} else {
-						fmt.Fprintf(b, "[gray]      - %s from unknown\n", depID)
-					}
-				}
-			}
-
-			// 2. Display transitively broken mods that depend on this root.
-			if caused, ok := causedByRoot[modID]; ok && len(caused) > 0 {
-				b.WriteString("[gray]    └ Disabling this mod would also require disabling:\n")
-				causedSlice := sets.MakeSlice(caused)
-				sort.Strings(causedSlice)
-				for _, depID := range causedSlice {
-					if depMod, ok := modMap[depID]; ok {
-						fmt.Fprintf(b, "[gray]      - %s from '%s.jar'\n", depID, depMod.BaseFilename)
-					} else {
-						fmt.Fprintf(b, "[gray]      - %s from unknown\n", depID)
-					}
-				}
-			}
-		}
+	for i, cs := range vm.PreviousConflictSets {
+		fmt.Fprintf(b, "\n[::u]Independent Conflict Set #%d[-:-:-]\n", i+start)
+		ui.WriteConflictSet(b, cs, resultStyles)
 	}
 }
 
@@ -413,3 +280,6 @@ func (p *ResultPage) GetFocusablePrimitives() []tview.Primitive {
 	primitives = append(primitives, p.resultView)
 	return primitives
 }
+
+// Update implements the Page interface.
+func (p *ResultPage) Update() {}

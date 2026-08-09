@@ -72,7 +72,7 @@ func (p *LogPage) startPolling() {
 			case <-ticker.C:
 				allLogs := p.app.GetLogger().Store().GetAll()
 				if len(allLogs) != p.lastLogCount {
-					p.app.QueueUpdateDraw(func() {
+					p.app.ExecuteAndDraw(func() {
 						p.refreshLogs(false)
 					})
 				}
@@ -219,3 +219,6 @@ func (p *LogPage) GetStatusPrimitive() *tview.TextView {
 func (p *LogPage) OnPageActivated() {
 	p.startPolling()
 }
+
+// Update implements the Page interface.
+func (p *LogPage) Update() {}

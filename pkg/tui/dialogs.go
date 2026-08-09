@@ -25,15 +25,12 @@ func (m *DialogManager) ShowErrorDialog(title, message string, err error, onDism
 		SetCenteredText(message).
 		AddButtons([]string{"Dismiss"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go func() {
-				defer logging.HandlePanic()
-				m.app.QueueUpdateDraw(func() {
-					m.app.Navigation().CloseModal()
-					if onDismiss != nil {
-						onDismiss()
-					}
-				})
-			}()
+			m.app.ExecuteAndDraw(func() {
+				m.app.Navigation().CloseModal()
+				if onDismiss != nil {
+					onDismiss()
+				}
+			})
 		})
 	if err != nil {
 		modal.SetDetailsText(tview.Escape(formatErrorChain(err)))
@@ -53,18 +50,15 @@ func (m *DialogManager) ShowQuitDialog() {
 		SetCenteredText("Are you sure you want to quit?").
 		AddButtons([]string{"Cancel", "Quit"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go func() {
-				defer logging.HandlePanic()
-				m.app.QueueUpdateDraw(func() {
-					m.app.Navigation().CloseModal()
-					switch buttonIndex {
-					case 1:
-						logging.Info("App: Quitting.")
-						m.app.Stop()
-					case 0:
-					}
-				})
-			}()
+			m.app.ExecuteAndDraw(func() {
+				m.app.Navigation().CloseModal()
+				switch buttonIndex {
+				case 1:
+					logging.Info("App: Quitting.")
+					m.app.Stop()
+				case 0:
+				}
+			})
 		})
 	modal.SetTextColor(tcell.ColorBlack).
 		SetTitleColor(tcell.ColorBlack).
@@ -78,22 +72,19 @@ func (m *DialogManager) ShowQuestionDialog(title, question, details string, onYe
 		SetCenteredText(question).
 		AddButtons([]string{"No", "Yes"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go func() {
-				defer logging.HandlePanic()
-				m.app.QueueUpdateDraw(func() {
-					m.app.Navigation().CloseModal()
-					switch buttonLabel {
-					case "Yes":
-						if onYes != nil {
-							onYes()
-						}
-					case "No":
-						if onNo != nil {
-							onNo()
-						}
+			m.app.ExecuteAndDraw(func() {
+				m.app.Navigation().CloseModal()
+				switch buttonLabel {
+				case "Yes":
+					if onYes != nil {
+						onYes()
 					}
-				})
-			}()
+				case "No":
+					if onNo != nil {
+						onNo()
+					}
+				}
+			})
 		})
 	if details != "" {
 		modal.SetDetailsText(details)
@@ -111,15 +102,12 @@ func (m *DialogManager) ShowInfoDialog(title, message, details string, onDismiss
 		SetCenteredText(message).
 		AddButtons([]string{"Dismiss"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			go func() {
-				defer logging.HandlePanic()
-				m.app.QueueUpdateDraw(func() {
-					m.app.Navigation().CloseModal()
-					if onDismiss != nil {
-						onDismiss()
-					}
-				})
-			}()
+			m.app.ExecuteAndDraw(func() {
+				m.app.Navigation().CloseModal()
+				if onDismiss != nil {
+					onDismiss()
+				}
+			})
 		})
 	if details != "" {
 		modal.SetDetailsText(details)
@@ -150,6 +138,9 @@ func (p *ModalPage) GetActionPrompts() []ActionPrompt {
 func (p *ModalPage) GetStatusPrimitive() *tview.TextView {
 	return nil
 }
+
+// Update implements the Page interface.
+func (p *ModalPage) Update() {}
 
 // formatErrorChain unwraps a chain of Go errors and formats them
 // into a multi-line string, with each level of the error on a new line.

@@ -2,165 +2,367 @@ package mods
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 )
 
-const disabledExtension = ".disabled"
+type FileAdapter struct {
+	// Has to be a clean path
+	BaseDirectory string
+}
+
+func (a FileAdapter) apply(path string, enable bool) error {
+	var newPath string
+	if enable {
+		newPath = a.EnabledPath(path)
+	} else {
+		newPath = a.DisabledPath(path)
+	}
+
+	if err := os.Rename(path, newPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// path can be a full path or just a filename
+func (a FileAdapter) BasePath(path string) string {
+	dir, file := filepath.Split(path)
+	file = a.BaseFilename(file)
+	if dir == "" {
+		dir = a.BaseDirectory
+	}
+	return filepath.Join(dir, file)
+}
+
+func (a FileAdapter) BaseFilename(filename string) string {
+	filename = strings.TrimSuffix(filename, ".disabled")
+	return strings.TrimSuffix(filename, ".jar")
+}
+
+func (a FileAdapter) EnabledPath(path string) string {
+	base := a.BasePath(path)
+	return base + ".jar"
+}
+
+func (a FileAdapter) DisabledPath(path string) string {
+	base := a.BasePath(path)
+	return base + ".jar.disabled"
+}
+
+func (a FileAdapter) Disable(path string) error {
+	return a.apply(path, false)
+}
+
+func (a FileAdapter) Enable(path string) error {
+	return a.apply(path, true)
+}
+
+func (a FileAdapter) IsEnabledPath(path string) bool {
+	return strings.HasSuffix(path, ".jar")
+}
+
+// path can be a full path or just a filename
+func (a FileAdapter) IsValidPath(path string) bool {
+	dir, file := filepath.Split(path)
+	if dir != "" && filepath.Clean(dir) != a.BaseDirectory {
+		return false
+	}
+	return strings.HasSuffix(file, ".jar") || strings.HasSuffix(file, ".jar.disabled")
+}
+
+func (a FileAdapter) ResolvePath(filename string) (path string, err error) {
+	base := a.BasePath(filepath.Join(a.BaseDirectory, filename))
+	enabledPath := base + ".jar"
+	disabledPath := base + ".jar.disabled"
+	if _, err := os.Stat(enabledPath); err == nil {
+		return enabledPath, err
+	}
+
+	if _, err := os.Stat(disabledPath); err == nil {
+		return disabledPath, err
+	} else {
+		return base, err
+	}
+}
 
 // Activator manages the physical file state of mods (enabled/disabled).
 type Activator struct {
-	modsDir string
 	allMods map[string]*Mod
-	// currentActivations tracks the last known physical active state of each mod file.
-	// This map stores modID -> true if the file is currently active (.jar), false if disabled (.jar.disabled).
-	// This state is updated *after* a successful rename operation.
-	currentActivations map[string]bool
+	adapter *FileAdapter
+	snap    ActivationSnapshot // Represents the current logical state
+	initial ActivationSnapshot
 }
 
 // NewModActivator creates a new activator.
-// It initializes the internal tracking based on the mod's initial active state.
-func NewModActivator(modsDir string, allMods map[string]*Mod) *Activator {
-	activations := make(map[string]bool, len(allMods))
-	for id, mod := range allMods {
-		activations[id] = mod.IsInitiallyActive
-	}
-
+func NewModActivator(adapter *FileAdapter, allMods map[string]*Mod) *Activator {
 	return &Activator{
-		modsDir:            modsDir,
-		allMods:            allMods,
-		currentActivations: activations,
+		allMods: allMods,
+		adapter: adapter,
 	}
 }
 
-// BatchStateChange represents a single file rename operation.
-type BatchStateChange struct {
-	ModID    string
-	OldPath  string
-	NewPath  string
-	Activate bool // True if the mod became active, false if it became disabled.
+type SnapshotStateEntry struct {
+	Active  bool
+	Missing bool
 }
 
-// Apply calculates and executes the necessary file renames to achieve the effectiveSet state.
-// It performs a batch of renames and returns the list of changes made.
-// Before renaming, it also verifies that all mods that should be active are present on disk
-// (unless already marked as missing in statuses). This helps catch unexpected deletions.
-func (a *Activator) Apply(effectiveSet sets.Set, statuses map[string]ModStatus) ([]BatchStateChange, error) {
-	changes, expectedActiveMods := a.calculateChanges(effectiveSet, statuses)
-	if len(changes) == 0 && len(expectedActiveMods) == 0 {
-		return nil, nil
+type ActivationSnapshot struct {
+	States map[string]SnapshotStateEntry
+}
+
+func (a *Activator) Snapshot() ActivationSnapshot {
+	if a.snap.States == nil {
+		logging.Errorf("Activator: Accessed snapshot before initialization")
+	}
+	return a.copySnapshot(a.snap)
+}
+
+// copySnapshot returns a deep copy of the given snapshot so that later
+// Activator mutations cannot corrupt a previously captured snapshot.
+func (a *Activator) copySnapshot(snap ActivationSnapshot) ActivationSnapshot {
+	states := make(map[string]SnapshotStateEntry, len(snap.States))
+	maps.Copy(states, snap.States)
+	return ActivationSnapshot{States: states}
+}
+
+func (a *Activator) createSnapshot() (snap ActivationSnapshot, err error) {
+	snap = ActivationSnapshot{
+		States: make(map[string]SnapshotStateEntry, len(a.allMods)),
+	}
+	for id, mod := range a.allMods {
+		path, err := a.adapter.ResolvePath(mod.BaseFilename)
+		if os.IsNotExist(err) {
+			logging.Warnf("Activator: JAR file at '%s' for mod %s is missing", path, id)
+			snap.States[id] = SnapshotStateEntry{
+				Missing: true,
+			}
+			continue
+		} else if err != nil {
+			return snap, err
+		}
+		enabled := a.adapter.IsEnabledPath(path)
+		snap.States[id] = SnapshotStateEntry{
+			Active: enabled,
+		}
 	}
 
-	var enabledMods, disabledMods []string
-	var appliedChanges []BatchStateChange
+	return snap, nil
+}
+
+// Activate calculates and executes the necessary file renames to achieve the effectiveSet state.
+func (a *Activator) Activate(effectiveSet sets.Set) error {
+	var toEnable, toDisable, toUpdate []string
 	var missingFileErrors []*FileMissingError
 
-	// Check that all required active mods (not already marked missing) actually exist.
-	for id := range expectedActiveMods {
-		mod := a.allMods[id]
-		jarPath := filepath.Join(a.modsDir, mod.BaseFilename+".jar")
-		disabledPath := filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
-
-		if _, err := os.Stat(jarPath); os.IsNotExist(err) {
-			if _, err := os.Stat(disabledPath); os.IsNotExist(err) {
-				// File is truly missing (neither .jar nor .disabled present).
-				logging.Warnf("Activator: Source file for mod '%s' is missing: neither '%s' nor '%s' found.", id, jarPath, disabledPath)
-				missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: id, FilePath: jarPath})
-			}
-		}
-	}
-
-	if len(missingFileErrors) > 0 {
-		return nil, &MissingFilesError{Errors: missingFileErrors}
-	}
-
-	for _, change := range changes {
-		if change.Activate {
-			enabledMods = append(enabledMods, change.ModID)
-		} else {
-			disabledMods = append(disabledMods, change.ModID)
-		}
-	}
-	sort.Strings(enabledMods)
-	sort.Strings(disabledMods)
-
-	logging.Infof("Activator: Applying changes to %d mod files. Enabling: %v, Disabling: %v", len(changes), enabledMods, disabledMods)
-
-	for _, change := range changes {
-		if _, err := os.Stat(change.OldPath); os.IsNotExist(err) {
-			// Check if file already in the target state.
-			if _, err := os.Stat(change.NewPath); !os.IsNotExist(err) {
-				a.currentActivations[change.ModID] = change.Activate
-				continue // File already in correct state. Not an error.
-			}
-			// File is truly missing from disk.
-			logging.Warnf("Activator: Source file for mod '%s' is missing: %s", change.ModID, change.OldPath)
-			missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: change.ModID, FilePath: change.OldPath})
+	for id := range a.allMods {
+		state := a.snap.States[id]
+		if state.Missing {
+			// Already known to be missing; handled separately.
 			continue
 		}
 
-		if err := os.Rename(change.OldPath, change.NewPath); err != nil {
-			// A hard I/O error (e.g., permissions). This is fatal for this operation.
-			logging.Errorf("Activator: A hard I/O error occurred: %v", err)
-			a.Revert(appliedChanges) // Revert what we've done so far.
-			return nil, fmt.Errorf("failed to rename '%s' for mod '%s': %w", filepath.Base(change.OldPath), change.ModID, err)
+		_, wantActive := effectiveSet[id]
+		if wantActive && !state.Active {
+			toEnable = append(toEnable, id)
+		} else if !wantActive && state.Active {
+			toDisable = append(toDisable, id)
+		} else {
+			toUpdate = append(toUpdate, id)
 		}
+	}
 
-		a.currentActivations[change.ModID] = change.Activate
-		appliedChanges = append(appliedChanges, change)
+	sort.Strings(toEnable)
+	sort.Strings(toDisable)
+	sort.Strings(toUpdate)
+
+	logging.Infof("Activator: Applying changes for %d mod files\n  Enabling: %v\n  Disabling: %v", len(toEnable)+len(toDisable), toEnable, toDisable)
+
+	// Mods being disabled may already be gone from disk; that is fine (they are
+	// effectively disabled). Only mods that should be active are checked for
+	// presence, matching the original behavior.
+	for _, id := range toDisable {
+		if err := a.set(id, false); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	for _, id := range toEnable {
+		if err := a.set(id, true); os.IsNotExist(err) {
+			missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: id, FileBasePath: a.adapter.BasePath(a.allMods[id].BaseFilename)})
+		} else if err != nil {
+			return err
+		}
+	}
+
+	logging.Infof("Activator: Checking state of %d unchanged mods: %v", len(toUpdate), toUpdate)
+	for _, id := range toUpdate {
+		state := a.snap.States[id]
+		mod := a.allMods[id]
+		path, err := a.adapter.ResolvePath(mod.BaseFilename)
+		if os.IsNotExist(err) {
+			// The file disappeared since the last activation.
+			a.snap.States[id] = SnapshotStateEntry{Missing: true}
+			if state.Active {
+				missingFileErrors = append(missingFileErrors, &FileMissingError{ModID: id, FileBasePath: a.adapter.BasePath(mod.BaseFilename)})
+			}
+			continue
+		} else if err != nil {
+			return err
+		}
+		// Correct any external drift (e.g. a file renamed behind our back)
+		// without a redundant self-rename when the state already matches.
+		if a.adapter.IsEnabledPath(path) != state.Active {
+			if err := a.set(id, state.Active); err != nil {
+				return err
+			}
+		}
 	}
 
 	if len(missingFileErrors) > 0 {
-		a.Revert(appliedChanges)
-		return nil, &MissingFilesError{Errors: missingFileErrors}
+		return &MissingFilesError{Errors: missingFileErrors}
 	}
 
-	return appliedChanges, nil
+	return nil
 }
 
-// Revert applies a set of changes in reverse order to restore a previous state.
+// Restore applies a snapshot in order to restore a previous state.
 // This is used for cleanup or undo operations.
-func (a *Activator) Revert(changes []BatchStateChange) {
-	if len(changes) == 0 {
+func (a *Activator) Restore(oldSnap ActivationSnapshot) error {
+	return a.restore(oldSnap, false)
+}
+
+// RestoreInitialState restores the on-disk mod files to the state they were in
+// when the activator was initialized (i.e. before the bisection started). It is
+// best-effort: any mod that cannot be restored (for example because its file is
+// missing or locked) is logged and skipped rather than aborting the restore.
+func (a *Activator) RestoreInitialState() {
+	if a.initial.States == nil {
+		logging.Error("Activator: Cannot restore initial state: activator was never initialized.")
 		return
 	}
-
-	var reEnabledMods []string
-	var reDisabledMods []string
-	// Iterate in reverse for revert
-	for i := len(changes) - 1; i >= 0; i-- {
-		change := changes[i]
-		if change.Activate { // If it was activated, reverting means disabling it
-			reDisabledMods = append(reDisabledMods, change.ModID)
-		} else { // If it was disabled, reverting means enabling it
-			reEnabledMods = append(reEnabledMods, change.ModID)
-		}
-	}
-	sort.Strings(reEnabledMods)
-	sort.Strings(reDisabledMods)
-
-	logging.Infof("Activator: Reverting changes for %d mod files. Re-enabling: %v, Re-disabling: %v", len(changes), reEnabledMods, reDisabledMods)
-
-	// Revert changes in reverse order of their original application.
-	for i := len(changes) - 1; i >= 0; i-- {
-		change := changes[i]
-		// The 'newPath' of the original change becomes the 'oldPath' for the revert operation.
-		// The 'oldPath' of the original change becomes the 'newPath' for the revert operation.
-		if err := os.Rename(change.NewPath, change.OldPath); err != nil {
-			logging.Errorf("Activator: Failed to revert mod %s (%s -> %s): %v", change.ModID, filepath.Base(change.NewPath), filepath.Base(change.OldPath), err)
-			// Continue attempting to revert other files even if one fails.
-		} else {
-			// Update currentActivations based on the reverted state.
-			a.currentActivations[change.ModID] = !change.Activate
-		}
+	if err := a.restore(a.initial, true); err != nil {
+		logging.Errorf("Activator: Initial state restore failed: %v", err)
 	}
 }
 
-func (a *Activator) EnableAll(statuses map[string]ModStatus) error {
+func (a *Activator) restore(oldSnap ActivationSnapshot, bestEffort bool) error {
+	var toEnable, toDisable, toUpdate []string
+	skippedAlreadyMissingMods := 0
+	newSnap := a.snap
+
+	for id := range a.allMods {
+		oldState := oldSnap.States[id]
+		newState := newSnap.States[id]
+
+		if oldState.Missing {
+			skippedAlreadyMissingMods++
+			continue
+		}
+
+		if oldState.Active && !newState.Active {
+			toEnable = append(toEnable, id)
+		} else if !oldState.Active && newState.Active {
+			toDisable = append(toDisable, id)
+		} else {
+			toUpdate = append(toUpdate, id)
+		}
+	}
+
+	if skippedAlreadyMissingMods > 0 {
+		logging.Debugf("Activator: Revert skipping %d already known missing mods.", skippedAlreadyMissingMods)
+	}
+
+	sort.Strings(toEnable)
+	sort.Strings(toDisable)
+	sort.Strings(toUpdate)
+
+	logging.Infof("Activator: Reverting changes for %d mod files\n  Re-enabling: %v\n  Re-disabling: %v", len(toEnable)+len(toDisable), toEnable, toDisable)
+
+	// In best-effort mode every failure is logged (by set) and skipped so the
+	// remaining mods are still processed. Otherwise a hard error aborts the
+	// restore, while missing files are always tolerated.
+	shouldAbort := func(err error) bool {
+		return !bestEffort && err != nil && !os.IsNotExist(err)
+	}
+
+	for _, id := range toDisable {
+		if err := a.set(id, false); shouldAbort(err) {
+			return err
+		}
+	}
+
+	for _, id := range toEnable {
+		if err := a.set(id, true); shouldAbort(err) {
+			return err
+		}
+	}
+
+	logging.Infof("Activator: Checking state of %d unchanged mods: %v", len(toUpdate), toUpdate)
+	for _, id := range toUpdate {
+		state := a.snap.States[id]
+		mod := a.allMods[id]
+		path, err := a.adapter.ResolvePath(mod.BaseFilename)
+		if os.IsNotExist(err) {
+			// File gone since the snapshot; record it and carry on (best-effort).
+			a.snap.States[id] = SnapshotStateEntry{Missing: true}
+			continue
+		} else if shouldAbort(err) {
+			return err
+		}
+		// Correct any external drift; otherwise nothing to do.
+		if a.adapter.IsEnabledPath(path) != state.Active {
+			if err := a.set(id, state.Active); shouldAbort(err) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (a *Activator) set(id string, active bool) error {
+	mod := a.allMods[id]
+	path, err := a.adapter.ResolvePath(mod.BaseFilename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			a.snap.States[id] = SnapshotStateEntry{Missing: true}
+		}
+		logging.Errorf("Activator: Failed to resolve mod path for %v at '%v': %v", id, path, err)
+		return err
+	}
+	if active {
+		if err := a.adapter.Enable(path); err != nil {
+			if os.IsNotExist(err) {
+				a.snap.States[id] = SnapshotStateEntry{Missing: true}
+			}
+			logging.Errorf("Activator: Failed to enable mod %v at '%v': %v", id, path, err)
+			return err
+		}
+	} else {
+		if err := a.adapter.Disable(path); err != nil {
+			if os.IsNotExist(err) {
+				a.snap.States[id] = SnapshotStateEntry{Missing: true}
+			}
+			logging.Errorf("Activator: Failed to disable mod %v at '%v': %v", id, path, err)
+			return err
+		}
+	}
+
+	a.snap.States[id] = SnapshotStateEntry{Active: active}
+
+	return nil
+}
+
+// Initialize enables all non-missing mods and initializes the snapshot state
+func (a *Activator) Initialize(statuses map[string]ModStatus) error {
 	logging.Info("Activator: Enabling all non-missing mods for a clean initial state.")
 	targetSet := make(sets.Set, len(a.allMods))
 	for id, status := range statuses {
@@ -169,68 +371,18 @@ func (a *Activator) EnableAll(statuses map[string]ModStatus) error {
 		}
 	}
 
-	_, err := a.Apply(targetSet, statuses)
+	snap, err := a.createSnapshot()
 	if err != nil {
+		return err
+	}
+	a.snap = snap
+	// Keep the pre-activation state as an independent copy so the initial
+	// Activate below (and any later mutations) cannot corrupt it.
+	a.initial = a.copySnapshot(snap)
+
+	if err := a.Activate(targetSet); err != nil {
 		return fmt.Errorf("failed during initial enabling of all mods: %w", err)
 	}
 
 	return nil
-}
-
-// calculateChanges determines which files need to be renamed based on the desired effective set
-// and the current physical state of mod files on disk as tracked by the activator.
-// It also returns the set of mods that should be active and are not marked as missing.
-// This set is later used in Apply to verify that the required files actually exist.
-func (a *Activator) calculateChanges(effectiveSet sets.Set, statuses map[string]ModStatus) ([]BatchStateChange, sets.Set) {
-	var changes []BatchStateChange
-	expectedActiveMods := make(sets.Set)
-
-	for id, mod := range a.allMods {
-		status, ok := statuses[id]
-		if !ok || status.IsMissing {
-			continue // Skip mods already known to be missing.
-		}
-
-		_, shouldBeActive := effectiveSet[id]
-		if shouldBeActive {
-			expectedActiveMods[id] = struct{}{}
-		}
-
-		isCurrentlyActive := a.currentActivations[id] // The physical state as tracked by activator
-
-		if isCurrentlyActive == shouldBeActive {
-			logging.Debugf("Activator: Mod '%s' physical state matches desired state (active: %t). No change needed.", id, isCurrentlyActive)
-			continue
-		}
-
-		// Determine the *current physical path* on disk based on `isCurrentlyActive` and `mod.BaseFilename`.
-		var oldPath string
-		if isCurrentlyActive {
-			oldPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
-		} else {
-			oldPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
-		}
-
-		// Determine the *target physical path* on disk based on `shouldBeActive`.
-		var newPath string
-		if shouldBeActive {
-			newPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar")
-		} else {
-			newPath = filepath.Join(a.modsDir, mod.BaseFilename+".jar"+disabledExtension)
-		}
-
-		if oldPath == newPath {
-			logging.Warnf("Activator: Calculated redundant rename for mod '%s'. Current path '%s' is already target path '%s'. Skipping.", id, oldPath, newPath)
-			continue
-		}
-
-		changes = append(changes, BatchStateChange{
-			ModID:    id,
-			OldPath:  oldPath,
-			NewPath:  newPath,
-			Activate: shouldBeActive,
-		})
-	}
-
-	return changes, expectedActiveMods
 }

@@ -19,6 +19,7 @@ import (
 // resolves conflicts, and builds dependency provider maps.
 type ModLoader struct {
 	ModParser
+	Adapter *FileAdapter
 }
 
 // bufferedLog represents a log message captured by a worker for later printing.
@@ -56,6 +57,9 @@ type ModLoadingProgressCallback = func(fileName string, i, count int)
 func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport ModLoadingProgressCallback) (
 	map[string]*Mod, PotentialProvidersMap, []string, error,
 ) {
+	if ml.Adapter == nil {
+		return nil, nil, nil, fmt.Errorf("ModLoader: Adapter is required")
+	}
 	if ml.QuiltParsing {
 		logging.Info("ModLoader: Loading mods with Quilt support.")
 	}
@@ -71,16 +75,16 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 		return nil, nil, nil, fmt.Errorf("reading mods directory %s: %w", modsDir, err)
 	}
 
-	filesToProcess := filterJarFiles(diskFiles)
+	filesToProcess := ml.filterJarFiles(diskFiles)
 	if len(filesToProcess) == 0 {
-		logging.Infof("ModLoader: No .jar or .jar.disabled files found in %s", modsDir)
+		logging.Infof("ModLoader: No mod files found in %s", modsDir)
 		return make(map[string]*Mod), potentialProviders, []string{}, nil
 	}
 
 	parsedFileResults := ml.parseJarFilesConcurrently(filesToProcess, modsDir, progressReport)
 
 	allMods := make(map[string]*Mod)
-	if err := resolveModConflicts(parsedFileResults, allMods, modsDir); err != nil {
+	if err := ml.resolveModConflicts(parsedFileResults, allMods); err != nil {
 		logging.Errorf("ModLoader: Error during mod conflict resolution: %v. Proceeding with available mods.", err)
 	}
 
@@ -104,15 +108,14 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 }
 
 // filterJarFiles returns a slice of os.DirEntry for files ending with .jar or .jar.disabled.
-func filterJarFiles(diskFiles []os.DirEntry) []os.DirEntry {
+func (ml *ModLoader) filterJarFiles(diskFiles []os.DirEntry) []os.DirEntry {
 	var filesToProcess []os.DirEntry
 	for _, file := range diskFiles {
 		if file.IsDir() {
 			continue
 		}
-		fileName := file.Name()
-		if strings.HasSuffix(strings.ToLower(fileName), ".jar") ||
-			strings.HasSuffix(strings.ToLower(fileName), ".jar.disabled") {
+		filename := file.Name()
+		if ml.Adapter.IsValidPath(filename) {
 			filesToProcess = append(filesToProcess, file)
 		}
 	}
@@ -221,9 +224,7 @@ func (ml *ModLoader) jarProcessingWorker(modsDir string, wg *sync.WaitGroup, tas
 		}
 
 		fullPath := filepath.Join(modsDir, task.fileEntry.Name())
-		isJarFile := strings.HasSuffix(strings.ToLower(task.fileEntry.Name()), ".jar")
-		baseFilename := strings.TrimSuffix(task.fileEntry.Name(), ".jar.disabled")
-		baseFilename = strings.TrimSuffix(baseFilename, ".jar")
+		baseFilename := ml.Adapter.BaseFilename(task.fileEntry.Name())
 
 		// Create a log buffer for this specific task.
 		var logBuffer logBuffer
@@ -234,11 +235,10 @@ func (ml *ModLoader) jarProcessingWorker(modsDir string, wg *sync.WaitGroup, tas
 		}
 
 		currentMod := &Mod{
-			Path:              fullPath,
-			BaseFilename:      baseFilename,
-			Metadata:          topLevelModMetadata,
-			IsInitiallyActive: isJarFile,
-			NestedModules:     nestedModMetadata,
+			Path:          fullPath,
+			BaseFilename:  baseFilename,
+			Metadata:      topLevelModMetadata,
+			NestedModules: nestedModMetadata,
 		}
 		results <- processFileResult{
 			mod:          currentMod,
@@ -249,7 +249,7 @@ func (ml *ModLoader) jarProcessingWorker(modsDir string, wg *sync.WaitGroup, tas
 }
 
 // resolveModConflicts handles multiple JAR files providing the same mod ID, choosing a winner.
-func resolveModConflicts(parsedFileResults []processFileResult, allMods map[string]*Mod, modsDir string) error {
+func (ml *ModLoader) resolveModConflicts(parsedFileResults []processFileResult, allMods map[string]*Mod) error {
 	// Group all parsed results by the primary mod ID they represent.
 	candidatesByID := make(map[string][]*Mod)
 	for _, res := range parsedFileResults {
@@ -261,6 +261,22 @@ func resolveModConflicts(parsedFileResults []processFileResult, allMods map[stri
 	var disabledDuplicates []string
 
 	for modID, candidates := range candidatesByID {
+		// Two candidates sharing a base filename are two states of the same file
+		// (foo.jar vs foo.jar.disabled). The tool toggles a mod by its base stem,
+		// so during a test foo.jar must be disable-able, but its rename target
+		// is occupied by the disabled twin, and os.Rename would clobber it.
+		// Relocating the disabled twin gives each file a distinct stem, turning
+		// the pair into ordinary duplicate mods handled below.
+		if err := ml.disambiguateSameStemDuplicates(candidates); err != nil {
+			errMsg := fmt.Sprintf("error disambiguating same-stem duplicates for mod %s: %v", modID, err)
+			logging.Error("ModLoader: " + errMsg)
+			multiError = append(multiError, errMsg)
+			// Best-effort: still pick a winner, but do not disable losers since
+			// the ambiguous pair could not be separated safely.
+			allMods[modID] = determineWinner(modID, candidates)
+			continue
+		}
+
 		winner := determineWinner(modID, candidates)
 		allMods[modID] = winner // Add ONLY the winner to the final mod map.
 
@@ -269,15 +285,22 @@ func resolveModConflicts(parsedFileResults []processFileResult, allMods map[stri
 			if loser.Path == winner.Path {
 				continue // Don't disable the winner.
 			}
-			// Only disable files that are currently active.
-			if loser.IsInitiallyActive {
-				if err := disableDuplicateFile(modsDir, loser.BaseFilename); err != nil {
-					errMsg := fmt.Sprintf("error disabling non-winning duplicate '%s' (for mod %s): %v", loser.BaseFilename, modID, err)
-					logging.Error(errMsg)
-					multiError = append(multiError, errMsg)
-				} else {
-					disabledDuplicates = append(disabledDuplicates, loser.BaseFilename+".jar")
+			// Only disable losers whose own file is currently active. A loser
+			// that is already .jar.disabled needs no action (and re-disabling
+			// it would rename the file onto itself). This restores the old
+			// IsInitiallyActive gate without re-adding the field.
+			if !ml.Adapter.IsEnabledPath(loser.Path) {
+				continue
+			}
+			if err := ml.Adapter.Disable(loser.Path); err != nil {
+				if os.IsNotExist(err) {
+					continue // File vanished after parsing; effectively disabled already.
 				}
+				errMsg := fmt.Sprintf("error disabling non-winning duplicate '%s' (for mod %s): %v", loser.BaseFilename, modID, err)
+				logging.Error("ModLoader: " + errMsg)
+				multiError = append(multiError, errMsg)
+			} else {
+				disabledDuplicates = append(disabledDuplicates, filepath.Base(loser.Path))
 			}
 		}
 	}
@@ -288,6 +311,70 @@ func resolveModConflicts(parsedFileResults []processFileResult, allMods map[stri
 	if len(multiError) > 0 {
 		return fmt.Errorf("encountered errors during conflict resolution: %s", strings.Join(multiError, "; "))
 	}
+	return nil
+}
+
+// disambiguateSameStemDuplicates handles the case where a mod ID is provided by
+// both an enabled file (foo.jar) and a disabled file (foo.jar.disabled) that
+// share the same base filename. Because the tool toggles a mod by that stem
+// (foo.jar <-> foo.jar.disabled), the two files cannot coexist: disabling
+// foo.jar during a test would rename it onto the path the disabled twin already
+// occupies, clobbering it. The disabled twin is therefore relocated to a
+// distinct stem (foo-dup.jar.disabled) so the pair is handled as ordinary
+// duplicate mods instead.
+func (ml *ModLoader) disambiguateSameStemDuplicates(candidates []*Mod) error {
+	byBase := make(map[string]*Mod)
+	for _, c := range candidates {
+		existing, ok := byBase[c.BaseFilename]
+		if !ok {
+			byBase[c.BaseFilename] = c
+			continue
+		}
+
+		// Two files share the stem: exactly one is the enabled file and one the
+		// disabled twin. Relocate the disabled one.
+		disabledTwin := c
+		if ml.Adapter.IsEnabledPath(c.Path) {
+			disabledTwin = existing
+		}
+		if err := ml.relocateDisabledTwin(disabledTwin); err != nil {
+			return err
+		}
+		// Keep whichever file is now associated with the stem in the map; the
+		// relocated twin is no longer colliding.
+		if disabledTwin == existing {
+			byBase[c.BaseFilename] = c
+		}
+	}
+	return nil
+}
+
+// relocateDisabledTwin renames a .jar.disabled file to a distinct -dup stem so
+// it no longer collides with its enabled counterpart. It updates the mod's
+// Path and BaseFilename in place.
+func (ml *ModLoader) relocateDisabledTwin(mod *Mod) error {
+	dir := filepath.Dir(mod.Path)
+	base := ml.Adapter.BaseFilename(filepath.Base(mod.Path))
+
+	newBase := base + "-dup"
+	newPath := ml.Adapter.DisabledPath(filepath.Join(dir, newBase))
+	for i := 2; ; i++ {
+		enabled := ml.Adapter.EnabledPath(filepath.Join(dir, newBase))
+		if _, eErr := os.Stat(enabled); os.IsNotExist(eErr) {
+			if _, dErr := os.Stat(newPath); os.IsNotExist(dErr) {
+				break
+			}
+		}
+		newBase = fmt.Sprintf("%s-dup%d", base, i)
+		newPath = ml.Adapter.DisabledPath(filepath.Join(dir, newBase))
+	}
+
+	if err := os.Rename(mod.Path, newPath); err != nil {
+		return fmt.Errorf("renaming disabled duplicate '%s' to '%s': %w", mod.Path, newPath, err)
+	}
+	logging.Warnf("ModLoader: Renamed disabled duplicate '%s' to '%s' to disambiguate same-stem mod files.", mod.Path, newPath)
+	mod.Path = newPath
+	mod.BaseFilename = ml.Adapter.BaseFilename(filepath.Base(newPath))
 	return nil
 }
 
@@ -320,27 +407,6 @@ func determineWinner(modID string, candidates []*Mod) *Mod {
 		modID, winner.Metadata.Version.Version, winner.BaseFilename+".jar")
 
 	return winner
-}
-
-// disableDuplicateFile renames an active JAR file to its .disabled counterpart.
-func disableDuplicateFile(modsDir, baseFilename string) error {
-	activePath := filepath.Join(modsDir, baseFilename+".jar")
-	disabledPath := filepath.Join(modsDir, baseFilename+".jar.disabled")
-
-	if _, err := os.Stat(activePath); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("stat active file %s: %w", activePath, err)
-	}
-
-	if _, err := os.Stat(disabledPath); err == nil {
-		logging.Warnf("ModLoader: Removing existing disabled file '%s' before disabling '%s'.", filepath.Base(disabledPath), baseFilename)
-		if remErr := os.Remove(disabledPath); remErr != nil {
-			return fmt.Errorf("remove existing %s: %w", disabledPath, remErr)
-		}
-	}
-
-	return os.Rename(activePath, disabledPath)
 }
 
 // populateProviderMaps populates the potentialProviders map and the EffectiveProvides for each mod.

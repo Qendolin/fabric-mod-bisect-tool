@@ -6,8 +6,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 )
 
-// StateManager provides a way to manage the state of mods. It uses a synchronous
-// callback model for state change notifications.
+// StateManager provides a way to manage the state of mods.
 type StateManager struct {
 	// The canonical source of all static mod data.
 	allMods            map[string]*Mod
@@ -19,9 +18,12 @@ type StateManager struct {
 	// Internal dependency resolver.
 	resolver *DependencyResolver
 
-	// OnStateChanged is a callback function that is executed whenever the
-	// state of any mod is modified.
-	OnStateChanged func()
+	// stateRevision increments whenever any mod status actually changes (no-op
+	// setters do not increment it). It is used to detect that the mod state has
+	// changed since some earlier point in time, e.g. the bisection service
+	// compares it against the revision at the last reconciliation to decide
+	// whether reconciliation is needed again.
+	stateRevision int
 }
 
 // NewStateManager creates a new mod state manager.
@@ -44,17 +46,16 @@ func NewStateManager(allMods map[string]*Mod, potentialProviders PotentialProvid
 	}
 }
 
-// notifyListeners calls the registered callback if it exists.
-func (sm *StateManager) notifyListeners() {
-	if sm.OnStateChanged != nil {
-		sm.OnStateChanged()
-	}
+// StateRevision returns the current state revision. It increments whenever any
+// mod status actually changes.
+func (sm *StateManager) StateRevision() int {
+	return sm.stateRevision
 }
 
 // SetForceEnabled updates the force-enabled state of a mod.
 func (sm *StateManager) SetForceEnabled(modID string, enabled bool) {
 	if status, ok := sm.modStatuses[modID]; ok {
-		// No change, no notification needed.
+		// No change, no revision bump.
 		if status.ForceEnabled == enabled {
 			return
 		}
@@ -63,7 +64,7 @@ func (sm *StateManager) SetForceEnabled(modID string, enabled bool) {
 		if enabled {
 			status.ForceDisabled = false
 		}
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -78,7 +79,7 @@ func (sm *StateManager) SetForceDisabled(modID string, disabled bool) {
 		if disabled {
 			status.ForceEnabled = false
 		}
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -89,7 +90,7 @@ func (sm *StateManager) SetOmitted(modID string, isOmitted bool) {
 			return
 		}
 		status.Omitted = isOmitted
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -98,13 +99,13 @@ func (sm *StateManager) SetMissing(modID string, missing bool) {
 	if status, ok := sm.modStatuses[modID]; ok {
 		if status.IsMissing != missing {
 			status.IsMissing = missing
-			sm.notifyListeners()
+			sm.stateRevision++
 		}
 	}
 }
 
 // SetProblematicBatch updates the problematic state for multiple mods at once,
-// sending only a single notification.
+// bumping the revision only once if anything changed.
 func (sm *StateManager) SetProblematicBatch(modIDs []string, problematic bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -116,7 +117,7 @@ func (sm *StateManager) SetProblematicBatch(modIDs []string, problematic bool) {
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -125,13 +126,13 @@ func (sm *StateManager) SetProblematic(modID string, problematic bool) {
 	if status, ok := sm.modStatuses[modID]; ok {
 		if status.IsProblematic != problematic {
 			status.IsProblematic = problematic
-			sm.notifyListeners()
+			sm.stateRevision++
 		}
 	}
 }
 
 // SetUnresolvableBatch updates the unresolvable state for multiple mods at once,
-// sending only a single notification.
+// bumping the revision only once if anything changed.
 func (sm *StateManager) SetUnresolvableBatch(modIDs []string, unresolvable bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -143,7 +144,7 @@ func (sm *StateManager) SetUnresolvableBatch(modIDs []string, unresolvable bool)
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -152,13 +153,13 @@ func (sm *StateManager) SetUnresolvable(modID string, unresolvable bool) {
 	if status, ok := sm.modStatuses[modID]; ok {
 		if status.IsUnresolvable != unresolvable {
 			status.IsUnresolvable = unresolvable
-			sm.notifyListeners()
+			sm.stateRevision++
 		}
 	}
 }
 
 // SetMissingBatch updates the missing state for multiple mods at once,
-// sending only a single notification.
+// bumping the revision only once if anything changed.
 func (sm *StateManager) SetMissingBatch(modIDs []string, missing bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -170,12 +171,12 @@ func (sm *StateManager) SetMissingBatch(modIDs []string, missing bool) {
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
 // SetForceEnabledBatch updates the force-enabled state for multiple mods at once.
-// It sends only a single notification after all changes are made.
+// It bumps the revision only once if anything changed.
 func (sm *StateManager) SetForceEnabledBatch(modIDs []string, enabled bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -190,12 +191,12 @@ func (sm *StateManager) SetForceEnabledBatch(modIDs []string, enabled bool) {
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
 // SetForceDisabledBatch updates the force-disabled state for multiple mods at once.
-// It sends only a single notification after all changes are made.
+// It bumps the revision only once if anything changed.
 func (sm *StateManager) SetForceDisabledBatch(modIDs []string, disabled bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -210,12 +211,12 @@ func (sm *StateManager) SetForceDisabledBatch(modIDs []string, disabled bool) {
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
 // SetOmittedBatch updates the "ignored in search" state for multiple mods at once.
-// It sends only a single notification after all changes are made.
+// It bumps the revision only once if anything changed.
 func (sm *StateManager) SetOmittedBatch(modIDs []string, omitted bool) {
 	var changed bool
 	for _, modID := range modIDs {
@@ -227,7 +228,7 @@ func (sm *StateManager) SetOmittedBatch(modIDs []string, omitted bool) {
 		}
 	}
 	if changed {
-		sm.notifyListeners()
+		sm.stateRevision++
 	}
 }
 
@@ -265,7 +266,7 @@ func (sm *StateManager) GetAllMods() map[string]*Mod {
 
 // ResolveEffectiveSet calculates the set of active top-level mods based on the
 // given target set and the current mod statuses managed by the StateManager.
-func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) (sets.Set, ResolutionPath) {
+func (sm *StateManager) ResolveEffectiveSet(targetSet sets.Set) ResolutionResult {
 	return sm.resolver.ResolveEffectiveSet(targetSet, sm.GetModStatusesSnapshot())
 }
 
