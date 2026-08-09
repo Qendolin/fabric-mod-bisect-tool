@@ -135,11 +135,16 @@ jobs:
           | Platform | Architecture | Recommended GUI Download | Recommended TUI Download |
           | :--- | :--- | :--- | :--- |
           | **Windows** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
-          | **Windows** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-arm64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-arm64.exe) |
           | **Linux** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
-          | **Linux** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-arm64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-arm64) |
           | **macOS** | Apple Silicon (arm64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
           | **macOS** | Intel (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
+
+          ### Other Versions
+
+          | Platform | Architecture | GUI Download | TUI Download |
+          | :--- | :--- | :--- | :--- |
+          | **Windows** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-arm64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-arm64.exe) |
+          | **Linux** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-arm64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-arm64) |
 
           ---
 
