@@ -3,6 +3,7 @@ package probe
 import (
 	"archive/zip"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -26,6 +27,7 @@ func ProbeModsDirectory(modsPath string) ProbeResult {
 		return result
 	}
 
+	// TODO: Improve heuristic
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jar") {
 			continue
@@ -60,9 +62,11 @@ func probeJar(jarPath string) (quiltSupport, neoForgeSupport bool) {
 
 	for _, f := range r.File {
 		if f.Name == "quilt.mod.json" {
+			logging.Debugf("Probe: %s detected in %s", f.Name, path.Base(jarPath))
 			quiltSupport = true
 		}
 		if f.Name == "META-INF/neoforge.mods.toml" || f.Name == "META-INF/mods.toml" {
+			logging.Debugf("Probe: %s detected in %s", f.Name, path.Base(jarPath))
 			neoForgeSupport = true
 		}
 
