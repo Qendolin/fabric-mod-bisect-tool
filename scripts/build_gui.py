@@ -66,7 +66,7 @@ def gogio_build(
 
 
 def build_linux(
-    goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path
+    goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path, app_id: str
 ) -> None:
     # Reconstruct a conformant AppDir from the built binary.
     appdir = project_dir / "AppDir"
