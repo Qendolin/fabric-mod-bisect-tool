@@ -44,7 +44,7 @@ func main() {
 		os.Exit(1)
 	}
 	// Create a unique, timestamped log file name.
-	logFileName := fmt.Sprintf("bisect-tool-%s.log", time.Now().Format("2006-01-02_15-04-05"))
+	logFileName := fmt.Sprintf("bisect-tui-%s.log", time.Now().Format("2006-01-02_15-04-05"))
 	logPath := filepath.Join(cliArgs.LogDir, logFileName)
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)

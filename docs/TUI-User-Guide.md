@@ -87,7 +87,7 @@ You can press **`Ctrl+H`** to go to the **History** page. This page provides a d
 
 ## Log Page
 
-You can press **`Ctrl+L`** to go to the **Log** page. This page displays the internal log of the tool in real-time. It's primarily useful for debugging purposes or for providing information when reporting an issue to the developers. You can also find the full log file saved as `bisect-tool-YYY-MM-DD_HH-MM-SS.log` in the same directory as the executable.
+You can press **`Ctrl+L`** to go to the **Log** page. This page displays the internal log of the tool in real-time. It's primarily useful for debugging purposes or for providing information when reporting an issue to the developers. You can also find the full log file saved as `bisect-tui-YYY-MM-DD_HH-MM-SS.log` in the same directory as the executable.
 
 ## Advanced Features
 
