@@ -98,6 +98,7 @@ type BisectionViewModel struct {
 	IsReady            bool
 	IsComplete         bool
 	IsVerificationStep bool
+	IsHalted           bool
 	StepCount          int
 	Iteration          int
 	Round              int

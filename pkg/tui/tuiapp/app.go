@@ -188,6 +188,14 @@ func (a *App) ShowDialogErrorBisectionPrepare(err error) {
 	})
 }
 
+func (a *App) OnBisectionHalted(groupA, groupB sets.Set) {
+	a.ExecuteAndDraw(func() {
+		a.navManager.ShowModal(tui.PageHaltID, pages.NewHaltPage(a, groupA, groupB, func() {
+			a.navManager.CloseModal()
+		}))
+	})
+}
+
 func (a *App) ShowDialogInfoBisectionModsMissingExpected(missingMods sets.Set) {
 	a.showDialog(func(onDismiss func()) {
 		a.dialogManager.ShowInfoDialog(
@@ -254,6 +262,10 @@ func (a *App) OnTestReady() {
 			func() {
 				a.navManager.CloseModal()
 				a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
+			},
+			func() {
+				a.navManager.CloseModal()
+				a.GetBisectionController().SubmitTestResult(imcs.TestResultIndeterminate)
 			},
 			func() {
 				a.navManager.CloseModal()

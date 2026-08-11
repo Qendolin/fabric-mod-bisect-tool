@@ -234,6 +234,9 @@ func (p *MainPage) updateOverview(vm *ui.BisectionViewModel) {
 		if vm.LastTestResult == imcs.TestResultFail {
 			color = "red"
 		}
+		if vm.LastTestResult == imcs.TestResultIndeterminate {
+			color = "yellow"
+		}
 		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, vm.LastTestResult)
 	}
 
@@ -247,6 +250,8 @@ func (p *MainPage) updateOverview(vm *ui.BisectionViewModel) {
 // determineStatusAndButtonText computes the user-facing status string and button label from the ViewModel.
 func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (status, buttonText string) {
 	switch {
+	case vm.IsHalted:
+		return "Search Halted", "Results"
 	case vm.IsComplete:
 		return "Search Complete", "Results"
 	case vm.StepCount > 0 && vm.CurrentTestPlan != nil:

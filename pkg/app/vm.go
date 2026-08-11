@@ -45,6 +45,7 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	vm.IsReady = true
 	vm.IsComplete = state.IsComplete
 	vm.IsVerificationStep = isVerification
+	vm.IsHalted = state.IsHalted
 	vm.StepCount = engine.GetStepCount()
 	vm.Iteration = state.Iteration
 	vm.Round = state.Round

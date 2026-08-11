@@ -201,8 +201,22 @@ func (a *App) Step() {
 
 func (a *App) SubmitTestResult(result imcs.TestResult) {
 	a.bisectSvc.SubmitTestResult(result)
-	a.displayResults()
+	state := a.bisectSvc.GetCurrentState()
+	if state.IsHalted {
+		a.showHaltedPage()
+	} else {
+		a.displayResults()
+	}
 	a.view.Update()
+}
+
+// showHaltedPage shows the halt page with the two candidate halves that
+// were being tested when the search halted, mirroring the split the bisection
+// algorithm performs on the current candidate set.
+func (a *App) showHaltedPage() {
+	candidateSlice := sets.MakeSlice(a.bisectSvc.GetCurrentState().GetCandidateSet())
+	groupA, groupB := sets.Split(candidateSlice)
+	a.view.OnBisectionHalted(sets.MakeSet(groupA), sets.MakeSet(groupB))
 }
 
 func (a *App) CancelTest() {
@@ -439,6 +453,12 @@ func (a *App) handleStepError(err error) {
 	if errors.Is(err, imcs.ErrSearchComplete) {
 		logging.Infof("App: Step error, bisection complete: %s", err)
 		a.displayResults()
+		return
+	}
+
+	if errors.Is(err, imcs.ErrSearchHalted) {
+		logging.Warnf("App: Step error, bisection halted: %s", err)
+		a.showHaltedPage()
 		return
 	}
 

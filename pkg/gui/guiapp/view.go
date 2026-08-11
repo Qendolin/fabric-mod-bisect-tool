@@ -1,6 +1,7 @@
 package guiapp
 
 import (
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/screens"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 )
@@ -37,4 +38,10 @@ func (a *App) OnTestReady() {
 
 func (a *App) OnIterationComplete() {
 	a.SetActiveScreen(a.resultScreen)
+}
+
+func (a *App) OnBisectionHalted(groupA, groupB sets.Set) {
+	a.Run(func() {
+		a.SetActiveScreen(screens.NewHaltScreen(a, groupA, groupB))
+	})
 }

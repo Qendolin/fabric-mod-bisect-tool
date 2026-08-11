@@ -54,6 +54,25 @@ func (s *UndoStack) Clear() {
 	s.frames = make([]UndoFrame, 0)
 }
 
+// copySteps deep-copies a slice of SearchStep.
+func copySteps(steps []SearchStep) []SearchStep {
+	copied := make([]SearchStep, len(steps))
+	for i, step := range steps {
+		copiedStepStableSet := make(sets.Set, len(step.StableSet))
+		for k := range step.StableSet {
+			copiedStepStableSet[k] = struct{}{}
+		}
+		copiedStepCandidates := make([]string, len(step.Candidates))
+		copy(copiedStepCandidates, step.Candidates)
+
+		copied[i] = SearchStep{
+			StableSet:  copiedStepStableSet,
+			Candidates: copiedStepCandidates,
+		}
+	}
+	return copied
+}
+
 // deepCopyState creates a new SearchState with all maps and slices copied.
 func deepCopyState(state SearchState) SearchState {
 	// This function contains the logic you had in your original Push method.
@@ -70,33 +89,21 @@ func deepCopyState(state SearchState) SearchState {
 		copiedStableSet[k] = struct{}{}
 	}
 
-	copiedSearchStack := make([]SearchStep, len(state.SearchStack))
-	for i, step := range state.SearchStack {
-		copiedStepStableSet := make(sets.Set, len(step.StableSet))
-		for k := range step.StableSet {
-			copiedStepStableSet[k] = struct{}{}
-		}
-		copiedStepCandidates := make([]string, len(step.Candidates))
-		copy(copiedStepCandidates, step.Candidates)
-
-		copiedSearchStack[i] = SearchStep{
-			StableSet:  copiedStepStableSet,
-			Candidates: copiedStepCandidates,
-		}
-	}
-
 	return SearchState{
-		ConflictSet:            copiedConflictSet,
-		Candidates:             copiedCandidates,
-		StableSet:              copiedStableSet,
-		SearchStack:            copiedSearchStack,
-		IsVerifyingConflictSet: state.IsVerifyingConflictSet,
-		AllModIDs:              state.AllModIDs, // This can be a shallow copy as it's immutable reference data
-		IsComplete:             state.IsComplete,
-		LastFoundElement:       state.LastFoundElement,
-		LastTestResult:         state.LastTestResult,
-		Round:                  state.Round,
-		Iteration:              state.Iteration,
-		Step:                   state.Step,
+		ConflictSet:             copiedConflictSet,
+		Candidates:              copiedCandidates,
+		StableSet:               copiedStableSet,
+		SearchStack:             copySteps(state.SearchStack),
+		IsHandlingIndeterminate: state.IsHandlingIndeterminate,
+		IsVerifyingConflictSet:  state.IsVerifyingConflictSet,
+		IsHalted:                state.IsHalted,
+		AllModIDs:               state.AllModIDs, // This can be a shallow copy as it's immutable reference data
+		IsComplete:              state.IsComplete,
+		LastFoundElement:        state.LastFoundElement,
+		LastTestResult:          state.LastTestResult,
+		Round:                   state.Round,
+		Iteration:               state.Iteration,
+		Step:                    state.Step,
+		IndeterminateCount:      state.IndeterminateCount,
 	}
 }

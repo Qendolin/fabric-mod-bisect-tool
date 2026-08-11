@@ -193,6 +193,8 @@ func (p *HistoryPage) updateDetailView(index int) {
 	stateDesc := ""
 	if entry.Plan.IsVerificationStep {
 		stateDesc = "This was a verification test of the current conflict set."
+	} else if state.IsHandlingIndeterminate {
+		stateDesc = "This was a complement test of the second half after an indeterminate result."
 	} else if len(state.SearchStack) > 0 {
 		stateDesc = "This was a bisection step within a candidate set."
 	} else {

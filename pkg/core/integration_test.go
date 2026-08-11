@@ -17,12 +17,19 @@ import (
 )
 
 // runBisectionTest is a test harness that executes the full bisection process.
-func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mods.Mod, problematicSets []sets.Set) sets.Set {
+// maskingSet, when non-empty, models a secondary issue: a test whose effective
+// set fully contains the masking set crashes before the primary issue can be
+// observed, so the result is INDETERMINATE.
+func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mods.Mod, problematicSets []sets.Set, maskingSet sets.Set) sets.Set {
 	t.Helper()
 
 	for testCount := 0; !svc.Engine().GetCurrentState().IsComplete; testCount++ {
 		if testCount > 100 {
 			t.Fatalf("Exceeded test count limit (100)")
+		}
+		if svc.Engine().GetCurrentState().IsHalted {
+			t.Logf("Search halted before completion.")
+			break
 		}
 
 		plan, err := svc.Engine().PlanNextTest()
@@ -55,6 +62,10 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 		if isFailure {
 			result = imcs.TestResultFail
 		}
+		// The masking set takes precedence: its presence hides the primary issue.
+		if len(maskingSet) > 0 && len(sets.Subtract(maskingSet, allProvidedIDsByEffectiveSet)) == 0 {
+			result = imcs.TestResultIndeterminate
+		}
 
 		t.Logf("Step %d: Testing %v -> Effective %v -> Result: %s", testCount+1, sets.MakeSlice(plan.ModIDsToTest), sets.MakeSlice(effectiveSet), result)
 		if err := svc.Engine().SubmitTestResult(result); err != nil {
@@ -82,6 +93,7 @@ func TestBisectService_Integration(t *testing.T) {
 		name                string
 		modSpecs            map[string]modSpec
 		problematicSet      sets.Set
+		maskingSet          sets.Set
 		stateManagerSetup   func(state *mods.StateManager)
 		expectedConflictSet sets.Set
 	}{
@@ -158,6 +170,13 @@ func TestBisectService_Integration(t *testing.T) {
 			},
 			expectedConflictSet: sets.MakeSet([]string{}),
 		},
+		{
+			name:                "Indeterminate Masking Mod Hides Primary Conflict",
+			modSpecs:            baseModSpecs,
+			problematicSet:      sets.MakeSet([]string{"mod_c", "mod_k"}),
+			maskingSet:          sets.MakeSet([]string{"mod_m"}),
+			expectedConflictSet: sets.MakeSet([]string{"mod_c", "mod_k"}),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -190,7 +209,7 @@ func TestBisectService_Integration(t *testing.T) {
 			}
 
 			svc.ResetSearch()
-			finalConflictSet := runBisectionTest(t, svc, allMods, []sets.Set{tc.problematicSet})
+			finalConflictSet := runBisectionTest(t, svc, allMods, []sets.Set{tc.problematicSet}, tc.maskingSet)
 
 			if !reflect.DeepEqual(finalConflictSet, tc.expectedConflictSet) {
 				t.Errorf("Test case '%s' failed.\nExpected: %v\nGot:      %v", tc.name, sets.MakeSlice(tc.expectedConflictSet), sets.MakeSlice(finalConflictSet))
@@ -245,7 +264,7 @@ func TestBisectService_Enumeration(t *testing.T) {
 
 	// --- Round 1: Find the first conflict set ---
 	t.Log("--- Starting Round 1 ---")
-	foundSet1 := runBisectionTest(t, svc, allMods, problematicSets)
+	foundSet1 := runBisectionTest(t, svc, allMods, problematicSets, nil)
 
 	// Verify that one of the two conflict sets was found.
 	if !reflect.DeepEqual(foundSet1, problematicSets[0]) && !reflect.DeepEqual(foundSet1, problematicSets[1]) {
@@ -262,7 +281,7 @@ func TestBisectService_Enumeration(t *testing.T) {
 
 	// --- Round 2: Find the second conflict set ---
 	t.Log("--- Starting Round 2 ---")
-	foundSet2 := runBisectionTest(t, svc, allMods, problematicSets)
+	foundSet2 := runBisectionTest(t, svc, allMods, problematicSets, nil)
 
 	// Verify that the *other* conflict set was found.
 	var expectedSet2 sets.Set

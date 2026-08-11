@@ -82,6 +82,14 @@ type MockView struct {
 
 	// unresolvableCh receives the mods passed to OnUnresolvableMods (once).
 	unresolvableCh chan []ui.UnresolvableModInfo
+	// haltedCh receives the groups passed to OnBisectionHalted (once each).
+	haltedCh chan HaltInvocation
+}
+
+// HaltInvocation describes a single OnBisectionHalted call.
+type HaltInvocation struct {
+	GroupA sets.Set
+	GroupB sets.Set
 }
 
 // NewMockView creates an empty recording view.
@@ -90,6 +98,7 @@ func NewMockView() *MockView {
 		dialogCh:       make(chan DialogInvocation),
 		readyCh:        make(chan struct{}),
 		unresolvableCh: make(chan []ui.UnresolvableModInfo, 1),
+		haltedCh:       make(chan HaltInvocation, 1),
 	}
 }
 
@@ -161,6 +170,19 @@ func (m *MockView) WaitDialog(t *testing.T, timeout time.Duration) DialogInvocat
 		t.Fatalf("MockView: timed out waiting for a dialog; calls: %v", m.Calls())
 	}
 	return DialogInvocation{}
+}
+
+// WaitHalted blocks until OnBisectionHalted fires and returns the reported
+// groups, or fails the test on timeout.
+func (m *MockView) WaitHalted(t *testing.T, timeout time.Duration) HaltInvocation {
+	t.Helper()
+	select {
+	case inv := <-m.haltedCh:
+		return inv
+	case <-time.After(timeout):
+		t.Fatalf("MockView: timed out waiting for OnBisectionHalted; calls: %v", m.Calls())
+	}
+	return HaltInvocation{}
 }
 
 // block sends an invocation to the dialog channel and blocks until Respond.
@@ -253,6 +275,14 @@ func (m *MockView) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 
 func (m *MockView) OnTestReady() {
 	m.record("OnTestReady")
+}
+
+func (m *MockView) OnBisectionHalted(groupA, groupB sets.Set) {
+	m.record("OnBisectionHalted")
+	select {
+	case m.haltedCh <- HaltInvocation{GroupA: groupA, GroupB: groupB}:
+	default:
+	}
 }
 
 func (m *MockView) OnIterationComplete() {

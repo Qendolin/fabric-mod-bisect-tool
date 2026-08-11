@@ -14,6 +14,7 @@ const (
 	PageResultID       = "result_page"
 	PageTestID         = "test_page"
 	PageUnresolvableID = "unresolvable_page"
+	PageHaltID         = "halt_page"
 )
 
 type ActionPrompt struct {

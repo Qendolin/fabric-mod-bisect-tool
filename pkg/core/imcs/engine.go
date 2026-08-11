@@ -271,7 +271,8 @@ func (e *Engine) GetEstimatedMaxTests() int {
 
 	// The formula: problems * (ceil(log2(n)) + 1)
 	// The +1 accounts for the verification step.
-	return problemsFound * (int(math.Ceil(math.Log2(float64(numInitialCandidates)))) + 1)
+	// Each INDETERMINATE result adds one complement test on top of the base estimate.
+	return problemsFound*(int(math.Ceil(math.Log2(float64(numInitialCandidates))))+1) + e.state.IndeterminateCount
 }
 
 // GetPendingAdditions returns the items that will be added to the search at the end of the current iteration

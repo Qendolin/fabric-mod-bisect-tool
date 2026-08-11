@@ -167,7 +167,9 @@ func (fl *FlexList) Draw(screen tcell.Screen) {
 			if itemScreenY >= y && (itemScreenY+itemHeight) <= (y+height) {
 
 				// If this is the selected item, draw a colored background first.
-				if fl.HasFocus() && i == fl.selectedIndex {
+				// The highlight stays visible even when focus has moved elsewhere,
+				// so the currently selected entry remains identifiable.
+				if i == fl.selectedIndex {
 					bgStyle := tcell.StyleDefault.Background(fl.selectionColor)
 					for row := 0; row < itemHeight; row++ {
 						for col := 0; col < width; col++ {

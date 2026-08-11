@@ -95,4 +95,8 @@ type View interface {
 	OnBisectionReady()
 	OnTestReady()
 	OnIterationComplete()
+	// OnBisectionHalted is called when the search halts because two groups of
+	// mods block each other through undeclared dependencies. The UI presents the
+	// two groups as a full page; this is non-blocking.
+	OnBisectionHalted(groupA, groupB sets.Set)
 }

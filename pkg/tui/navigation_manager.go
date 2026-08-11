@@ -125,7 +125,11 @@ func (n *NavigationManager) CloseModal() {
 	currentPage := n.GetCurrentPage(true)
 	n.updateUIForPage(currentPage)
 
-	// Does not cause OnPageActivated invocations
+	// Refresh the revealed page's content. Closing a modal can change the state
+	// it displays (e.g. a halted search), so it must re-read the view model.
+	if currentPage != nil {
+		currentPage.Update()
+	}
 }
 
 // GetCurrentPage returns the Page interface of the front-most primitive.

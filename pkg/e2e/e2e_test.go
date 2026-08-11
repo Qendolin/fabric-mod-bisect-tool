@@ -720,3 +720,42 @@ func TestResolveEffectiveSetWithDependencies(t *testing.T) {
 		}
 	}
 }
+
+// TestBisectionHaltsOnDoubleIndeterminate verifies that two consecutive
+// INDETERMINATE answers on the halves of the same split halt the search and
+// surface a page with the two conflicting mod groups.
+func TestBisectionHaltsOnDoubleIndeterminate(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0"}`},
+		"mod-d-1.0.jar": {JSONContent: `{"id": "mod_d", "version": "1.0"}`},
+	}
+	a, mock, _ := newLoadedApp(t, specs)
+
+	// First test: first half of the initial split is indeterminate.
+	a.Step()
+	a.SubmitTestResult(imcs.TestResultIndeterminate)
+
+	// Second test: complement (second half) is also indeterminate -> halt.
+	a.Step()
+	a.SubmitTestResult(imcs.TestResultIndeterminate)
+
+	inv := mock.WaitHalted(t, timeout)
+	if !sets.Equal(inv.GroupA, sets.MakeSet([]string{"mod_a", "mod_b"})) ||
+		!sets.Equal(inv.GroupB, sets.MakeSet([]string{"mod_c", "mod_d"})) {
+		t.Fatalf("unexpected halt groups: %v / %v", sets.MakeSlice(inv.GroupA), sets.MakeSlice(inv.GroupB))
+	}
+
+	vm := a.GetViewModel()
+	if !vm.IsHalted {
+		t.Error("expected the view model to report IsHalted")
+	}
+	if vm.IsComplete {
+		t.Error("expected the halted search to not be marked complete")
+	}
+
+	// Pressing Step again must not plan a new test; it re-reports the halt.
+	a.Step()
+	mock.WaitHalted(t, timeout)
+}

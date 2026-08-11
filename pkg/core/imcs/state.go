@@ -14,6 +14,9 @@ const (
 	TestResultFail TestResult = "FAIL"
 	// TestResultGood indicates the test ran successfully without the undesirable outcome.
 	TestResultGood TestResult = "GOOD"
+	// TestResultIndeterminate indicates that a secondary issue prevented the
+	// outcome from being observed, e.g. a crash before the primary issue could manifest.
+	TestResultIndeterminate TestResult = "INDETERMINATE"
 	// This is the initial value
 	TestResultUndefined TestResult = ""
 )
@@ -56,15 +59,31 @@ type SearchState struct {
 	// It resets at the start of each new FindNextConflictElement iteration.
 	Step int
 
+	// IndeterminateCount is the cumulative number of INDETERMINATE results submitted
+	// in the current search. Each one triggers a complement test, so it is used to
+	// refine the estimated maximum number of tests.
+	IndeterminateCount int
+
 	// SearchStack is an iterative implementation of the recursive "FindNextConflictElement"
 	// procedure. Each SearchStep on the stack is a snapshot of a recursive call's arguments
 	// (the local stable set and local candidates for that bisection).
 	SearchStack []SearchStep
 
+	// IsHandlingIndeterminate is true while a complement test is being planned
+	// and executed in response to an INDETERMINATE result on the first half of a split.
+	// It keeps the current step context so the complement test (on the second half)
+	// can be planned next and its result can branch the search correctly.
+	IsHandlingIndeterminate bool
+
 	// --- Global Metadata and Flags ---
 
 	// IsVerifyingConflictSet is true if the next test planned should be the final `test(ConflictSet)` optimization step.
 	IsVerifyingConflictSet bool
+	// IsHalted is true if the search was stopped because both halves of a split
+	// returned INDETERMINATE. No further tests can be planned. The search stack
+	// is left intact so the UI can reconstruct the two conflicting groups from
+	// the current candidate set.
+	IsHalted bool
 	// AllModIDs is the universe of all mods, used for context and resetting candidates.
 	AllModIDs []string
 	// IsComplete is true if the search has concluded and no more tests are needed.
@@ -88,18 +107,21 @@ func newSearchStep(stableSet sets.Set, candidates []string) SearchStep {
 // NewInitialState creates the starting state for a new search.
 func NewInitialState() SearchState {
 	return SearchState{
-		ConflictSet:            make(sets.Set),
-		Candidates:             make([]string, 0),
-		StableSet:              make(sets.Set),
-		SearchStack:            make([]SearchStep, 0),
-		IsVerifyingConflictSet: false,
-		AllModIDs:              make([]string, 0),
-		IsComplete:             false,
-		LastFoundElement:       "",
-		LastTestResult:         "",
-		Round:                  1,
-		Iteration:              1,
-		Step:                   1,
+		ConflictSet:             make(sets.Set),
+		Candidates:              make([]string, 0),
+		StableSet:               make(sets.Set),
+		SearchStack:             make([]SearchStep, 0),
+		IsHandlingIndeterminate: false,
+		IsVerifyingConflictSet:  false,
+		IsHalted:                false,
+		AllModIDs:               make([]string, 0),
+		IsComplete:              false,
+		LastFoundElement:        "",
+		LastTestResult:          "",
+		Round:                   1,
+		Iteration:               1,
+		Step:                    1,
+		IndeterminateCount:      0,
 	}
 }
 

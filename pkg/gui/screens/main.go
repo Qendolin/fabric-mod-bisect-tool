@@ -34,9 +34,10 @@ type MainScreen struct {
 	stepClick widget.Clickable
 	undoClick widget.Clickable
 
-	successClick widget.Clickable
-	failureClick widget.Clickable
-	cancelClick  widget.Clickable
+	successClick       widget.Clickable
+	failureClick       widget.Clickable
+	indeterminateClick widget.Clickable
+	cancelClick        widget.Clickable
 
 	isTestPromptActive bool
 	// activeMods holds the mod list for the current test prompt. It is computed
@@ -90,6 +91,10 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.undoClick.Clicked(gtx) && vm.CanUndo {
 		go func() {
 			defer logging.HandlePanic()
+			ok := s.app.ShowQuestionDialog("Undo Last Step", "Are you sure you want to undo the last step?", "")
+			if !ok {
+				return
+			}
 			err := s.app.GetBisectionController().Undo()
 			if err != nil {
 				if errors.Is(err, bisect.ErrUndoStackEmpty) {
@@ -113,6 +118,10 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.failureClick.Clicked(gtx) && s.isTestPromptActive {
 		s.isTestPromptActive = false
 		s.app.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
+	}
+	if s.indeterminateClick.Clicked(gtx) && s.isTestPromptActive {
+		s.isTestPromptActive = false
+		s.app.GetBisectionController().SubmitTestResult(imcs.TestResultIndeterminate)
 	}
 	if s.cancelClick.Clicked(gtx) && s.isTestPromptActive {
 		s.isTestPromptActive = false
@@ -159,6 +168,13 @@ func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText stri
 	case !vm.IsReady:
 		return "Initializing...", "", "▶  Start Bisection", 0
 
+	case vm.IsHalted:
+		return "Search Halted",
+			"The search stopped because two groups of mods appear to depend on each other.\n" +
+				"The halt page shows the two groups; resolve one of the involved mods and start a new search.",
+			"View Halted Groups",
+			searchProgress(vm)
+
 	case vm.IsVerificationStep:
 		return "Verifying final set...",
 			"The next test verifies that the found set of mods is the cause of the issue. " +
@@ -176,18 +192,23 @@ func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText stri
 			0
 
 	default:
-		var prog float32
-		if vm.EstimatedMaxTests > 0 {
-			prog = float32(vm.StepCount) / float32(vm.EstimatedMaxTests)
-			if prog > 1.0 {
-				prog = 1.0
-			}
-		}
 		return fmt.Sprintf("Round %d · Iteration %d", vm.Round, vm.Iteration),
 			fmt.Sprintf("Step %d of ~%d estimated tests.", vm.StepCount, vm.EstimatedMaxTests),
 			"▶  Next Step",
-			prog
+			searchProgress(vm)
 	}
+}
+
+// searchProgress computes the fraction of the estimated maximum tests completed.
+func searchProgress(vm *ui.BisectionViewModel) float32 {
+	if vm.EstimatedMaxTests <= 0 {
+		return 0
+	}
+	prog := float32(vm.StepCount) / float32(vm.EstimatedMaxTests)
+	if prog > 1.0 {
+		prog = 1.0
+	}
+	return prog
 }
 
 func (s *MainScreen) layoutNormalLeft(
@@ -255,12 +276,14 @@ func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme
 		header = "Verification Test"
 		desc = "Start Minecraft with the current active mod set and verify whether your issue is still present.\n\n" +
 			"✗ Broken\n  The issue is still there (confirms the found conflict set is correct).\n\n" +
-			"✓ Works\n  The issue is gone (suggests the set is incomplete)."
+			"✓ Works\n  The issue is gone (suggests the set is incomplete).\n\n" +
+			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present."
 	} else {
 		header = "Bisection Test"
 		desc = "Start Minecraft with the current active mod set and verify whether your issue is resolved.\n\n" +
 			"✓ Works\n  The game runs fine and the issue is gone.\n\n" +
-			"✗ Broken\n  The issue is still present in the game."
+			"✗ Broken\n  The issue is still present in the game.\n\n" +
+			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present."
 	}
 
 	return s.layoutTwoPanel(gtx,
@@ -307,12 +330,18 @@ func (s *MainScreen) layoutSuccessFailureButtons(gtx layout.Context, th *materia
 	successBtn.Background = theme.SuccessColor
 	successBtn.Color = colorWhite
 
+	indeterminateBtn := material.Button(th, &s.indeterminateClick, "? Can't Tell")
+	indeterminateBtn.Background = color.NRGBA{R: 90, G: 62, B: 12, A: 255} // Dark amber
+	indeterminateBtn.Color = theme.WarningColor
+
 	failureBtn := material.Button(th, &s.failureClick, "✗ Broken")
 	failureBtn.Background = theme.DangerColor
 	failureBtn.Color = colorWhite
 
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Flexed(1, successBtn.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Flexed(1, indeterminateBtn.Layout),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 		layout.Flexed(1, failureBtn.Layout),
 	)

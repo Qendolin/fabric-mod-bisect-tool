@@ -19,6 +19,7 @@ type TestPage struct {
 
 	successBtn *tview.Button
 	failBtn    *tview.Button
+	unknownBtn *tview.Button
 	backBtn    *tview.Button
 	statusText *tview.TextView
 
@@ -27,21 +28,23 @@ type TestPage struct {
 	useGlyphs bool
 
 	// callbacks
-	onSuccess func()
-	onFailure func()
-	onCancel  func()
+	onSuccess       func()
+	onFailure       func()
+	onIndeterminate func()
+	onCancel        func()
 }
 
 // NewTestPage creates a new TestPage.
-func NewTestPage(app tui.TUIApp, isVerification bool, onSuccess, onFailure, onCancel func()) *TestPage {
+func NewTestPage(app tui.TUIApp, isVerification bool, onSuccess, onFailure, onIndeterminate, onCancel func()) *TestPage {
 	p := &TestPage{
-		Flex:       tview.NewFlex(),
-		app:        app,
-		statusText: tview.NewTextView().SetDynamicColors(true),
-		onSuccess:  onSuccess,
-		onFailure:  onFailure,
-		onCancel:   onCancel,
-		useGlyphs:  tui.UnicodeGlyphsSupported(),
+		Flex:            tview.NewFlex(),
+		app:             app,
+		statusText:      tview.NewTextView().SetDynamicColors(true),
+		onSuccess:       onSuccess,
+		onFailure:       onFailure,
+		onIndeterminate: onIndeterminate,
+		onCancel:        onCancel,
+		useGlyphs:       tui.UnicodeGlyphsSupported(),
 	}
 
 	p.statusText.SetText("Report Manual Test Outcome")
@@ -51,7 +54,10 @@ func NewTestPage(app tui.TUIApp, isVerification bool, onSuccess, onFailure, onCa
 
 Please launch Minecraft now.
 
-Once the game has loaded (or crashed), report the outcome below.`
+Once the game has loaded (or crashed), report the outcome below.
+
+If you can't tell whether the issue is present, e.g. the game
+crashed before you could observe it, select Can't Tell.`
 
 	if isVerification {
 		p.statusText.SetText("Verify Final Problematic Set")
@@ -61,7 +67,10 @@ Once the game has loaded (or crashed), report the outcome below.`
 
 This test will run with ONLY the suspected problematic mods enabled.
 
-Please launch Minecraft and confirm the failure persists.`
+Please launch Minecraft and confirm the failure persists.
+
+If you can't tell whether the failure persists, e.g. the game
+crashed before you could observe it, select Can't Tell.`
 	}
 
 	instructions := tview.NewTextView().
@@ -90,11 +99,18 @@ Please launch Minecraft and confirm the failure persists.`
 	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkRed).Background(tcell.ColorWhite))
 	p.failBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorRed).Underline(true))
 
+	p.unknownBtn = tview.NewButton("? Can't Tell").
+		SetSelectedFunc(p.onIndeterminate)
+	p.unknownBtn.SetDisabled(true)
+	p.unknownBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
+	p.unknownBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorSaddleBrown).Background(tcell.ColorWhite))
+	p.unknownBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGoldenrod).Underline(true))
+
 	p.backBtn = tview.NewButton("Cancel").
 		SetSelectedFunc(p.onCancel)
 	p.backBtn.SetDisabled(true)
 	p.backBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
-	p.backBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorBlue).Background(tcell.ColorWhite))
+	p.backBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
 	p.backBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorBlue).Underline(true))
 
 	// prevent accidental input
@@ -104,26 +120,42 @@ Please launch Minecraft and confirm the failure persists.`
 		p.app.ExecuteAndDraw(func() {
 			p.successBtn.SetDisabled(false)
 			p.failBtn.SetDisabled(false)
+			p.unknownBtn.SetDisabled(false)
 			p.backBtn.SetDisabled(false)
 		})
 	}()
 
-	buttonFlex := tview.NewFlex().
+	// Row 1: the three verdict buttons.
+	verdictFlex := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(tview.NewBox(), 0, 1, false). // Spacer
 		AddItem(p.successBtn, 0, 1, false).
 		AddItem(tview.NewBox(), 2, 0, false).
-		AddItem(p.backBtn, 0, 1, true).
+		AddItem(p.unknownBtn, 0, 1, false).
 		AddItem(tview.NewBox(), 2, 0, false).
 		AddItem(p.failBtn, 0, 1, false).
 		AddItem(tview.NewBox(), 0, 1, false) // Spacer
+
+	// Row 2: the cancel action, centered. The spacers are weighted so the button
+	// ends up roughly the same width as the verdict buttons above it.
+	cancelFlex := tview.NewFlex().
+		SetDirection(tview.FlexColumn).
+		AddItem(tview.NewBox(), 0, 2, false).
+		AddItem(p.backBtn, 0, 1, true).
+		AddItem(tview.NewBox(), 0, 2, false)
+
+	buttonsFlex := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(verdictFlex, 3, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(cancelFlex, 3, 0, true)
 
 	p.SetDirection(tview.FlexRow).
 		AddItem(widgets.NewHorizontalSeparator(tcell.ColorWhite), 1, 0, false).
 		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(instructions, 0, 2, false).
-		AddItem(buttonFlex, 3, 0, true).
-		AddItem(tview.NewBox(), 0, 1, false)
+		AddItem(buttonsFlex, 7, 0, true).
+		AddItem(tview.NewBox(), 1, 0, false)
 
 	p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape {
@@ -139,6 +171,9 @@ Please launch Minecraft and confirm the failure persists.`
 			case 'd', 'D':
 				p.onFailure()
 				return nil
+			case 's', 'S':
+				p.onIndeterminate()
+				return nil
 			}
 		}
 
@@ -150,14 +185,11 @@ Please launch Minecraft and confirm the failure persists.`
 
 // GetActionPrompts returns the key actions for the test page.
 func (p *TestPage) GetActionPrompts() []tui.ActionPrompt {
-	works, broken := "[+] Works", "[-[] Broken"
-	if p.useGlyphs {
-		works, broken = "✓ Works", "✗ Broken"
-	}
 	return []tui.ActionPrompt{
 		{Input: "ESC", Action: "Cancel"},
-		{Input: "A", Action: works},
-		{Input: "D", Action: broken},
+		{Input: "A", Action: "Works"},
+		{Input: "S", Action: "Can't Tell"},
+		{Input: "D", Action: "Broken"},
 	}
 }
 
@@ -170,8 +202,9 @@ func (p *TestPage) GetStatusPrimitive() *tview.TextView {
 func (p *TestPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.successBtn,
-		p.backBtn,
+		p.unknownBtn,
 		p.failBtn,
+		p.backBtn,
 	}
 }
 
