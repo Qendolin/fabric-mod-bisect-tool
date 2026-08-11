@@ -97,8 +97,7 @@ You can launch the tool with these optional flags for more control.
 
 * `--no-embedded-overrides`: Disables the built-in list of fixes for mods that have known dependency issues. Use this if you think a built-in fix is causing problems.
 * `--verbose`: Turns on detailed debug logging. The log file (`bisect-tool.log`) will contain much more information, which is useful for bug reports.
-* `--quilt`: Enables special support for Quilt mods (e.g., reading `quilt.mod.json`).
-* `--neoforge`: Enables special support for NeoForge mods (e.g., reading `neoforge.mods.toml`).
+* `--loader <loader>`: Forces the mod loader to use: `fabric`, `neoforge`, `connector` ((Neo)Forge with Fabric via Sinytra Connector) or `kilt` (Fabric with (Neo)Forge). By default the loader is auto-detected from your mods folder.
 * `--log-dir <path>`: Lets you specify a different folder to save the `bisect-tool.log` file. For example: `--log-dir "C:\my_logs"`.
 
 ### Dependency Overrides

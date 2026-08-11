@@ -1,31 +1,70 @@
 package screens
 
 import (
+	"image"
 	"image/color"
 
+	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/probe"
+	"gioui.org/x/component"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/probe"
 	"github.com/ncruces/zenity"
 )
+
+// loaderChoices lists the loader options in the order they are shown.
+var loaderChoices = mods.SupportedRunLoaders()
 
 type SetupScreen struct {
 	app         App
 	pathEditor  widget.Editor
 	browseClick widget.Clickable
 	startClick  widget.Clickable
+
+	loaderSelect loaderSelect
+
+	// probeWorker serializes directory probes (one at a time, queued).
+	probeWorker *probe.Worker
+
+	// userSelectedLoader is true once the user picks a loader manually, so the
+	// probe recommendation no longer overrides the selection.
+	userSelectedLoader bool
+
+	// lastPath tracks the last probed path to avoid re-probing on every frame.
+	lastPath string
 }
 
 func NewSetupScreen(app App) *SetupScreen {
-	s := &SetupScreen{app: app}
+	s := &SetupScreen{
+		app:         app,
+		probeWorker: probe.NewWorker(),
+	}
 	s.pathEditor.SingleLine = true
 	s.pathEditor.Submit = true
+
+	s.loaderSelect.contextArea = component.ContextArea{
+		Activation:       pointer.ButtonPrimary,
+		AbsolutePosition: true,
+	}
+
+	// A loader forced via the command line preselects the option and is not
+	// overridden by the probe.
+	if cliLoader := app.GetViewModel().PreferredLoader; cliLoader != "" {
+		if idx, ok := loaderChoiceIndex(cliLoader); ok {
+			s.loaderSelect.selected = idx
+		}
+		s.userSelectedLoader = true
+	}
 	return s
 }
 
@@ -52,6 +91,15 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 		}()
 	}
 
+	// Probe whenever the entered path changes so the recommended loader can be
+	// preselected. The probe worker ignores paths that are not valid
+	// directories.
+	path := s.pathEditor.Text()
+	if path != s.lastPath {
+		s.lastPath = path
+		s.probeLoader(path)
+	}
+
 	if s.startClick.Clicked(gtx) {
 		path := s.pathEditor.Text()
 		if path == "" {
@@ -62,13 +110,13 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 				s.app.ShowErrorDialog("Error", "Please select a mods folder", nil)
 			}()
 		} else {
-			go func() {
-				res := probe.ProbeModsDirectory(path)
-				s.app.Run(func() {
-					vm := s.app.GetViewModel()
-					s.app.StartLoadingProcess(path, vm.ForceQuiltSupport || res.QuiltSupport, vm.ForceNeoForgeSupport || res.NeoForgeSupport)
-				})
-			}()
+			// Read the loader selection on the UI thread: the probe worker and
+			// the dropdown can update it concurrently, so reading it here (the
+			// UI goroutine) avoids a data race.
+			s.app.Run(func() {
+				defer logging.HandlePanic()
+				s.app.StartLoadingProcess(path, s.selectedLoader())
+			})
 		}
 	}
 
@@ -76,7 +124,7 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Flexed(1, layout.Spacer{}.Layout), // top spacer
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			// Center the form horizontally with a maximum width of 480dp
+			// Center the form horizontally with a maximum width of 540dp
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1, layout.Spacer{}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -102,6 +150,13 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 							desc.Color = theme.TextMutedColor
 							desc.Alignment = text.Middle
 							return layout.Inset{Bottom: unit.Dp(32)}.Layout(gtx, desc.Layout)
+						}),
+						// Mods folder label
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							heading := material.Body2(th, "Mods Folder")
+							heading.Color = theme.TextMutedColor
+							heading.Font.Weight = font.Bold
+							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
 						}),
 						// Path entry and browse button
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -131,6 +186,27 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 							)
 						}),
 						layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
+						// Loader selection
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							heading := material.Body2(th, "Mod Loader")
+							heading.Color = theme.TextMutedColor
+							heading.Font.Weight = font.Bold
+							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							labels := make([]string, len(loaderChoices))
+							for i, choice := range loaderChoices {
+								labels[i] = choice.String()
+							}
+							dims := s.loaderSelect.Layout(gtx, th, labels)
+							// A user selection (via the popup) must not be
+							// overridden by the probe recommendation.
+							if s.loaderSelect.UserChanged() {
+								s.userSelectedLoader = true
+							}
+							return dims
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
 						// Start Button
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(th, &s.startClick, "Start Bisection")
@@ -156,4 +232,146 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 		}),
 		layout.Flexed(1.2, layout.Spacer{}.Layout), // visually balanced slightly upward
 	)
+}
+
+// probeLoader queues a probe of the given path, updating the recommended loader
+// unless the user has made a manual selection. Probes run one at a time.
+func (s *SetupScreen) probeLoader(path string) {
+	s.probeWorker.Request(path, func(res probe.ProbeResult) {
+		s.app.Run(func() {
+			if !s.userSelectedLoader && res.PrimaryLoader != "" {
+				if idx, ok := loaderChoiceIndex(res.PrimaryLoader); ok {
+					s.loaderSelect.selected = idx
+				}
+			}
+		})
+	})
+}
+
+// selectedLoader returns the loader to start with: the user's selection.
+func (s *SetupScreen) selectedLoader() mods.RunLoader {
+	idx := s.loaderSelect.selected
+	if idx < 0 || idx >= len(loaderChoices) {
+		return mods.RunLoaderFabric
+	}
+	return loaderChoices[idx]
+}
+
+// loaderChoiceIndex returns the index of a RunLoader in loaderChoices.
+func loaderChoiceIndex(loader mods.RunLoader) (int, bool) {
+	for i, choice := range loaderChoices {
+		if choice == loader {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// loaderSelect is a dropdown: a clickable field showing the current selection
+// that opens a popup list of options. The popup is an overlay (component.
+// ContextArea), so it does not affect the surrounding layout.
+type loaderSelect struct {
+	contextArea component.ContextArea
+	menu        component.MenuState
+	options     []widget.Clickable
+	selected    int
+	menuInit    bool
+	userChanged bool
+}
+
+// UserChanged reports whether the user changed the selection since the last
+// call, and clears the flag.
+func (s *loaderSelect) UserChanged() bool {
+	changed := s.userChanged
+	s.userChanged = false
+	return changed
+}
+
+// Layout renders the select and processes input events.
+func (s *loaderSelect) Layout(gtx layout.Context, th *material.Theme, labels []string) layout.Dimensions {
+	for len(s.options) < len(labels) {
+		s.options = append(s.options, widget.Clickable{})
+	}
+	if s.selected < 0 || s.selected >= len(labels) {
+		s.selected = 0
+	}
+	if !s.menuInit {
+		s.menuInit = true
+		s.buildMenu(th, labels)
+	}
+
+	// Only a user click on an option counts as a manual selection; the probe
+	// writes selected directly.
+	for i := range s.options {
+		if s.options[i].Clicked(gtx) {
+			s.selected = i
+			s.userChanged = true
+		}
+	}
+
+	box := s.renderBox(gtx, th, labels[s.selected])
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return box
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return s.contextArea.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				// Open the menu just below the field.
+				offset := layout.Inset{Top: unit.Dp(float32(box.Size.Y)/gtx.Metric.PxPerDp + 1)}
+				return offset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = box.Size.X
+					return component.Menu(th, &s.menu).Layout(gtx)
+				})
+			})
+		}),
+	)
+}
+
+// buildMenu populates the popup menu options once.
+func (s *loaderSelect) buildMenu(th *material.Theme, labels []string) {
+	s.menu.Options = s.menu.Options[:0]
+	for i, label := range labels {
+		i, label := i, label
+		s.menu.Options = append(s.menu.Options, func(gtx layout.Context) layout.Dimensions {
+			item := component.MenuItem(th, &s.options[i], label)
+			item.Label.TextSize = unit.Sp(12)
+			return item.Layout(gtx)
+		})
+	}
+}
+
+// renderBox draws the field, sized to match the path input editor.
+func (s *loaderSelect) renderBox(gtx layout.Context, th *material.Theme, label string) layout.Dimensions {
+	border := widget.Border{Color: theme.BorderColor, CornerRadius: unit.Dp(4), Width: unit.Dp(1)}
+	return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Label(th, unit.Sp(12), label)
+					lbl.Color = theme.FgColor
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return s.drawCaret(gtx, theme.TextMutedColor)
+					})
+				}),
+			)
+		})
+	})
+}
+
+// drawCaret renders a small downward triangle.
+func (s *loaderSelect) drawCaret(gtx layout.Context, color color.NRGBA) layout.Dimensions {
+	size := gtx.Dp(8)
+	gtx.Constraints = layout.Exact(image.Pt(size, size))
+	var path clip.Path
+	path.Begin(gtx.Ops)
+	path.MoveTo(f32.Pt(0, 0))
+	path.LineTo(f32.Pt(float32(size), 0))
+	path.LineTo(f32.Pt(float32(size)/2, float32(size)))
+	path.Close()
+	paint.FillShape(gtx.Ops, color, clip.Outline{Path: path.End()}.Op())
+	return layout.Dimensions{Size: image.Pt(size, size)}
 }

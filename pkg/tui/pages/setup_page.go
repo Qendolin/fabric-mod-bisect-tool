@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/probe"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/gdamore/tcell/v2"
@@ -15,25 +17,32 @@ import (
 // PageSetupID is the unique identifier for the SetupPage.
 const PageSetupID = "setup_page"
 
+// loaderChoices lists the loader options in display order.
+var loaderChoices = mods.SupportedRunLoaders()
+
 // SetupPage represents the initial setup screen.
 type SetupPage struct {
 	*tview.Flex
 	app        tui.TUIApp
 	statusText *tview.TextView
 
-	inputField       *tview.InputField
-	quiltCheckbox    *tview.Checkbox
-	neoForgeCheckbox *tview.Checkbox
-	loadButton       *tview.Button
-	quitButton       *tview.Button
+	inputField         *tview.InputField
+	loaderDropDown     *tview.DropDown
+	loadButton         *tview.Button
+	quitButton         *tview.Button
+	userSelectedLoader bool
+
+	// probeWorker serializes directory probes (one at a time, queued).
+	probeWorker *probe.Worker
 }
 
 // NewSetupPage creates a new SetupPage instance.
 func NewSetupPage(app tui.TUIApp) *SetupPage {
 	p := &SetupPage{
-		Flex:       tview.NewFlex().SetDirection(tview.FlexRow),
-		app:        app,
-		statusText: tview.NewTextView().SetDynamicColors(true),
+		Flex:        tview.NewFlex().SetDirection(tview.FlexRow),
+		app:         app,
+		statusText:  tview.NewTextView().SetDynamicColors(true),
+		probeWorker: probe.NewWorker(),
 	}
 
 	vm := app.GetViewModel()
@@ -55,20 +64,31 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 			p.app.SetFocus(p.loadButton)
 		}
 	})
+	p.inputField.SetChangedFunc(func(text string) {
+		p.probeLoader(text)
+	})
 
-	p.quiltCheckbox = tview.NewCheckbox().SetLabel("Quilt Support: ")
-	p.quiltCheckbox.SetChecked(vm.ForceQuiltSupport).
-		SetCheckedString("[green]Yes[-]").
-		SetUncheckedString("[red]No[-]").
-		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
-		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+	loaderLabels := make([]string, len(loaderChoices))
+	for i, choice := range loaderChoices {
+		loaderLabels[i] = choice.String()
+	}
+	p.loaderDropDown = tview.NewDropDown().
+		SetLabel("Mod Loader: ").
+		SetOptions(loaderLabels, func(text string, index int) {
+			if p.loaderDropDown != nil && p.loaderDropDown.HasFocus() {
+				p.userSelectedLoader = true
+			}
+		}).
+		SetCurrentOption(0)
 
-	p.neoForgeCheckbox = tview.NewCheckbox().SetLabel("NeoForge Support: ")
-	p.neoForgeCheckbox.SetChecked(vm.ForceNeoForgeSupport).
-		SetCheckedString("[green]Yes[-]").
-		SetUncheckedString("[red]No[-]").
-		SetActivatedStyle(tcell.StyleDefault.Background(tcell.ColorBlue)).
-		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+	// A loader forced via the command line preselects the option and is not
+	// overridden by the probe.
+	if cliLoader := vm.PreferredLoader; cliLoader != "" {
+		if idx, ok := loaderIndex(cliLoader); ok {
+			p.loaderDropDown.SetCurrentOption(idx)
+			p.userSelectedLoader = true
+		}
+	}
 
 	p.loadButton = tview.NewButton("Load Mods").SetSelectedFunc(func() {
 		cleaned := strings.TrimSpace(p.inputField.GetText())
@@ -81,7 +101,8 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 			app.Dialogs().ShowErrorDialog("Error", "The mods path cannot be empty.", nil, nil)
 			return
 		}
-		app.StartLoadingProcess(filepath.Clean(cleaned), p.quiltCheckbox.IsChecked(), p.neoForgeCheckbox.IsChecked())
+		loader := p.selectedLoader()
+		app.StartLoadingProcess(filepath.Clean(cleaned), loader)
 	})
 	widgets.DefaultStyleButton(p.loadButton)
 
@@ -99,8 +120,8 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 	setupFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(p.inputField, 1, 0, true).
-		AddItem(p.quiltCheckbox, 1, 0, false).
-		AddItem(p.neoForgeCheckbox, 1, 0, false).
+		AddItem(nil, 1, 0, false).
+		AddItem(p.loaderDropDown, 1, 0, false).
 		AddItem(nil, 1, 0, false).
 		AddItem(buttonsFlex, 3, 0, false)
 	setupFlex.SetBorderPadding(1, 1, 1, 1)
@@ -164,8 +185,7 @@ func (p *SetupPage) GetStatusPrimitive() *tview.TextView {
 func (p *SetupPage) GetFocusablePrimitives() []tview.Primitive {
 	return []tview.Primitive{
 		p.inputField,
-		p.quiltCheckbox,
-		p.neoForgeCheckbox,
+		p.loaderDropDown,
 		p.loadButton,
 		p.quitButton,
 	}
@@ -173,3 +193,36 @@ func (p *SetupPage) GetFocusablePrimitives() []tview.Primitive {
 
 // Update implements the Page interface.
 func (p *SetupPage) Update() {}
+
+// loaderIndex returns the index of a RunLoader in loaderChoices, if present.
+func loaderIndex(loader mods.RunLoader) (int, bool) {
+	for i, choice := range loaderChoices {
+		if choice == loader {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// selectedLoader returns the loader to load with: the user's selection.
+func (p *SetupPage) selectedLoader() mods.RunLoader {
+	idx, label := p.loaderDropDown.GetCurrentOption()
+	if label != "" && idx >= 0 && idx < len(loaderChoices) {
+		return loaderChoices[idx]
+	}
+	return mods.RunLoaderFabric
+}
+
+// probeLoader queues a probe of the given path, updating the recommended loader
+// unless the user has made a manual selection. Probes run one at a time.
+func (p *SetupPage) probeLoader(path string) {
+	p.probeWorker.Request(path, func(res probe.ProbeResult) {
+		p.app.ExecuteAndDraw(func() {
+			if !p.userSelectedLoader && res.PrimaryLoader != "" {
+				if idx, ok := loaderIndex(res.PrimaryLoader); ok {
+					p.loaderDropDown.SetCurrentOption(idx)
+				}
+			}
+		})
+	})
+}

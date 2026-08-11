@@ -20,9 +20,11 @@ When you first launch the tool, you'll see the setup screen.
 2. Press the **Start Bisection** button.
 
 The tool will then analyze all your mods, which may take a few moments. It also
-checks the folder for Quilt and NeoForge mods and enables the matching support
-automatically (you can still force them via the `--quilt` / `--neoforge` command
-line flags).
+detects which mod loader your mods folder is set up for (Fabric, (Neo)Forge,
+(Neo)Forge with Fabric via Sinytra Connector, or Fabric with (Neo)Forge via
+Kilt) and preselects it in the **Mod Loader** dropdown. You can pick a different
+loader from the dropdown, or force one from the command line with the `-loader`
+flag.
 
 ![Setup screen](img/gui-setup-screen.jpg)
 

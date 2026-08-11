@@ -60,12 +60,10 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 	if ml.Adapter == nil {
 		return nil, nil, nil, fmt.Errorf("ModLoader: Adapter is required")
 	}
-	if ml.QuiltParsing {
-		logging.Info("ModLoader: Loading mods with Quilt support.")
+	if ml.RunLoader == "" {
+		return nil, nil, nil, fmt.Errorf("ModLoader: no mod loader selected")
 	}
-	if ml.NeoForgeParsing {
-		logging.Info("ModLoader: Loading mods with NeoForge support.")
-	}
+	logging.Infof("ModLoader: Loading mods with loader: %s.", ml.RunLoader.String())
 
 	potentialProviders := make(PotentialProvidersMap)
 	addImplicitProvides(potentialProviders)

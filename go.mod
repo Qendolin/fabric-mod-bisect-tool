@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	gioui.org v0.10.0
+	gioui.org/x v0.10.0
 	github.com/gdamore/tcell/v2 v2.13.11-0.20260811013828-33f7a8cf7a95
 	github.com/rivo/tview v0.0.0-20250501113434-0c592cd31026
 	github.com/titanous/json5 v1.0.0
@@ -11,7 +12,7 @@ require (
 )
 
 require (
-	gioui.org/shader v1.0.8 // indirect
+	gioui.org/shader v1.0.9 // indirect
 	github.com/akavel/rsrc v0.10.2 // indirect
 	github.com/dchest/jsmin v0.0.0-20220218165748-59f39799265f // indirect
 	github.com/josephspurrier/goversioninfo v1.4.1 // indirect
@@ -21,6 +22,7 @@ require (
 require (
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
+	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/image v0.26.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 )

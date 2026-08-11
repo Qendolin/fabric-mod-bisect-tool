@@ -2,13 +2,14 @@ package ui
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 )
 
 // AppController is the top-level controller handed to the UI. It exposes the
 // lifecycle and read models, plus accessors for the narrower role controllers.
 type AppController interface {
-	StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool)
+	StartLoadingProcess(modsPath string, loader mods.RunLoader)
 
 	// CompleteLoading finishes the loading phase. After the unresolvable mods
 	// screen's decisions have been applied, it merges any re-added mods so they

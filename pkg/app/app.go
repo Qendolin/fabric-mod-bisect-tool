@@ -27,6 +27,10 @@ type App struct {
 	// Core Service (only initialized after successful loading)
 	bisectSvc *bisect.Service
 	adapter   *mods.FileAdapter
+	// loader is the mod loader the search was actually started with (set once
+	// loading begins). It may differ from the preferred loader requested via
+	// the command line.
+	loader mods.RunLoader
 
 	// Staged, not yet committed, per-mod overrides for the manage mods page.
 	// stagedMu guards stagedOverrides: staging is done on the UI event loop,
@@ -50,8 +54,9 @@ func (a *App) SetView(view ui.View) {
 	a.view = view
 }
 
-func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport bool) {
+func (a *App) StartLoadingProcess(modsPath string, loader mods.RunLoader) {
 	a.view.OnLoadingStarted()
+	a.loader = loader
 
 	a.adapter = &mods.FileAdapter{BaseDirectory: modsPath}
 
@@ -59,9 +64,9 @@ func (a *App) StartLoadingProcess(modsPath string, quiltSupport, neoForgeSupport
 		defer logging.HandlePanic()
 		overrides := a.loadAndMergeOverrides(modsPath)
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: quiltSupport, NeoForgeParsing: neoForgeSupport}, Adapter: a.adapter}
-		logging.Infof("App: Loading mods from '%s', Quilt Support: %v, NeoForge Support: %v", modsPath, quiltSupport, neoForgeSupport)
-		allMods, providers, _, loadErr := loader.LoadMods(modsPath, overrides, a.view.OnLoadingProgress)
+		modLoader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: loader}, Adapter: a.adapter}
+		logging.Infof("App: Loading mods from '%s', Loader: %s", modsPath, loader.String())
+		allMods, providers, _, loadErr := modLoader.LoadMods(modsPath, overrides, a.view.OnLoadingProgress)
 
 		a.onLoadingComplete(modsPath, allMods, providers, loadErr)
 	}()

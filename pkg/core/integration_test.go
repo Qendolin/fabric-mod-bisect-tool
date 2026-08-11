@@ -190,7 +190,7 @@ func TestBisectService_Integration(t *testing.T) {
 			defer os.RemoveAll(modsDir)
 
 			adapter := mods.FileAdapter{BaseDirectory: modsDir}
-			loader := mods.ModLoader{Adapter: &adapter}
+			loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
 			allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
@@ -248,7 +248,7 @@ func TestBisectService_Enumeration(t *testing.T) {
 	defer os.RemoveAll(modsDir)
 
 	adapter := mods.FileAdapter{BaseDirectory: modsDir}
-	loader := mods.ModLoader{Adapter: &adapter}
+	loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
 	allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 	if err != nil {
 		t.Fatalf("LoadMods failed: %v", err)

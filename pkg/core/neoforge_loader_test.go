@@ -126,7 +126,7 @@ func createNeoForgeJarFromSpec(t *testing.T, spec neoForgeModSpec) ([]byte, erro
 // loadAndCheckNeoForge is a helper to load NeoForge mods and perform common assertions.
 func loadAndCheckNeoForge(t *testing.T, modsDir string, expectedModIDs []string, expectedProviderCount int, expectError bool) (map[string]*mods.Mod, mods.PotentialProvidersMap) {
 	t.Helper()
-	loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+	loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 	allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 
 	if expectError {
@@ -186,7 +186,7 @@ version = "1.0"
 displayName = "My Mod"`},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 
 		if err != nil {
@@ -821,7 +821,7 @@ versionRange = "[1.0,)"`},
 			t.Fatalf("Failed to create empty mods directory: %v", err)
 		}
 		defer os.RemoveAll(modsDir)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("Expected no error for empty mods directory, got: %v", err)
@@ -851,7 +851,7 @@ versionRange = "[1.0,)"`},
 		if err := os.WriteFile(filepath.Join(modsDir, "empty.jar"), zipBuf.Bytes(), 0644); err != nil {
 			t.Fatal(err)
 		}
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// Mod should be loaded as a Java library, LoadMods should not error.
 		if err != nil {
@@ -881,7 +881,7 @@ versionRange = "[1.0,)"`},
 version = "1.0",`}, // Trailing comma, invalid TOML
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// Should warn and skip, not error LoadMods.
 		if err != nil {
@@ -901,7 +901,7 @@ version = "1.0",`}, // Trailing comma, invalid TOML
 displayName = "No ModID"`},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// Should warn and skip.
 		if err != nil {
@@ -921,7 +921,7 @@ displayName = "No ModID"`},
 displayName = "No Version"`},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// Should warn and skip.
 		if err != nil {
@@ -978,7 +978,7 @@ versionRange = 123`},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
 		// The loader should correctly fail to parse this mod and skip it.
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -1008,7 +1008,7 @@ versionRange = "[1.0,)"
 			},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// main_mod should load, but warning about missing nested.
 		if err != nil {
@@ -1030,7 +1030,7 @@ loaderVersion = "[1,)"
 # No entries`},
 		}
 		setupDummyNeoForgeMods(t, modsDir, specs)
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		_, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// Should error or skip due to empty mods section
 		if err != nil {
@@ -1101,7 +1101,7 @@ displayName = "Nested Lib 2"
 			t.Fatal(err)
 		}
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -1169,7 +1169,7 @@ displayName = "Nested Lib 2"
 			t.Fatal(err)
 		}
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		// The loader should handle invalid jarjar metadata gracefully and still load the library
 		if err != nil {
@@ -1271,7 +1271,7 @@ versionRange = "[1.0,)"
 			t.Fatal(err)
 		}
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -1314,7 +1314,9 @@ displayName = "NeoForge Mod"
 			t.Fatal(err)
 		}
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		// Only the Connector loader accepts both manifest families. A pure
+		// (Neo)Forge loader would skip the Fabric mod with a warning.
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForgeWithFabric}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
@@ -1392,7 +1394,7 @@ provides = ["original_api"]
 			t.Fatalf("Failed to load overrides: %v", err)
 		}
 
-		loader := mods.ModLoader{ModParser: mods.ModParser{NeoForgeParsing: true}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderNeoForge}, Adapter: &mods.FileAdapter{BaseDirectory: modsDir}}
 		allMods, _, _, err := loader.LoadMods(modsDir, overrides, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)

@@ -65,7 +65,10 @@ func writeOverview(b *strings.Builder, bvm *ui.BisectionViewModel, rvm *ui.Resul
 		b.WriteString("Awaiting a verification step to confirm the current conflict set.\n")
 	}
 	fmt.Fprintf(b, "Total mods in folder: %d\n", len(bvm.AllModIDs))
-	fmt.Fprintf(b, "Quilt support: %v | NeoForge support: %v\n", bvm.ForceQuiltSupport, bvm.ForceNeoForgeSupport)
+	fmt.Fprintf(b, "Preferred loader (cli): %s\n", bvm.PreferredLoader.String())
+	if bvm.Loader != "" {
+		fmt.Fprintf(b, "Loader used: %s\n", bvm.Loader.String())
+	}
 	if rvm.CanContinueSearch {
 		fmt.Fprintf(b, "More independent conflict sets may exist: %d candidate(s) remain.\n", len(bvm.CandidateSet))
 	}

@@ -26,9 +26,9 @@ func makeModVM(id string, mods map[string]*mods.Mod) ui.ModViewModel {
 
 func (a *App) GetViewModel() ui.BisectionViewModel {
 	vm := ui.BisectionViewModel{
-		IsReady:              false,
-		ForceQuiltSupport:    a.cliArgs.QuiltSupport,
-		ForceNeoForgeSupport: a.cliArgs.NeoForgeSupport,
+		IsReady:         false,
+		Loader:          a.loader,
+		PreferredLoader: a.cliArgs.Loader,
 	}
 	if !a.IsBisectionReady() {
 		return vm

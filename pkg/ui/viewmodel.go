@@ -2,6 +2,7 @@ package ui
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 )
 
@@ -114,9 +115,11 @@ type BisectionViewModel struct {
 	PendingAdditions   sets.Set
 	CurrentTestPlan    *imcs.TestPlan
 	ExecutionLog       []imcs.CompletedTest
-	// From the cli arg
-	ForceQuiltSupport bool
-	// From the cli arg
-	ForceNeoForgeSupport bool
-	CanUndo              bool
+	// Loader is the mod loader the search was actually started with ("" before
+	// loading begins). It may differ from PreferredLoader.
+	Loader mods.RunLoader
+	// PreferredLoader is the mod loader requested via the command line. It is a
+	// preference, not necessarily the loader the search actually runs with.
+	PreferredLoader mods.RunLoader
+	CanUndo          bool
 }

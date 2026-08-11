@@ -32,7 +32,7 @@ func TestModLoader(t *testing.T) {
 	// Helper to load mods and perform common assertions
 	loadAndCheck := func(t *testing.T, modsDir string, expectedModIDs []string, expectedProviderCount int, expectError bool) (map[string]*mods.Mod, mods.PotentialProvidersMap) {
 		adapter := mods.FileAdapter{BaseDirectory: modsDir}
-		loader := mods.ModLoader{Adapter: &adapter}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
 		allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
 
 		if expectError {
@@ -237,13 +237,13 @@ func TestModLoader(t *testing.T) {
 		}
 	})
 
-	t.Run("Mod_with_Quilt_Json_Priority", func(t *testing.T) {
+	t.Run("Mod_with_Fabric_Json_Priority", func(t *testing.T) {
 		logging.Infof("Test: Running test case %q", t.Name())
 		modsDir := newTestDir(t.Name())
 		defer os.RemoveAll(modsDir)
 		specs := map[string]modSpec{
 			"quilt_mod-1.0.jar": {
-				JSONContent: `{"id": "should_not_be_fabric", "version": "1.0"}`, // fabric.mod.json
+				JSONContent: `{"id": "fabric_mod", "version": "1.0"}`, // fabric.mod.json
 				RawFiles: map[string]string{ // Use the new RawFiles field.
 					"quilt.mod.json": `{"id": "quilt_mod", "version": "1.1"}`,
 				},
@@ -251,7 +251,7 @@ func TestModLoader(t *testing.T) {
 		}
 		setupDummyMods(t, modsDir, specs)
 		adapter := mods.FileAdapter{BaseDirectory: modsDir}
-		loader := mods.ModLoader{ModParser: mods.ModParser{QuiltParsing: true}, Adapter: &adapter}
+		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
 		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("LoadMods returned an unexpected error: %v", err)
@@ -259,12 +259,12 @@ func TestModLoader(t *testing.T) {
 		if len(allMods) != 1 {
 			t.Fatalf("Expected 1 mod to be loaded, got %d", len(allMods))
 		}
-		loadedMod, ok := allMods["quilt_mod"]
+		loadedMod, ok := allMods["fabric_mod"]
 		if !ok {
-			t.Fatal("Expected mod with ID 'quilt_mod' to be loaded, but it was not found.")
+			t.Fatal("Expected mod with ID 'fabric_mod' to be loaded, but it was not found.")
 		}
-		if loadedMod.Metadata.Version.Version.String() != "1.1" {
-			t.Errorf("Expected quilt.mod.json (v1.1) to take priority, got v%s", loadedMod.Metadata.Version.Version.String())
+		if loadedMod.Metadata.Version.Version.String() != "1.0" {
+			t.Errorf("Expected fabric.mod.json (v1.0) to take priority, got v%s", loadedMod.Metadata.Version.Version.String())
 		}
 	})
 

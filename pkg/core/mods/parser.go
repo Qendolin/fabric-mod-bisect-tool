@@ -11,8 +11,9 @@ import (
 )
 
 type ModParser struct {
-	QuiltParsing    bool
-	NeoForgeParsing bool
+	// RunLoader determines which mod manifests are recognized and in what
+	// priority order (see RunLoader.manifestOrder).
+	RunLoader RunLoader
 }
 
 // ExtractModMetadata opens a JAR and extracts its top-level and nested mod files.
@@ -37,7 +38,7 @@ func (p *ModParser) ExtractModMetadata(jarPath, jarName string, logBuffer *logBu
 
 		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry, jarName, logBuffer)
 		if err != nil {
-			if p.NeoForgeParsing {
+			if p.RunLoader.includesNeoForgeFamily() {
 				logBuffer.add(logging.LevelDebug, "ModLoader: Skipping nested JAR '%s' in '%s' (likely a non-mod library): %v", nestedJarEntry, jarName, err)
 			} else {
 				logBuffer.add(logging.LevelWarn, "ModLoader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry, jarName, err)
@@ -106,50 +107,62 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 type modManifestResult struct {
 	File   *zip.File
 	Path   string
-	Loader Loader
+	Loader ManifestLoader
 }
 
 func (p *ModParser) findModManifest(zipReader *zip.Reader) modManifestResult {
-	// Prioritize NeoForge parsing if the flag is enabled
-	if p.NeoForgeParsing {
-		if file := getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml"); file != nil {
-			return modManifestResult{
-				File:   file,
-				Path:   "META-INF/neoforge.mods.toml",
-				Loader: LoaderNeoForge,
+	for _, loader := range p.RunLoader.manifestOrder() {
+		switch loader {
+		case ManifestLoaderNeoForge:
+			if file := getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml"); file != nil {
+				return modManifestResult{
+					File:   file,
+					Path:   "META-INF/neoforge.mods.toml",
+					Loader: ManifestLoaderNeoForge,
+				}
 			}
-		}
-
-		// Legacy NeoForge 1.20.1 (uses Forge toml)
-		if file := getZipFileEntry(zipReader, "META-INF/mods.toml"); file != nil {
-			return modManifestResult{
-				File:   file,
-				Path:   "META-INF/mods.toml",
-				Loader: LoaderNeoForge,
+			// Legacy (Neo)Forge (1.20.1 and earlier) uses this filename.
+			if file := getZipFileEntry(zipReader, "META-INF/mods.toml"); file != nil {
+				return modManifestResult{
+					File:   file,
+					Path:   "META-INF/mods.toml",
+					Loader: ManifestLoaderNeoForge,
+				}
 			}
-		}
-	}
-
-	if p.QuiltParsing {
-		if file := getZipFileEntry(zipReader, "quilt.mod.json"); file != nil {
-			return modManifestResult{
-				File:   file,
-				Path:   "quilt.mod.json",
-				Loader: LoaderQuilt,
+		case ManifestLoaderQuilt:
+			if file := getZipFileEntry(zipReader, "quilt.mod.json"); file != nil {
+				return modManifestResult{
+					File:   file,
+					Path:   "quilt.mod.json",
+					Loader: ManifestLoaderQuilt,
+				}
 			}
-		}
-	}
-
-	// TODO: In the future, add `if (p.FabricParsing || p.QuiltParsing)`
-	if file := getZipFileEntry(zipReader, "fabric.mod.json"); file != nil {
-		return modManifestResult{
-			File:   file,
-			Path:   "fabric.mod.json",
-			Loader: LoaderFabric,
+		case ManifestLoaderFabric:
+			if file := getZipFileEntry(zipReader, "fabric.mod.json"); file != nil {
+				return modManifestResult{
+					File:   file,
+					Path:   "fabric.mod.json",
+					Loader: ManifestLoaderFabric,
+				}
+			}
 		}
 	}
 
 	return modManifestResult{}
+}
+
+// hasNeoForgeManifest reports whether the jar declares a (Neo)Forge manifest,
+// regardless of the active loader.
+func hasNeoForgeManifest(zipReader *zip.Reader) bool {
+	return getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml") != nil ||
+		getZipFileEntry(zipReader, "META-INF/mods.toml") != nil
+}
+
+// hasFabricManifest reports whether the jar declares a Fabric or Quilt manifest,
+// regardless of the active loader.
+func hasFabricManifest(zipReader *zip.Reader) bool {
+	return getZipFileEntry(zipReader, "fabric.mod.json") != nil ||
+		getZipFileEntry(zipReader, "quilt.mod.json") != nil
 }
 
 // parseModMetadataFromReader parses the metadata of a mod JAR file.
@@ -159,32 +172,46 @@ func (p *ModParser) findModManifest(zipReader *zip.Reader) modManifestResult {
 func (p *ModParser) parseModMetadataFromReader(zipReader *zip.Reader, jarIdentifier string, logBuffer *logBuffer) (mm ModMetadata, err error) {
 	manifest := p.findModManifest(zipReader)
 
-	if !p.NeoForgeParsing && manifest.Loader == LoaderNone {
-		// Non-mod jars are valid for NF, but not Fabric and Quilt
+	// A jar whose manifest targets a loader that isn't enabled is an unsupported
+	// mod, not a library or a parseable mod. Call it out explicitly instead of
+	// silently accepting (or rejecting) it with a generic message.
+	if manifest.Loader == ManifestLoaderNone {
+		switch p.RunLoader {
+		case RunLoaderFabric:
+			if hasNeoForgeManifest(zipReader) {
+				return mm, fmt.Errorf("%s is a (Neo)Forge mod, which is not supported by the %s loader", jarIdentifier, p.RunLoader)
+			}
+		case RunLoaderNeoForge:
+			if hasFabricManifest(zipReader) {
+				return mm, fmt.Errorf("%s is a Fabric/Quilt mod, which is not supported by the %s loader", jarIdentifier, p.RunLoader)
+			}
+		}
+	}
+
+	if !p.RunLoader.toleratesNonModJars() && manifest.Loader == ManifestLoaderNone {
+		// Non-mod jars are valid for (Neo)Forge, but not Fabric and Quilt.
 		return mm, fmt.Errorf("no mod manifest found in %s", jarIdentifier)
 	}
 
-	if p.NeoForgeParsing && (manifest.Loader == LoaderFabric || manifest.Loader == LoaderQuilt) {
-		logBuffer.add(logging.LevelWarn, "ModLoader: NeoForge parsing is enabled but %s is missing a neoforge.mods.toml and will fall back to %s parsing.", jarIdentifier, manifest.Loader)
-	} else if p.QuiltParsing && manifest.Loader == LoaderFabric {
-		logBuffer.add(logging.LevelWarn, "ModLoader: Quilt parsing is enabled but %s is missing a quilt.mod.json and will fall back to Fabric parsing.", jarIdentifier)
+	if p.RunLoader == RunLoaderNeoForgeWithFabric && (manifest.Loader == ManifestLoaderFabric || manifest.Loader == ManifestLoaderQuilt) {
+		logBuffer.add(logging.LevelWarn, "ModLoader: (Neo)Forge parsing is enabled but %s is missing a (neo)forge.mods.toml and will fall back to %s parsing.", jarIdentifier, manifest.Loader)
 	}
 
-	if manifest.Loader == LoaderNeoForge {
+	if manifest.Loader == ManifestLoaderNeoForge {
 		mm, err = p.parseNeoForgeModToml(zipReader, manifest, jarIdentifier, logBuffer)
 		if err != nil {
 			return
 		}
 	}
 
-	if manifest.Loader == LoaderFabric || manifest.Loader == LoaderQuilt {
+	if manifest.Loader == ManifestLoaderFabric || manifest.Loader == ManifestLoaderQuilt {
 		mm, err = p.parseFabricModJson(zipReader, manifest, jarIdentifier, logBuffer)
 		if err != nil {
 			return
 		}
 	}
 
-	if p.NeoForgeParsing {
+	if p.RunLoader.includesNeoForgeFamily() {
 		// Unlike fabric mods, nested jars from META-INF/jarjar/metadata.json are loaded here
 		err = p.parseNeoForgeNestedJars(zipReader, &mm, jarIdentifier, logBuffer)
 		if err != nil {
@@ -194,7 +221,7 @@ func (p *ModParser) parseModMetadataFromReader(zipReader *zip.Reader, jarIdentif
 
 	// At this point, mm is guaranteed to be populated because:
 	// - If manifest.Loader is NeoForge/Fabric/Quilt, the respective parser filled mm
-	// - If manifest.Loader is LoaderNone, we either returned an error or created a synthetic container
+	// - If manifest.Loader is ManifestLoaderNone, we either returned an error or created a synthetic container
 
 	// Validation
 	if mm.ID == "" {

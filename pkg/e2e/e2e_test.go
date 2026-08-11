@@ -13,6 +13,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
@@ -100,7 +101,7 @@ func newTestApp(t *testing.T, specs map[string]modSpec) (*app.App, *MockView, st
 	a := app.NewApp(mainLogger, cliArgs)
 	mock := NewMockView()
 	a.SetView(mock)
-	a.StartLoadingProcess(modsDir, false, false)
+	a.StartLoadingProcess(modsDir, mods.RunLoaderFabric)
 	return a, mock, modsDir
 }
 
@@ -146,8 +147,8 @@ func TestLoadAndBisectionReady(t *testing.T) {
 			t.Errorf("missing mod info for %s", id)
 		}
 	}
-	if vm.ForceQuiltSupport || vm.ForceNeoForgeSupport {
-		t.Error("expected Quilt/NeoForge support flags to be false")
+	if vm.PreferredLoader != "" {
+		t.Error("expected no preferred loader (no -loader flag given)")
 	}
 }
 
@@ -508,7 +509,7 @@ func TestLoadErrors(t *testing.T) {
 		a := app.NewApp(mainLogger, cliArgs)
 		mock := NewMockView()
 		a.SetView(mock)
-		a.StartLoadingProcess(modsDir, false, false)
+		a.StartLoadingProcess(modsDir, mods.RunLoaderFabric)
 
 		inv := mock.WaitDialog(t, timeout)
 		if inv.Kind != DialogErrorModLoadingGeneric {

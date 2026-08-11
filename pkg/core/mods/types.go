@@ -10,13 +10,14 @@ import (
 	"github.com/titanous/json5"
 )
 
-type Loader string
+// ManifestLoader identifies which mod loader a mod manifest targets.
+type ManifestLoader string
 
 const (
-	LoaderNone     = Loader("")
-	LoaderFabric   = Loader("Fabric")
-	LoaderQuilt    = Loader("Quilt")
-	LoaderNeoForge = Loader("NeoForge")
+	ManifestLoaderNone     = ManifestLoader("")
+	ManifestLoaderFabric   = ManifestLoader("Fabric")
+	ManifestLoaderQuilt    = ManifestLoader("Quilt")
+	ManifestLoaderNeoForge = ManifestLoader("NeoForge")
 )
 
 // VersionField is a wrapper for version.Version that handles JSON unmarshaling
@@ -120,7 +121,7 @@ type ModMetadata struct {
 	// Version is the mod's version number.
 	Version VersionField
 	// Loader indicates which mod loader the mod is designed for.
-	Loader Loader
+	Loader ManifestLoader
 	// Provides is a list of mod IDs this mod provides. This does not include the mod's own ID.
 	Provides []string
 	// Depends maps mod IDs to version ranges, representing required dependencies.

@@ -75,7 +75,7 @@ func (p *ModParser) parseNeoForgeNestedJars(zipReader *zip.Reader, mm *ModMetada
 	jarJarEntries, jarJarErr := p.parseJarJarMetadata(zipReader, jarIdentifier, logBuffer)
 
 	// Jar is not a mod, it's either a container or just a java library
-	if mm.Loader == LoaderNone {
+	if mm.Loader == ManifestLoaderNone {
 		// Treat the jar as a container. Create a synthetic metadata object for it.
 		// The placeholder version is required for the struct, but will not be used in dependency resolution.
 		placeholderVersion, _ := version.Parse("0.0.0-synthetic", false)
@@ -84,7 +84,7 @@ func (p *ModParser) parseNeoForgeNestedJars(zipReader *zip.Reader, mm *ModMetada
 			Version:       VersionField{Version: placeholderVersion},
 			Name:          "Library",
 			Jars:          jarJarEntries,
-			Loader:        LoaderNone,
+			Loader:        ManifestLoaderNone,
 			IsJavaLibrary: true,
 		}
 
