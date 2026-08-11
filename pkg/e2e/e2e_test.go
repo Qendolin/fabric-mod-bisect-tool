@@ -186,7 +186,7 @@ func TestUnresolvableModsAtLoad(t *testing.T) {
 	a.CompleteLoading()
 	mock.WaitReady(t, timeout)
 
-	statuses := a.GetModStatuses()
+	statuses := a.GetModStatusController().GetModStatuses()
 	if statuses["mod_c"].IsUnresolvable {
 		t.Error("expected mod_c to no longer be unresolvable after ignoring its deps")
 	}
@@ -211,7 +211,7 @@ func TestUnresolvableModsDisableAtLoad(t *testing.T) {
 	a.CompleteLoading()
 	mock.WaitReady(t, timeout)
 
-	statuses := a.GetModStatuses()
+	statuses := a.GetModStatusController().GetModStatuses()
 	if !statuses["mod_c"].IsUnresolvable {
 		t.Error("expected mod_c to remain marked unresolvable")
 	}
@@ -239,7 +239,7 @@ func TestForceEnableUnresolvableBlocked(t *testing.T) {
 	ctrl.SetOverride("mod_c", ui.ModOverrideForceEnabled)
 	ctrl.Commit()
 
-	statuses := a.GetModStatuses()
+	statuses := a.GetModStatusController().GetModStatuses()
 	if statuses["mod_c"].Override == ui.ModOverrideForceEnabled {
 		t.Error("expected force-enabling an unresolvable mod to be blocked")
 	}
@@ -278,7 +278,7 @@ func TestUnresolvableModsMidSessionDisabledNoChoice(t *testing.T) {
 	inv.Respond(true)
 	<-done
 
-	statuses := a.GetModStatuses()
+	statuses := a.GetModStatusController().GetModStatuses()
 	if !statuses["mod_a"].IsUnresolvable {
 		t.Error("expected mod_a to be marked unresolvable")
 	}
@@ -296,7 +296,7 @@ func TestStepSubmitUndoResetLifecycle(t *testing.T) {
 
 	// Step
 	before := mock.UpdateCount()
-	a.Step()
+	a.GetBisectionController().Step()
 	if !mock.HasCall("OnTestReady") {
 		t.Fatal("expected OnTestReady after Step")
 	}
@@ -309,14 +309,14 @@ func TestStepSubmitUndoResetLifecycle(t *testing.T) {
 
 	// Submit a test result (search proceeds)
 	before = mock.UpdateCount()
-	a.SubmitTestResult(imcs.TestResultGood)
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
 	if mock.UpdateCount() <= before {
 		t.Error("SubmitTestResult must end with view.Update()")
 	}
 
 	// Undo
 	before = mock.UpdateCount()
-	if err := a.Undo(); err != nil {
+	if err := a.GetBisectionController().Undo(); err != nil {
 		t.Fatalf("Undo failed: %v", err)
 	}
 	if mock.UpdateCount() <= before {
@@ -324,13 +324,13 @@ func TestStepSubmitUndoResetLifecycle(t *testing.T) {
 	}
 
 	// Undo again: stack empty, error returned but no crash
-	if err := a.Undo(); !errors.Is(err, bisect.ErrUndoStackEmpty) {
+	if err := a.GetBisectionController().Undo(); !errors.Is(err, bisect.ErrUndoStackEmpty) {
 		t.Errorf("expected ErrUndoStackEmpty, got %v", err)
 	}
 
 	// Reset
 	before = mock.UpdateCount()
-	a.ResetSearch()
+	a.GetBisectionController().ResetSearch()
 	if mock.UpdateCount() <= before {
 		t.Error("ResetSearch must end with view.Update()")
 	}
@@ -362,7 +362,7 @@ func TestMissingFilesReconcileAndRestep(t *testing.T) {
 	go func() {
 		defer close(done)
 		defer logging.HandlePanic()
-		a.Step()
+		a.GetBisectionController().Step()
 	}()
 
 	inv := mock.WaitDialog(t, timeout)
@@ -380,7 +380,7 @@ func TestMissingFilesReconcileAndRestep(t *testing.T) {
 		t.Fatal("Step did not complete after responding to the dialog")
 	}
 
-	statuses := a.GetModStatuses()
+	statuses := a.GetModStatusController().GetModStatuses()
 	if !statuses["mod_a"].IsMissing {
 		t.Error("expected mod_a to be marked missing after accepting the dialog")
 	}
@@ -401,11 +401,11 @@ func TestContinueSearchAfterComplete(t *testing.T) {
 
 	// Run the bisection to completion (all results good => no conflict).
 	for i := 0; i < 100 && !a.GetViewModel().IsComplete; i++ {
-		a.Step()
+		a.GetBisectionController().Step()
 		if a.GetViewModel().IsComplete {
 			break
 		}
-		a.SubmitTestResult(imcs.TestResultGood)
+		a.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
 	}
 	if !a.GetViewModel().IsComplete {
 		t.Fatal("search did not complete")
@@ -415,7 +415,7 @@ func TestContinueSearchAfterComplete(t *testing.T) {
 	}
 
 	before := mock.UpdateCount()
-	a.ContinueSearch()
+	a.GetBisectionController().ContinueSearch()
 	if mock.UpdateCount() <= before {
 		t.Error("ContinueSearch must end with view.Update()")
 	}
@@ -437,7 +437,7 @@ func TestContinueSearchNotCompleteErrors(t *testing.T) {
 	go func() {
 		defer close(done)
 		defer logging.HandlePanic()
-		a.ContinueSearch()
+		a.GetBisectionController().ContinueSearch()
 	}()
 
 	inv := mock.WaitDialog(t, timeout)
@@ -468,7 +468,7 @@ func TestCommitAndDiscardOverrides(t *testing.T) {
 	// Stage then discard: nothing applied.
 	ctrl.SetOverride("mod_a", ui.ModOverrideForceDisabled)
 	ctrl.Discard()
-	if st := a.GetModStatuses()["mod_a"]; st.Override != ui.ModOverrideNone {
+	if st := a.GetModStatusController().GetModStatuses()["mod_a"]; st.Override != ui.ModOverrideNone {
 		t.Errorf("expected Override None after Discard, got %s", st.Override)
 	}
 
@@ -479,7 +479,7 @@ func TestCommitAndDiscardOverrides(t *testing.T) {
 	if mock.UpdateCount() <= before {
 		t.Error("Commit must end with view.Update()")
 	}
-	if st := a.GetModStatuses()["mod_b"]; st.Override != ui.ModOverrideForceDisabled {
+	if st := a.GetModStatusController().GetModStatuses()["mod_b"]; st.Override != ui.ModOverrideForceDisabled {
 		t.Errorf("expected ForceDisabled override after Commit, got %s", st.Override)
 	}
 	vm := a.GetViewModel()
@@ -551,22 +551,22 @@ func TestFailDrivenBisectionVerification(t *testing.T) {
 	a, mock, _ := newLoadedApp(t, specs)
 
 	// First bisection step: tests the first half of the candidates.
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultFail)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
 
 	// Second step narrows to a single candidate; this isolates mod_a.
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultFail)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
 
 	// Now the engine should be verifying the isolated conflict set.
-	a.Step()
+	a.GetBisectionController().Step()
 	if !a.GetViewModel().IsVerificationStep {
 		t.Fatal("expected the third plan to be a verification step")
 	}
 	if cs := a.GetViewModel().CurrentConflictSet; len(cs) != 1 {
 		t.Fatalf("expected a single conflict element, got %v", sets.MakeSlice(cs))
 	}
-	a.SubmitTestResult(imcs.TestResultFail)
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
 
 	if !mock.HasCall("OnIterationComplete") {
 		t.Error("expected OnIterationComplete after completion")
@@ -590,13 +590,13 @@ func TestCancelTest(t *testing.T) {
 	}
 	a, mock, _ := newLoadedApp(t, specs)
 
-	a.Step()
+	a.GetBisectionController().Step()
 	if a.GetViewModel().CurrentTestPlan == nil {
 		t.Fatal("expected an active plan before CancelTest")
 	}
 
 	before := mock.UpdateCount()
-	a.CancelTest()
+	a.GetBisectionController().CancelTest()
 	if mock.UpdateCount() <= before {
 		t.Error("CancelTest must end with view.Update()")
 	}
@@ -604,7 +604,7 @@ func TestCancelTest(t *testing.T) {
 	// If the plan were not invalidated, the next Step would hit
 	// ErrTestInProgress and show a prepare-error dialog. It must re-plan.
 	before = mock.UpdateCount()
-	a.Step()
+	a.GetBisectionController().Step()
 	if mock.UpdateCount() <= before {
 		t.Error("Step after CancelTest must end with view.Update()")
 	}
@@ -625,10 +625,10 @@ func TestMissingFilesExpectedDeletions(t *testing.T) {
 	a, mock, modsDir := newLoadedApp(t, specs)
 
 	// Isolate mod_a as a conflict element (same as the fail-driven test).
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultFail)
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultFail)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
 	if _, ok := a.GetViewModel().CurrentConflictSet["mod_a"]; !ok {
 		t.Fatal("expected mod_a to be in the conflict set")
 	}
@@ -642,7 +642,7 @@ func TestMissingFilesExpectedDeletions(t *testing.T) {
 	go func() {
 		defer close(done)
 		defer logging.HandlePanic()
-		a.Step()
+		a.GetBisectionController().Step()
 	}()
 
 	inv := mock.WaitDialog(t, timeout)
@@ -660,7 +660,7 @@ func TestMissingFilesExpectedDeletions(t *testing.T) {
 		t.Fatal("Step did not complete after responding to the dialog")
 	}
 
-	if st := a.GetModStatuses()["mod_a"]; !st.IsMissing {
+	if st := a.GetModStatusController().GetModStatuses()["mod_a"]; !st.IsMissing {
 		t.Error("expected mod_a to be marked missing")
 	}
 }
@@ -676,8 +676,8 @@ func TestRestoreInitialModState(t *testing.T) {
 	a, mock, modsDir := newLoadedApp(t, specs)
 
 	// A step activates a subset of mods, disabling the rest on disk.
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultGood)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
 
 	assertDisabledFiles := func(t *testing.T, want bool) {
 		t.Helper()
@@ -735,12 +735,12 @@ func TestBisectionHaltsOnDoubleIndeterminate(t *testing.T) {
 	a, mock, _ := newLoadedApp(t, specs)
 
 	// First test: first half of the initial split is indeterminate.
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultIndeterminate)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultIndeterminate)
 
 	// Second test: complement (second half) is also indeterminate -> halt.
-	a.Step()
-	a.SubmitTestResult(imcs.TestResultIndeterminate)
+	a.GetBisectionController().Step()
+	a.GetBisectionController().SubmitTestResult(imcs.TestResultIndeterminate)
 
 	inv := mock.WaitHalted(t, timeout)
 	if !sets.Equal(inv.GroupA, sets.MakeSet([]string{"mod_a", "mod_b"})) ||
@@ -757,6 +757,6 @@ func TestBisectionHaltsOnDoubleIndeterminate(t *testing.T) {
 	}
 
 	// Pressing Step again must not plan a new test; it re-reports the halt.
-	a.Step()
+	a.GetBisectionController().Step()
 	mock.WaitHalted(t, timeout)
 }
