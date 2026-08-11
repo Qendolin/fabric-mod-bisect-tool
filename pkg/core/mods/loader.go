@@ -131,10 +131,14 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 	tasks := make(chan processFileTask, numWorkers*2)
 	results := make(chan processFileResult, numWorkers*2)
 	progressChan := make(chan processFileTask, numWorkers*2)
+	// progressDone is closed once the progress reporter has drained progressChan,
+	// guaranteeing every progress callback is delivered before LoadMods returns.
+	progressDone := make(chan struct{})
 	var wg sync.WaitGroup
 	var progress atomic.Int32
 
 	go func() {
+		defer close(progressDone)
 		for task := range progressChan {
 			if progressReport != nil {
 				progressReport(task.fileEntry.Name(), int(progress.Add(1)-1), numFiles)
@@ -187,6 +191,9 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 			collectedResults = append(collectedResults, res)
 		}
 	}
+	// Wait for the progress reporter to flush all callbacks before returning,
+	// so loading completion is never reported before the progress that led to it.
+	<-progressDone
 	return collectedResults
 }
 
