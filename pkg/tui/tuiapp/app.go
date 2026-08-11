@@ -52,7 +52,7 @@ func NewApp(controller ui.AppController, logger *logging.Logger) *App {
 	a.navManager = tui.NewNavigationManager(a, a.layoutManager.Pages())
 	a.dialogManager = tui.NewDialogManager(a)
 	a.focusManager = tui.NewFocusManager(a)
-	a.tviewApp.SetRoot(a.layoutManager.RootPrimitive(), true).EnableMouse(true)
+	a.tviewApp.SetRoot(a.layoutManager.RootPrimitive(), true).EnableMouse(true).EnablePaste(true)
 
 	a.setupPage = pages.NewSetupPage(a)
 	a.mainPage = pages.NewMainPage(a)

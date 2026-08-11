@@ -22,6 +22,10 @@ type TestPage struct {
 	backBtn    *tview.Button
 	statusText *tview.TextView
 
+	// useGlyphs selects between Unicode verdict glyphs (✓/✗) and their ASCII
+	// fallbacks ([+]/[-]) depending on the terminal's likely font support.
+	useGlyphs bool
+
 	// callbacks
 	onSuccess func()
 	onFailure func()
@@ -37,6 +41,7 @@ func NewTestPage(app tui.TUIApp, isVerification bool, onSuccess, onFailure, onCa
 		onSuccess:  onSuccess,
 		onFailure:  onFailure,
 		onCancel:   onCancel,
+		useGlyphs:  tui.UnicodeGlyphsSupported(),
 	}
 
 	p.statusText.SetText("Report Manual Test Outcome")
@@ -64,21 +69,28 @@ Please launch Minecraft and confirm the failure persists.`
 		SetTextAlign(tview.AlignCenter).
 		SetText(message)
 
-	p.successBtn = tview.NewButton("✓ Works").
+	successLabel := "[+] Works"
+	failLabel := "[-[] Broken"
+	if p.useGlyphs {
+		successLabel = "✓ Works"
+		failLabel = "✗ Broken"
+	}
+
+	p.successBtn = tview.NewButton(successLabel).
 		SetSelectedFunc(p.onSuccess)
 	p.successBtn.SetDisabled(true)
 	p.successBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.successBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkGreen).Background(tcell.ColorWhite))
 	p.successBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen).Underline(true))
 
-	p.failBtn = tview.NewButton("✗ Broken").
+	p.failBtn = tview.NewButton(failLabel).
 		SetSelectedFunc(p.onFailure)
 	p.failBtn.SetDisabled(true)
 	p.failBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
 	p.failBtn.SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDarkRed).Background(tcell.ColorWhite))
 	p.failBtn.SetActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorRed).Underline(true))
 
-	p.backBtn = tview.NewButton("Back (Cancel Step)").
+	p.backBtn = tview.NewButton("Cancel").
 		SetSelectedFunc(p.onCancel)
 	p.backBtn.SetDisabled(true)
 	p.backBtn.SetDisabledStyle(widgets.DefaultButtonDisabledStyle)
@@ -138,10 +150,14 @@ Please launch Minecraft and confirm the failure persists.`
 
 // GetActionPrompts returns the key actions for the test page.
 func (p *TestPage) GetActionPrompts() []tui.ActionPrompt {
+	works, broken := "[+] Works", "[-[] Broken"
+	if p.useGlyphs {
+		works, broken = "✓ Works", "✗ Broken"
+	}
 	return []tui.ActionPrompt{
-		{Input: "ESC", Action: "Back (Cancel Step)"},
-		{Input: "A", Action: "Works (✓)"},
-		{Input: "D", Action: "Broken (✗)"},
+		{Input: "ESC", Action: "Cancel"},
+		{Input: "A", Action: works},
+		{Input: "D", Action: broken},
 	}
 }
 

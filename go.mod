@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	gioui.org v0.10.0
-	github.com/gdamore/tcell/v2 v2.13.10
+	github.com/gdamore/tcell/v2 v2.13.11-0.20260811013828-33f7a8cf7a95
 	github.com/rivo/tview v0.0.0-20250501113434-0c592cd31026
 	github.com/titanous/json5 v1.0.0
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0

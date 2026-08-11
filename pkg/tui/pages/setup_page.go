@@ -134,7 +134,7 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 		SetText(fmt.Sprintf(`
 [::b]Instructions:[-:-:-]
   - Enter the path to your Minecraft mods folder.
-  - Paste path: [darkcyan::b]Ctrl+V[-:-:-] or [darkcyan::b]Right Click[-:-:-] (in most terminals).
+  - Paste path: [darkcyan::b]Ctrl+V[-:-:-] or [darkcyan::b]Shift+Right Click[-:-:-] (in most terminals).
 
 [::b]Tool Information:[-:-:-]
   - Build: %s
