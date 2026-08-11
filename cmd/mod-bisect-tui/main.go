@@ -20,6 +20,8 @@ func main() {
 	var a *app.App
 	var tuiApp *tuiapp.App
 
+	// A panic in any goroutine restores the mods state and exits. Started before
+	// the app is created so early panics are still handled.
 	go func() {
 		for p := range logging.PanicChannel {
 			if tuiApp != nil {
@@ -31,72 +33,35 @@ func main() {
 			fmt.Fprintf(os.Stderr, "panic: %v\n%s", p.Value, string(p.Stack))
 			os.Exit(2)
 		}
-
 	}()
 
 	cliArgs := app.ParseCLIArgs()
 
 	// 1. Setup logging first.
-	mainLogger := logging.NewLogger()
-	// Create the log directory if it doesn't exist.
-	if err := os.MkdirAll(cliArgs.LogDir, 0755); err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("Failed to create log directory: %v\n", err))
-		os.Exit(1)
-	}
-	// Create a unique, timestamped log file name.
-	logFileName := fmt.Sprintf("bisect-tui-%s.log", time.Now().Format("2006-01-02_15-04-05"))
-	logPath := filepath.Join(cliArgs.LogDir, logFileName)
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		// Can't use logger yet, so print to stderr
-		os.Stderr.WriteString("Failed to open log file: " + err.Error())
-		os.Exit(1)
-	}
+	mainLogger, logFile := setupLogging(cliArgs)
 	defer logFile.Close()
-	mainLogger.SetWriter(logFile)
-	logging.SetDefault(mainLogger)
-
 	if cliArgs.Verbose {
 		mainLogger.SetDebug(true)
 		logging.Infof("Main: Verbose logging enabled.")
 	}
+	logStartupInfo()
 
-	wd, err := os.Getwd()
-	if err != nil {
-		logging.Errorf("Main: Failed to get current working directory: %v", err)
-	} else {
-		logging.Infof("Main: Current Working Directory: %s", wd)
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.time" {
-				logging.Infof("Main: Build Time: %s", setting.Value)
-			}
-			if setting.Key == "vcs.revision" {
-				logging.Infof("Main: Build Revision: %s", setting.Value)
-			}
-		}
-	}
-
-	// 2. Setup OS signal trapping
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// 3. Create the App structure, passing the configured logger
+	// 2. Create the App structure, passing the configured logger.
 	a = app.NewApp(mainLogger, cliArgs)
 	tuiApp = tuiapp.NewApp(a, mainLogger)
 	a.SetView(tuiApp)
 
-	// 4. Goroutine to handle OS signals
-	go func() {
-		<-sigChan
-		tuiApp.ExecuteAndDraw(func() {
-			tuiApp.Dialogs().ShowQuitDialog()
-		})
-	}()
+	// 3. Register shutdown triggers before starting so no event is missed.
+	// Interactive signals (Ctrl+C) show the quit dialog; closing the console
+	// window (Windows CTRL_CLOSE_EVENT) skips the dialog and restores the mods
+	// state immediately, since nobody can answer it.
+	shutdownCh := make(chan os.Signal, 1)
+	signal.Notify(shutdownCh, os.Interrupt, syscall.SIGTERM)
+	consoleClosed := make(chan struct{})
+	installConsoleCloseHandler(func() { close(consoleClosed) })
+	go handleShutdown(a, tuiApp, shutdownCh, consoleClosed)
 
-	// 5. Run the application
+	// 4. Run the application.
 	logging.Infof("Main: Application starting up.")
 	if err := tuiApp.Start(); err != nil {
 		logging.Errorf("Main: Application exited with error: %v", err)
@@ -115,4 +80,67 @@ func main() {
 	}
 
 	logging.Infof("Main: Application exited gracefully.")
+}
+
+// handleShutdown reacts to termination triggers. A closed console window
+// requires immediate cleanup; an interactive signal shows the quit dialog.
+func handleShutdown(a *app.App, tuiApp *tuiapp.App, shutdownCh chan os.Signal, consoleClosed chan struct{}) {
+	for {
+		select {
+		case <-consoleClosed:
+			logging.Info("Main: Console window closed, restoring mod state and exiting.")
+			a.RestoreInitialModState()
+			os.Exit(0)
+		case <-shutdownCh:
+			tuiApp.ExecuteAndDraw(func() {
+				tuiApp.Dialogs().ShowQuitDialog()
+			})
+		}
+	}
+}
+
+// setupLogging configures the main logger, creating the log directory and a
+// timestamped log file. The returned file must be closed by the caller.
+func setupLogging(cliArgs *app.CLIArgs) (*logging.Logger, *os.File) {
+	mainLogger := logging.NewLogger()
+
+	if err := os.MkdirAll(cliArgs.LogDir, 0755); err != nil {
+		os.Stderr.WriteString(fmt.Sprintf("Failed to create log directory: %v\n", err))
+		os.Exit(1)
+	}
+
+	logFileName := fmt.Sprintf("bisect-tui-%s.log", time.Now().Format("2006-01-02_15-04-05"))
+	logPath := filepath.Join(cliArgs.LogDir, logFileName)
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		// Can't use the logger yet, so print to stderr.
+		os.Stderr.WriteString("Failed to open log file: " + err.Error())
+		os.Exit(1)
+	}
+
+	mainLogger.SetWriter(logFile)
+	logging.SetDefault(mainLogger)
+	return mainLogger, logFile
+}
+
+// logStartupInfo writes diagnostics about the current environment to the log.
+func logStartupInfo() {
+	wd, err := os.Getwd()
+	if err != nil {
+		logging.Errorf("Main: Failed to get current working directory: %v", err)
+	} else {
+		logging.Infof("Main: Current Working Directory: %s", wd)
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.time" {
+				logging.Infof("Main: Build Time: %s", setting.Value)
+			}
+			if setting.Key == "vcs.revision" {
+				logging.Infof("Main: Build Revision: %s", setting.Value)
+			}
+		}
+	}
 }
