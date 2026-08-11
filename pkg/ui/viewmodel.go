@@ -135,6 +135,15 @@ type LoaderViewModel struct {
 	Preferred mods.RunLoader
 }
 
+// TestPlanViewModel describes the test the bisection is about to run. Its zero
+// value means no test is currently planned.
+type TestPlanViewModel struct {
+	ModIDsToTest sets.Set
+}
+
+// IsPlanned reports whether a test is actually planned (the zero value is not).
+func (p TestPlanViewModel) IsPlanned() bool { return len(p.ModIDsToTest) > 0 }
+
 // BisectionViewModel provides a snapshot of the current bisection state,
 // tailored for UI consumption. It decouples the UI from the underlying engine's implementation.
 type BisectionViewModel struct {
@@ -145,6 +154,6 @@ type BisectionViewModel struct {
 	Mods     ModsViewModel
 	Loader   LoaderViewModel
 
-	CurrentTestPlan *imcs.TestPlan
+	CurrentTestPlan TestPlanViewModel
 	ExecutionLog    []imcs.CompletedTest
 }

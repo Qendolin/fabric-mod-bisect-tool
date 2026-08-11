@@ -303,7 +303,7 @@ func TestStepSubmitUndoResetLifecycle(t *testing.T) {
 	if mock.UpdateCount() <= before {
 		t.Error("Step must end with view.Update()")
 	}
-	if plan := a.GetViewModel().CurrentTestPlan; plan == nil {
+	if plan := a.GetViewModel().CurrentTestPlan; !plan.IsPlanned() {
 		t.Error("expected an active test plan after Step")
 	}
 
@@ -591,7 +591,7 @@ func TestCancelTest(t *testing.T) {
 	a, mock, _ := newLoadedApp(t, specs)
 
 	a.GetBisectionController().Step()
-	if a.GetViewModel().CurrentTestPlan == nil {
+	if !a.GetViewModel().CurrentTestPlan.IsPlanned() {
 		t.Fatal("expected an active plan before CancelTest")
 	}
 
@@ -608,7 +608,7 @@ func TestCancelTest(t *testing.T) {
 	if mock.UpdateCount() <= before {
 		t.Error("Step after CancelTest must end with view.Update()")
 	}
-	if a.GetViewModel().CurrentTestPlan == nil {
+	if !a.GetViewModel().CurrentTestPlan.IsPlanned() {
 		t.Error("expected a fresh plan after Step following CancelTest")
 	}
 }

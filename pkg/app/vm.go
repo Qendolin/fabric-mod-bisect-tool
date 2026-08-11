@@ -64,7 +64,9 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 		Cleared:         state.GetClearedSet(),
 		PendingAddition: engine.GetPendingAdditions(),
 	}
-	vm.CurrentTestPlan = currentPlan
+	if currentPlan != nil {
+		vm.CurrentTestPlan = ui.TestPlanViewModel{ModIDsToTest: currentPlan.ModIDsToTest}
+	}
 	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
 
 	vm.Mods = ui.ModsViewModel{

@@ -63,7 +63,9 @@ func WriteConflictSetMods(b *strings.Builder, mods []CascadingDisables, st TextS
 		b.WriteByte('\n')
 
 		if len(entry.AlsoRequireDisable) > 0 {
-			b.WriteString("    " + st.muted("└ Disabling this mod would also require disabling:") + "\n")
+			b.WriteString("    ")
+			b.WriteString(st.muted("└ Disabling this mod would also require disabling:"))
+			b.WriteString("\n")
 			for _, dep := range entry.AlsoRequireDisable {
 				b.WriteString("      - ")
 				st.writeModRef(b, dep, st.muted)
@@ -80,7 +82,9 @@ func WriteConflictSetFooter(b *strings.Builder, extraIfAll []ModViewModel, st Te
 		return
 	}
 
-	b.WriteString("  " + st.muted("If you disable all mods in this conflict, you would also need to disable:") + "\n")
+	b.WriteString("  ")
+	b.WriteString(st.muted("If you disable all mods in this conflict, you would also need to disable:"))
+	b.WriteString("\n")
 	for _, dep := range extraIfAll {
 		b.WriteString("    - ")
 		st.writeModRef(b, dep, st.muted)
@@ -108,7 +112,9 @@ func WriteGenerallyUnresolvable(b *strings.Builder, reports []UnresolvedDependen
 		b.WriteByte('\n')
 
 		if len(report.UnmetDependencies) > 0 {
-			b.WriteString("    " + st.muted("└ Unresolved or unmet dependencies:") + "\n")
+			b.WriteString("    ")
+			b.WriteString(st.muted("└ Unresolved or unmet dependencies:"))
+			b.WriteString("\n")
 			for _, dep := range report.UnmetDependencies {
 				b.WriteString("      - ")
 				st.writeModRef(b, dep, st.muted)
@@ -117,7 +123,9 @@ func WriteGenerallyUnresolvable(b *strings.Builder, reports []UnresolvedDependen
 		}
 
 		if len(report.RequiredByTransitive) > 0 {
-			b.WriteString("    " + st.muted("└ Disabling this mod would also require disabling:") + "\n")
+			b.WriteString("    ")
+			b.WriteString(st.muted("└ Disabling this mod would also require disabling:"))
+			b.WriteString("\n")
 			for _, depMod := range report.RequiredByTransitive {
 				b.WriteString("      - ")
 				st.writeModRef(b, depMod, st.muted)

@@ -257,7 +257,7 @@ func (p *ManageModsPage) RefreshState() {
 	disabledIDs := []string{}
 
 	var nextTestSet sets.Set
-	if vm.CurrentTestPlan != nil {
+	if vm.CurrentTestPlan.IsPlanned() {
 		nextTestSet = vm.CurrentTestPlan.ModIDsToTest
 	}
 

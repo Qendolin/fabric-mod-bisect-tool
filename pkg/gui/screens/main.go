@@ -55,7 +55,7 @@ func NewMainScreen(app App) *MainScreen {
 
 func (s *MainScreen) ShowTestPrompt() {
 	vm := s.app.GetViewModel()
-	if vm.CurrentTestPlan == nil {
+	if !vm.CurrentTestPlan.IsPlanned() {
 		return
 	}
 	statuses := s.app.GetModStatusController().GetModStatuses()

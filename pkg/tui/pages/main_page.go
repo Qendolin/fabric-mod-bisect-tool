@@ -254,8 +254,8 @@ func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (stat
 		return "Search Halted", "Results"
 	case vm.Progress.IsComplete:
 		return "Search Complete", "Results"
-	case vm.Progress.StepCount > 0 && vm.CurrentTestPlan != nil:
-		if vm.CurrentTestPlan.IsVerificationStep {
+	case vm.Progress.StepCount > 0 && vm.CurrentTestPlan.IsPlanned():
+		if vm.Progress.IsVerificationStep {
 			return "Verifying final conflict set...", "Step"
 		}
 		return fmt.Sprintf("Test in progress (Iter %d)...", vm.Progress.Iteration), "Step"
@@ -279,7 +279,7 @@ func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.
 func (p *MainPage) updateTestGroupTab(vm *ui.BisectionViewModel) {
-	if vm.CurrentTestPlan == nil {
+	if !vm.CurrentTestPlan.IsPlanned() {
 		p.updateList(p.testGroupList, p.testGroupTitle, nil, vm.Mods.Infos, "Mods in Next Test Group: 0")
 		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, vm.Mods.Infos, "Implicitly Included Dependencies: 0")
 		return
@@ -299,7 +299,7 @@ func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
 	p.overviewWidget.SetAllMods(vm.Mods.All)
 
 	var effectiveSet sets.Set
-	if vm.CurrentTestPlan != nil {
+	if vm.CurrentTestPlan.IsPlanned() {
 		// Calculate the full effective set for the test.
 		effectiveSet = p.app.GetModStatusController().ResolveEffectiveSet(vm.CurrentTestPlan.ModIDsToTest)
 	}
