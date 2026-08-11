@@ -118,7 +118,7 @@ func (s *HaltScreen) layoutGroupPanel(gtx layout.Context, th *material.Theme, ti
 	vm := s.app.GetViewModel()
 	lines := make([]string, 0, len(mods))
 	for _, id := range sets.MakeSlice(mods) {
-		lines = append(lines, formatModEntry(vm.ModsInfo, id))
+		lines = append(lines, formatModEntry(vm.Mods.Infos, id))
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,

@@ -80,7 +80,10 @@ const (
 type UnresolvableModInfo struct {
 	Mod ModViewModel
 	// DepsDisplay is a human-readable rendering of each failing dependency
-	// including its version predicate, e.g. "nonexistent (>=1.0)", one entry per dependency.
+	// including its version predicate, e.g. "nonexistent (>=1.0)", one entry per
+	// dependency. It is pre-rendered in the app layer because the version
+	// predicates live in the engine's dependency map and are not part of
+	// ModViewModel.
 	DepsDisplay []string
 }
 
@@ -88,38 +91,60 @@ type ResultViewModel struct {
 	State                 SearchState
 	IsVerificationStep    bool                         // True if awaiting user confirmation test
 	CurrentConflict       ConflictSetReport            // Growth track of current iteration's conflict
-	PreviousConflictSets  []ConflictSetReport          // Isolated conflict groups from current/prior rounds
+	ArchivedConflictSets  []ConflictSetReport          // Isolated conflict groups from prior rounds
 	GenerallyUnresolvable []UnresolvedDependencyReport // Environment dependency errors
 	CanContinueSearch     bool                         // System evaluation for extra exploration
 }
 
-// BisectionViewModel provides a snapshot of the current bisection state,
-// tailored for UI consumption. It decouples the UI from the underlying engine's implementation.
-type BisectionViewModel struct {
-	IsReady            bool
+// BisectionProgressViewModel groups the overall search status and progress counters.
+type BisectionProgressViewModel struct {
 	IsComplete         bool
-	IsVerificationStep bool
 	IsHalted           bool
+	IsVerificationStep bool
+	CanUndo            bool
 	StepCount          int
 	Iteration          int
 	Round              int
 	EstimatedMaxTests  int
 	LastTestResult     imcs.TestResult
 	LastFoundElement   string
-	AllModIDs          []string
-	ModsInfo           map[string]ModViewModel
-	AllConflictSets    []sets.Set
-	CurrentConflictSet sets.Set
-	CandidateSet       sets.Set
-	ClearedSet         sets.Set
-	PendingAdditions   sets.Set
-	CurrentTestPlan    *imcs.TestPlan
-	ExecutionLog       []imcs.CompletedTest
-	// Loader is the mod loader the search was actually started with ("" before
+}
+
+// SearchSetsViewModel groups the sets describing the current search position.
+type SearchSetsViewModel struct {
+	AllConflicts    []sets.Set
+	CurrentConflict sets.Set
+	Candidate       sets.Set
+	Cleared         sets.Set
+	PendingAddition sets.Set
+}
+
+// ModsViewModel is the registry of all mods for display.
+type ModsViewModel struct {
+	All   []string
+	Infos map[string]ModViewModel
+}
+
+// LoaderViewModel describes the mod loader the search runs with.
+type LoaderViewModel struct {
+	// Chosen is the mod loader the search was actually started with ("" before
 	// loading begins). It may differ from PreferredLoader.
-	Loader mods.RunLoader
-	// PreferredLoader is the mod loader requested via the command line. It is a
+	Chosen mods.RunLoader
+	// Preferred is the mod loader requested via the command line. It is a
 	// preference, not necessarily the loader the search actually runs with.
-	PreferredLoader mods.RunLoader
-	CanUndo          bool
+	Preferred mods.RunLoader
+}
+
+// BisectionViewModel provides a snapshot of the current bisection state,
+// tailored for UI consumption. It decouples the UI from the underlying engine's implementation.
+type BisectionViewModel struct {
+	IsReady bool
+
+	Progress BisectionProgressViewModel
+	Sets     SearchSetsViewModel
+	Mods     ModsViewModel
+	Loader   LoaderViewModel
+
+	CurrentTestPlan *imcs.TestPlan
+	ExecutionLog    []imcs.CompletedTest
 }

@@ -120,7 +120,7 @@ func (p *ManageModsPage) commitChanges() {
 		// Any mods that were transitioned out of a special state will only re-enter
 		// the search pool at the start of the next iteration.
 		vm := p.app.GetViewModel()
-		pendingAdditions := vm.PendingAdditions
+		pendingAdditions := vm.Sets.PendingAddition
 		p.app.ExecuteAndDraw(func() {
 			p.dirty = false
 			if len(pendingAdditions) > 0 {
@@ -251,7 +251,7 @@ func (p *ManageModsPage) RefreshState() {
 
 	row, _ := p.modTable.GetSelection() // Preserve selection
 
-	allIDs := vm.AllModIDs
+	allIDs := vm.Mods.All
 	tableData := make([][]string, 0, len(allIDs))
 	enabledIDs := []string{}
 	disabledIDs := []string{}
@@ -265,7 +265,7 @@ func (p *ManageModsPage) RefreshState() {
 		status := p.statuses[id]
 		mod := status.ModViewModel
 
-		_, isGloballyPending := vm.PendingAdditions[id]
+		_, isGloballyPending := vm.Sets.PendingAddition[id]
 
 		var statusStr string
 		// Priority: Missing > Pending > Forced > Disabled > Omitted > Problem > Unresolvable > In Test > Inactive

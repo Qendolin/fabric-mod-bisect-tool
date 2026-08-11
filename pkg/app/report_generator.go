@@ -45,32 +45,32 @@ func writeOverview(b *strings.Builder, bvm *ui.BisectionViewModel, rvm *ui.Resul
 
 	status := "Complete"
 	switch {
-	case bvm.IsComplete:
+	case bvm.Progress.IsComplete:
 		status = "Complete"
-	case bvm.StepCount == 0:
+	case bvm.Progress.StepCount == 0:
 		status = "Not started"
 	default:
 		status = "In Progress"
 	}
 	fmt.Fprintf(b, "Status: %s\n", status)
-	fmt.Fprintf(b, "Round: %d | Iteration: %d\n", bvm.Round, bvm.Iteration)
-	fmt.Fprintf(b, "Tests executed: %d of ~%d estimated\n", bvm.StepCount, bvm.EstimatedMaxTests)
-	if bvm.LastTestResult != "" {
-		fmt.Fprintf(b, "Last test result: %s\n", bvm.LastTestResult)
+	fmt.Fprintf(b, "Round: %d | Iteration: %d\n", bvm.Progress.Round, bvm.Progress.Iteration)
+	fmt.Fprintf(b, "Tests executed: %d of ~%d estimated\n", bvm.Progress.StepCount, bvm.Progress.EstimatedMaxTests)
+	if bvm.Progress.LastTestResult != "" {
+		fmt.Fprintf(b, "Last test result: %s\n", bvm.Progress.LastTestResult)
 	}
-	if bvm.LastFoundElement != "" {
-		fmt.Fprintf(b, "Last found conflict element: %s\n", bvm.LastFoundElement)
+	if bvm.Progress.LastFoundElement != "" {
+		fmt.Fprintf(b, "Last found conflict element: %s\n", bvm.Progress.LastFoundElement)
 	}
 	if rvm.IsVerificationStep {
 		b.WriteString("Awaiting a verification step to confirm the current conflict set.\n")
 	}
-	fmt.Fprintf(b, "Total mods in folder: %d\n", len(bvm.AllModIDs))
-	fmt.Fprintf(b, "Preferred loader (cli): %s\n", bvm.PreferredLoader.String())
-	if bvm.Loader != "" {
-		fmt.Fprintf(b, "Loader used: %s\n", bvm.Loader.String())
+	fmt.Fprintf(b, "Total mods in folder: %d\n", len(bvm.Mods.All))
+	fmt.Fprintf(b, "Preferred loader (cli): %s\n", bvm.Loader.Preferred.String())
+	if bvm.Loader.Chosen != "" {
+		fmt.Fprintf(b, "Loader used: %s\n", bvm.Loader.Chosen.String())
 	}
 	if rvm.CanContinueSearch {
-		fmt.Fprintf(b, "More independent conflict sets may exist: %d candidate(s) remain.\n", len(bvm.CandidateSet))
+		fmt.Fprintf(b, "More independent conflict sets may exist: %d candidate(s) remain.\n", len(bvm.Sets.Candidate))
 	}
 }
 
@@ -100,24 +100,24 @@ func writeExecutionHistory(b *strings.Builder, bvm *ui.BisectionViewModel) {
 			entry.Result,
 		)
 
-		fmt.Fprintf(b, "    Tested mods: %s\n", formatModList(sets.MakeSlice(entry.Plan.ModIDsToTest), bvm.ModsInfo))
+		fmt.Fprintf(b, "    Tested mods: %s\n", formatModList(sets.MakeSlice(entry.Plan.ModIDsToTest), bvm.Mods.Infos))
 
 		// Context captured before the test was executed.
 		fmt.Fprintf(b, "    Conflict set so far (%d): %s\n",
-			len(state.ConflictSet), formatModList(sets.MakeSlice(state.ConflictSet), bvm.ModsInfo))
+			len(state.ConflictSet), formatModList(sets.MakeSlice(state.ConflictSet), bvm.Mods.Infos))
 		fmt.Fprintf(b, "    Candidate set before test (%d): %s\n",
-			len(state.Candidates), formatModList(sets.MakeSlice(state.GetCandidateSet()), bvm.ModsInfo))
+			len(state.Candidates), formatModList(sets.MakeSlice(state.GetCandidateSet()), bvm.Mods.Infos))
 		cleared := state.GetClearedSet()
 		fmt.Fprintf(b, "    Cleared set before test (%d): %s\n",
-			len(cleared), formatModList(sets.MakeSlice(cleared), bvm.ModsInfo))
+			len(cleared), formatModList(sets.MakeSlice(cleared), bvm.Mods.Infos))
 	}
 }
 
 // writeFinalConflictSets renders all conflict sets, including the current
-// (most recent) one, which is only archived into PreviousConflictSets once
+// (most recent) one, which is only archived into ArchivedConflictSets once
 // ContinueSearch runs. It also includes the generally unresolvable mods.
 func writeFinalConflictSets(b *strings.Builder, rvm *ui.ResultViewModel) {
-	conflictSets := rvm.PreviousConflictSets
+	conflictSets := rvm.ArchivedConflictSets
 	if len(rvm.CurrentConflict.Mods) > 0 {
 		conflictSets = append(conflictSets, rvm.CurrentConflict)
 	}
@@ -133,7 +133,7 @@ func writeFinalConflictSets(b *strings.Builder, rvm *ui.ResultViewModel) {
 
 	for i, conflictSet := range conflictSets {
 		fmt.Fprintf(b, "\n--- Conflict Set #%d ---\n", i+1)
-		if i < len(rvm.PreviousConflictSets) {
+		if i < len(rvm.ArchivedConflictSets) {
 			b.WriteString("  (archived from a previous round)\n")
 		} else {
 			b.WriteString("  (current round)\n")
@@ -157,12 +157,12 @@ func writeRemainingState(b *strings.Builder, bvm *ui.BisectionViewModel) {
 	}
 
 	fmt.Fprintf(b, "Candidate set remaining (%d): %s\n",
-		len(bvm.CandidateSet), formatModList(sets.MakeSlice(bvm.CandidateSet), bvm.ModsInfo))
+		len(bvm.Sets.Candidate), formatModList(sets.MakeSlice(bvm.Sets.Candidate), bvm.Mods.Infos))
 	fmt.Fprintf(b, "Cleared set (%d): %s\n",
-		len(bvm.ClearedSet), formatModList(sets.MakeSlice(bvm.ClearedSet), bvm.ModsInfo))
-	if len(bvm.PendingAdditions) > 0 {
+		len(bvm.Sets.Cleared), formatModList(sets.MakeSlice(bvm.Sets.Cleared), bvm.Mods.Infos))
+	if len(bvm.Sets.PendingAddition) > 0 {
 		fmt.Fprintf(b, "Pending additions (will re-enter the search pool next iteration) (%d): %s\n",
-			len(bvm.PendingAdditions), formatModList(sets.MakeSlice(bvm.PendingAdditions), bvm.ModsInfo))
+			len(bvm.Sets.PendingAddition), formatModList(sets.MakeSlice(bvm.Sets.PendingAddition), bvm.Mods.Infos))
 	}
 }
 

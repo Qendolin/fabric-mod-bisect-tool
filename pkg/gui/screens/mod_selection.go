@@ -56,7 +56,7 @@ func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layo
 				s.unresolvableMods[id] = true
 			}
 		}
-		for _, id := range vm.AllModIDs {
+		for _, id := range vm.Mods.All {
 			s.checkboxStates[id] = &widget.Bool{}
 			s.checkboxClicks[id] = &widget.Clickable{}
 		}
@@ -163,8 +163,8 @@ func (s *ModSelectionScreen) layoutRightPanel(gtx layout.Context, th *material.T
 			filter := strings.ToLower(s.searchEditor.Text())
 
 			var filteredMods []string
-			for _, m := range vm.AllModIDs {
-				name := vm.ModsInfo[m].Name
+			for _, m := range vm.Mods.All {
+				name := vm.Mods.Infos[m].Name
 				if filter == "" ||
 					strings.Contains(strings.ToLower(m), filter) ||
 					strings.Contains(strings.ToLower(name), filter) {
@@ -175,7 +175,7 @@ func (s *ModSelectionScreen) layoutRightPanel(gtx layout.Context, th *material.T
 			// Wrapped in material.List linked to s.listState to capture scroll interactions
 			return material.List(th, &s.listState).Layout(gtx, len(filteredMods), func(gtx layout.Context, index int) layout.Dimensions {
 				modName := filteredMods[index]
-				modInfo := vm.ModsInfo[modName]
+				modInfo := vm.Mods.Infos[modName]
 
 				// Unresolvable mods cannot be force-enabled; show them greyed out.
 				if s.unresolvableMods[modName] {

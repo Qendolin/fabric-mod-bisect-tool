@@ -229,20 +229,20 @@ func (p *MainPage) updateOverview(vm *ui.BisectionViewModel) {
 	p.stepButton.SetLabel(buttonText)
 
 	lastResultStr := "N/A"
-	if vm.LastTestResult != imcs.TestResultUndefined {
+	if vm.Progress.LastTestResult != imcs.TestResultUndefined {
 		color := "green"
-		if vm.LastTestResult == imcs.TestResultFail {
+		if vm.Progress.LastTestResult == imcs.TestResultFail {
 			color = "red"
 		}
-		if vm.LastTestResult == imcs.TestResultIndeterminate {
+		if vm.Progress.LastTestResult == imcs.TestResultIndeterminate {
 			color = "yellow"
 		}
-		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, vm.LastTestResult)
+		lastResultStr = fmt.Sprintf("[%s]%s[-:-:-]", color, vm.Progress.LastTestResult)
 	}
 
 	overviewText := fmt.Sprintf(
 		"Status: %s\nProgress: Round %d - Iteration %d - Test %d / ~%d\nLast Result: %s\nFound Problems: %d",
-		status, vm.Round, vm.Iteration, vm.StepCount, vm.EstimatedMaxTests, lastResultStr, len(vm.CurrentConflictSet),
+		status, vm.Progress.Round, vm.Progress.Iteration, vm.Progress.StepCount, vm.Progress.EstimatedMaxTests, lastResultStr, len(vm.Sets.CurrentConflict),
 	)
 	p.overviewText.SetText(overviewText)
 }
@@ -250,18 +250,18 @@ func (p *MainPage) updateOverview(vm *ui.BisectionViewModel) {
 // determineStatusAndButtonText computes the user-facing status string and button label from the ViewModel.
 func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (status, buttonText string) {
 	switch {
-	case vm.IsHalted:
+	case vm.Progress.IsHalted:
 		return "Search Halted", "Results"
-	case vm.IsComplete:
+	case vm.Progress.IsComplete:
 		return "Search Complete", "Results"
-	case vm.StepCount > 0 && vm.CurrentTestPlan != nil:
+	case vm.Progress.StepCount > 0 && vm.CurrentTestPlan != nil:
 		if vm.CurrentTestPlan.IsVerificationStep {
 			return "Verifying final conflict set...", "Step"
 		}
-		return fmt.Sprintf("Test in progress (Iter %d)...", vm.Iteration), "Step"
-	case vm.IsVerificationStep:
+		return fmt.Sprintf("Test in progress (Iter %d)...", vm.Progress.Iteration), "Step"
+	case vm.Progress.IsVerificationStep:
 		return "Ready to verify conflict set", "Verify"
-	case vm.StepCount > 0 || len(vm.CurrentConflictSet) > 0:
+	case vm.Progress.StepCount > 0 || len(vm.Sets.CurrentConflict) > 0:
 		return "Ready for next step", "Step"
 	default:
 		return "Ready to start bisection", "Start"
@@ -270,33 +270,33 @@ func (p *MainPage) determineStatusAndButtonText(vm *ui.BisectionViewModel) (stat
 
 // updateModLists populates the Candidates, Known Safe, and Problematic lists from the ViewModel.
 func (p *MainPage) updateModLists(vm *ui.BisectionViewModel) {
-	modCount := len(vm.AllModIDs)
+	modCount := len(vm.Mods.All)
 
-	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.CandidateSet), vm.ModsInfo, fmt.Sprintf("Candidates: %d / %d", len(vm.CandidateSet), modCount))
-	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.CurrentConflictSet), vm.ModsInfo, fmt.Sprintf("Problematic Mods (Current Round): %d", len(vm.CurrentConflictSet)))
-	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.ClearedSet), vm.ModsInfo, fmt.Sprintf("Cleared: %d", len(vm.ClearedSet)))
+	p.updateList(p.candidatesList, p.candidatesTitle, sets.MakeSlice(vm.Sets.Candidate), vm.Mods.Infos, fmt.Sprintf("Candidates: %d / %d", len(vm.Sets.Candidate), modCount))
+	p.updateList(p.problematicModsList, p.problematicModsTitle, sets.MakeSlice(vm.Sets.CurrentConflict), vm.Mods.Infos, fmt.Sprintf("Problematic Mods (Current Round): %d", len(vm.Sets.CurrentConflict)))
+	p.updateList(p.clearedList, p.clearedTitle, sets.MakeSlice(vm.Sets.Cleared), vm.Mods.Infos, fmt.Sprintf("Cleared: %d", len(vm.Sets.Cleared)))
 }
 
 // updateTestGroupTab populates the lists in the "Test Group" tab from the ViewModel.
 func (p *MainPage) updateTestGroupTab(vm *ui.BisectionViewModel) {
 	if vm.CurrentTestPlan == nil {
-		p.updateList(p.testGroupList, p.testGroupTitle, nil, vm.ModsInfo, "Mods in Next Test Group: 0")
-		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, vm.ModsInfo, "Implicitly Included Dependencies: 0")
+		p.updateList(p.testGroupList, p.testGroupTitle, nil, vm.Mods.Infos, "Mods in Next Test Group: 0")
+		p.updateList(p.implicitDepsList, p.implicitDepsTitle, nil, vm.Mods.Infos, "Implicitly Included Dependencies: 0")
 		return
 	}
 
 	testSet := vm.CurrentTestPlan.ModIDsToTest
-	p.updateList(p.testGroupList, p.testGroupTitle, sets.MakeSlice(testSet), vm.ModsInfo, fmt.Sprintf("Mods in Next Test Group: %d", len(testSet)))
+	p.updateList(p.testGroupList, p.testGroupTitle, sets.MakeSlice(testSet), vm.Mods.Infos, fmt.Sprintf("Mods in Next Test Group: %d", len(testSet)))
 
 	// Calculate and display implicit dependencies.
 	effectiveSet := p.app.GetModStatusController().ResolveEffectiveSet(testSet)
 	implicitDeps := sets.Subtract(effectiveSet, testSet)
-	p.updateList(p.implicitDepsList, p.implicitDepsTitle, sets.MakeSlice(implicitDeps), vm.ModsInfo, fmt.Sprintf("Implicitly Included Dependencies: %d", len(implicitDeps)))
+	p.updateList(p.implicitDepsList, p.implicitDepsTitle, sets.MakeSlice(implicitDeps), vm.Mods.Infos, fmt.Sprintf("Implicitly Included Dependencies: %d", len(implicitDeps)))
 }
 
 // updateOverviewWidget updates the visual overview bar from the ViewModel.
 func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
-	p.overviewWidget.SetAllMods(vm.AllModIDs)
+	p.overviewWidget.SetAllMods(vm.Mods.All)
 
 	var effectiveSet sets.Set
 	if vm.CurrentTestPlan != nil {
@@ -306,11 +306,11 @@ func (p *MainPage) updateOverviewWidget(vm *ui.BisectionViewModel) {
 
 	candidates := sets.Set{}
 	// This makes the display more intuitive
-	if !vm.IsVerificationStep {
-		candidates = vm.CandidateSet
+	if !vm.Progress.IsVerificationStep {
+		candidates = vm.Sets.Candidate
 	}
 
-	p.overviewWidget.UpdateState(vm.CurrentConflictSet, vm.ClearedSet, candidates, effectiveSet)
+	p.overviewWidget.UpdateState(vm.Sets.CurrentConflict, vm.Sets.Cleared, candidates, effectiveSet)
 }
 
 // updateList is a helper to populate a SearchableList and its title.

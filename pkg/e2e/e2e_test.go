@@ -139,15 +139,15 @@ func TestLoadAndBisectionReady(t *testing.T) {
 	if !vm.IsReady {
 		t.Error("expected IsReady to be true")
 	}
-	if len(vm.AllModIDs) != 3 {
-		t.Errorf("expected 3 mods, got %v", vm.AllModIDs)
+	if len(vm.Mods.All) != 3 {
+		t.Errorf("expected 3 mods, got %v", vm.Mods.All)
 	}
 	for _, id := range []string{"mod_a", "mod_b", "mod_c"} {
-		if _, ok := vm.ModsInfo[id]; !ok {
+		if _, ok := vm.Mods.Infos[id]; !ok {
 			t.Errorf("missing mod info for %s", id)
 		}
 	}
-	if vm.PreferredLoader != "" {
+	if vm.Loader.Preferred != "" {
 		t.Error("expected no preferred loader (no -loader flag given)")
 	}
 }
@@ -191,7 +191,7 @@ func TestUnresolvableModsAtLoad(t *testing.T) {
 		t.Error("expected mod_c to no longer be unresolvable after ignoring its deps")
 	}
 	vm := a.GetViewModel()
-	if _, inCandidates := vm.CandidateSet["mod_c"]; !inCandidates {
+	if _, inCandidates := vm.Sets.Candidate["mod_c"]; !inCandidates {
 		t.Error("expected mod_c to be a candidate after ignoring its deps")
 	}
 }
@@ -216,7 +216,7 @@ func TestUnresolvableModsDisableAtLoad(t *testing.T) {
 		t.Error("expected mod_c to remain marked unresolvable")
 	}
 	vm := a.GetViewModel()
-	if _, inCandidates := vm.CandidateSet["mod_c"]; inCandidates {
+	if _, inCandidates := vm.Sets.Candidate["mod_c"]; inCandidates {
 		t.Error("expected mod_c to stay excluded from candidates")
 	}
 }
@@ -335,7 +335,7 @@ func TestStepSubmitUndoResetLifecycle(t *testing.T) {
 		t.Error("ResetSearch must end with view.Update()")
 	}
 	vm := a.GetViewModel()
-	if vm.IsComplete {
+	if vm.Progress.IsComplete {
 		t.Error("expected search not complete after reset")
 	}
 }
@@ -400,14 +400,14 @@ func TestContinueSearchAfterComplete(t *testing.T) {
 	a, mock, _ := newLoadedApp(t, specs)
 
 	// Run the bisection to completion (all results good => no conflict).
-	for i := 0; i < 100 && !a.GetViewModel().IsComplete; i++ {
+	for i := 0; i < 100 && !a.GetViewModel().Progress.IsComplete; i++ {
 		a.GetBisectionController().Step()
-		if a.GetViewModel().IsComplete {
+		if a.GetViewModel().Progress.IsComplete {
 			break
 		}
 		a.GetBisectionController().SubmitTestResult(imcs.TestResultGood)
 	}
-	if !a.GetViewModel().IsComplete {
+	if !a.GetViewModel().Progress.IsComplete {
 		t.Fatal("search did not complete")
 	}
 	if rvm := a.GetResultViewModel(); rvm.State != ui.StateComplete {
@@ -419,7 +419,7 @@ func TestContinueSearchAfterComplete(t *testing.T) {
 	if mock.UpdateCount() <= before {
 		t.Error("ContinueSearch must end with view.Update()")
 	}
-	if round := a.GetViewModel().Round; round != 2 {
+	if round := a.GetViewModel().Progress.Round; round != 2 {
 		t.Errorf("expected Round 2 after ContinueSearch, got %d", round)
 	}
 }
@@ -483,7 +483,7 @@ func TestCommitAndDiscardOverrides(t *testing.T) {
 		t.Errorf("expected ForceDisabled override after Commit, got %s", st.Override)
 	}
 	vm := a.GetViewModel()
-	if _, inCandidates := vm.CandidateSet["mod_b"]; inCandidates {
+	if _, inCandidates := vm.Sets.Candidate["mod_b"]; inCandidates {
 		t.Error("expected mod_b to be removed from candidates after force-disabling")
 	}
 }
@@ -560,10 +560,10 @@ func TestFailDrivenBisectionVerification(t *testing.T) {
 
 	// Now the engine should be verifying the isolated conflict set.
 	a.GetBisectionController().Step()
-	if !a.GetViewModel().IsVerificationStep {
+	if !a.GetViewModel().Progress.IsVerificationStep {
 		t.Fatal("expected the third plan to be a verification step")
 	}
-	if cs := a.GetViewModel().CurrentConflictSet; len(cs) != 1 {
+	if cs := a.GetViewModel().Sets.CurrentConflict; len(cs) != 1 {
 		t.Fatalf("expected a single conflict element, got %v", sets.MakeSlice(cs))
 	}
 	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
@@ -629,7 +629,7 @@ func TestMissingFilesExpectedDeletions(t *testing.T) {
 	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
 	a.GetBisectionController().Step()
 	a.GetBisectionController().SubmitTestResult(imcs.TestResultFail)
-	if _, ok := a.GetViewModel().CurrentConflictSet["mod_a"]; !ok {
+	if _, ok := a.GetViewModel().Sets.CurrentConflict["mod_a"]; !ok {
 		t.Fatal("expected mod_a to be in the conflict set")
 	}
 
@@ -749,10 +749,10 @@ func TestBisectionHaltsOnDoubleIndeterminate(t *testing.T) {
 	}
 
 	vm := a.GetViewModel()
-	if !vm.IsHalted {
+	if !vm.Progress.IsHalted {
 		t.Error("expected the view model to report IsHalted")
 	}
-	if vm.IsComplete {
+	if vm.Progress.IsComplete {
 		t.Error("expected the halted search to not be marked complete")
 	}
 

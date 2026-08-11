@@ -45,8 +45,8 @@ func NewHaltPage(app tui.TUIApp, groupA, groupB sets.Set, onClose func()) *HaltP
 	}
 
 	p.statusText.SetText("Search Halted")
-	p.groupAText.SetText(formatModList(vm.ModsInfo, groupA))
-	p.groupBText.SetText(formatModList(vm.ModsInfo, groupB))
+	p.groupAText.SetText(formatModList(vm.Mods.Infos, groupA))
+	p.groupBText.SetText(formatModList(vm.Mods.Infos, groupB))
 
 	explainer := widgets.NewScrollTextView()
 	explainer.SetDynamicColors(true)

@@ -250,7 +250,7 @@ func (a *App) OnBisectionReady() {
 
 func (a *App) OnTestReady() {
 	vm := a.GetViewModel()
-	isVerification := vm.IsVerificationStep
+	isVerification := vm.Progress.IsVerificationStep
 	a.ExecuteAndDraw(func() {
 		testPage := pages.NewTestPage(
 			a,

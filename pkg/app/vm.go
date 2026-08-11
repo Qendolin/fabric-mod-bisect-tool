@@ -26,9 +26,11 @@ func makeModVM(id string, mods map[string]*mods.Mod) ui.ModViewModel {
 
 func (a *App) GetViewModel() ui.BisectionViewModel {
 	vm := ui.BisectionViewModel{
-		IsReady:         false,
-		Loader:          a.loader,
-		PreferredLoader: a.cliArgs.Loader,
+		IsReady: false,
+		Loader: ui.LoaderViewModel{
+			Chosen:    a.loader,
+			Preferred: a.cliArgs.Loader,
+		},
 	}
 	if !a.IsBisectionReady() {
 		return vm
@@ -43,28 +45,34 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
 
 	vm.IsReady = true
-	vm.IsComplete = state.IsComplete
-	vm.IsVerificationStep = isVerification
-	vm.IsHalted = state.IsHalted
-	vm.StepCount = engine.GetStepCount()
-	vm.Iteration = state.Iteration
-	vm.Round = state.Round
-	vm.EstimatedMaxTests = engine.GetEstimatedMaxTests()
-	vm.LastTestResult = state.LastTestResult
-	vm.AllConflictSets = enumState.FoundConflictSets
-	vm.CurrentConflictSet = state.ConflictSet
-	vm.LastFoundElement = state.LastFoundElement
-	vm.AllModIDs = state.AllModIDs
-	vm.CandidateSet = state.GetCandidateSet()
-	vm.ClearedSet = state.GetClearedSet()
-	vm.PendingAdditions = engine.GetPendingAdditions()
+	vm.Progress = ui.BisectionProgressViewModel{
+		IsComplete:         state.IsComplete,
+		IsVerificationStep: isVerification,
+		IsHalted:           state.IsHalted,
+		StepCount:          engine.GetStepCount(),
+		Iteration:          state.Iteration,
+		Round:              state.Round,
+		EstimatedMaxTests:  engine.GetEstimatedMaxTests(),
+		CanUndo:            a.bisectSvc.Engine().UndoCount() > 0,
+		LastTestResult:     state.LastTestResult,
+		LastFoundElement:   state.LastFoundElement,
+	}
+	vm.Sets = ui.SearchSetsViewModel{
+		AllConflicts:    enumState.FoundConflictSets,
+		CurrentConflict: state.ConflictSet,
+		Candidate:       state.GetCandidateSet(),
+		Cleared:         state.GetClearedSet(),
+		PendingAddition: engine.GetPendingAdditions(),
+	}
 	vm.CurrentTestPlan = currentPlan
 	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
-	vm.CanUndo = a.bisectSvc.Engine().UndoCount() > 0
 
-	vm.ModsInfo = make(map[string]ui.ModViewModel, len(allMods))
+	vm.Mods = ui.ModsViewModel{
+		All:   state.AllModIDs,
+		Infos: make(map[string]ui.ModViewModel, len(allMods)),
+	}
 	for id := range allMods {
-		vm.ModsInfo[id] = makeModVM(id, allMods)
+		vm.Mods.Infos[id] = makeModVM(id, allMods)
 	}
 
 	return vm
@@ -96,7 +104,7 @@ func (a *App) GetResultViewModel() (result ui.ResultViewModel) {
 	generallyUnresolvable := modState.Resolver().CalculateTransitivelyUnresolvableMods(allModsSet)
 
 	for _, cs := range a.bisectSvc.EnumerationState().FoundConflictSets {
-		result.PreviousConflictSets = append(result.PreviousConflictSets, buildConflictSetReport(cs, allModsSet, modMap, generallyUnresolvable, modState))
+		result.ArchivedConflictSets = append(result.ArchivedConflictSets, buildConflictSetReport(cs, allModsSet, modMap, generallyUnresolvable, modState))
 	}
 
 	// Always map the currently active/latest conflict group to CurrentConflict

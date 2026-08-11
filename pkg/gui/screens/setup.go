@@ -59,7 +59,7 @@ func NewSetupScreen(app App) *SetupScreen {
 
 	// A loader forced via the command line preselects the option and is not
 	// overridden by the probe.
-	if cliLoader := app.GetViewModel().PreferredLoader; cliLoader != "" {
+	if cliLoader := app.GetViewModel().Loader.Preferred; cliLoader != "" {
 		if idx, ok := loaderChoiceIndex(cliLoader); ok {
 			s.loaderSelect.selected = idx
 		}

@@ -83,7 +83,7 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 
 	// A loader forced via the command line preselects the option and is not
 	// overridden by the probe.
-	if cliLoader := vm.PreferredLoader; cliLoader != "" {
+	if cliLoader := vm.Loader.Preferred; cliLoader != "" {
 		if idx, ok := loaderIndex(cliLoader); ok {
 			p.loaderDropDown.SetCurrentOption(idx)
 			p.userSelectedLoader = true

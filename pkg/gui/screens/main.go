@@ -64,7 +64,7 @@ func (s *MainScreen) ShowTestPrompt() {
 
 	items := make([]exwidgets.ModListItem, 0, len(effectiveSet))
 	for id := range effectiveSet {
-		item := modListItem(id, vm.ModsInfo[id])
+		item := modListItem(id, vm.Mods.Infos[id])
 		if _, isPrimary := primary[id]; !isPrimary {
 			if statuses[id].Override == ui.ModOverrideForceEnabled {
 				item.Tag = exwidgets.ModListTagAlwaysEnabled
@@ -88,7 +88,7 @@ func (s *MainScreen) HideTestPrompt() {
 func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	vm := s.app.GetViewModel()
 
-	if s.undoClick.Clicked(gtx) && vm.CanUndo {
+	if s.undoClick.Clicked(gtx) && vm.Progress.CanUndo {
 		go func() {
 			defer logging.HandlePanic()
 			ok := s.app.ShowQuestionDialog("Undo Last Step", "Are you sure you want to undo the last step?", "")
@@ -105,7 +105,7 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 			}
 		}()
 	}
-	if s.stepClick.Clicked(gtx) && vm.IsReady && !vm.IsComplete {
+	if s.stepClick.Clicked(gtx) && vm.IsReady && !vm.Progress.IsComplete {
 		go func() {
 			defer logging.HandlePanic()
 			s.app.GetBisectionController().Step()
@@ -143,11 +143,11 @@ func (s *MainScreen) layoutNormalView(gtx layout.Context, th *material.Theme, vm
 
 	var candidates []exwidgets.ModListItem
 	var listHeader string
-	if vm.IsVerificationStep {
+	if vm.Progress.IsVerificationStep {
 		listHeader = "Conflict Set"
-		candidates = modItemsFromSet(vm.ModsInfo, vm.CurrentConflictSet)
+		candidates = modItemsFromSet(vm.Mods.Infos, vm.Sets.CurrentConflict)
 	} else {
-		candidates = modItemsFromSet(vm.ModsInfo, vm.CandidateSet)
+		candidates = modItemsFromSet(vm.Mods.Infos, vm.Sets.Candidate)
 		listHeader = fmt.Sprintf("Remaining Candidates (%d)", len(candidates))
 	}
 
@@ -168,21 +168,21 @@ func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText stri
 	case !vm.IsReady:
 		return "Initializing...", "", "▶  Start Bisection", 0
 
-	case vm.IsHalted:
+	case vm.Progress.IsHalted:
 		return "Search Halted",
 			"The search stopped because two groups of mods appear to depend on each other.\n" +
 				"The halt page shows the two groups; resolve one of the involved mods and start a new search.",
 			"View Halted Groups",
 			searchProgress(vm)
 
-	case vm.IsVerificationStep:
+	case vm.Progress.IsVerificationStep:
 		return "Verifying final set...",
 			"The next test verifies that the found set of mods is the cause of the issue. " +
 				"If the issue DOES NOT persist, a new round of tests is started to find other problematic mods.",
 			"▶  Verification Step",
-			float32(vm.StepCount) / float32(vm.StepCount+1)
+			float32(vm.Progress.StepCount) / float32(vm.Progress.StepCount+1)
 
-	case vm.StepCount == 0:
+	case vm.Progress.StepCount == 0:
 		return "Ready to begin",
 			"This tool uses binary search to isolate problematic mods.\n" +
 				"Each test halves the candidate set, finding conflicts efficiently.\n" +
@@ -192,8 +192,8 @@ func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText stri
 			0
 
 	default:
-		return fmt.Sprintf("Round %d · Iteration %d", vm.Round, vm.Iteration),
-			fmt.Sprintf("Step %d of ~%d estimated tests.", vm.StepCount, vm.EstimatedMaxTests),
+		return fmt.Sprintf("Round %d · Iteration %d", vm.Progress.Round, vm.Progress.Iteration),
+			fmt.Sprintf("Step %d of ~%d estimated tests.", vm.Progress.StepCount, vm.Progress.EstimatedMaxTests),
 			"▶  Next Step",
 			searchProgress(vm)
 	}
@@ -201,10 +201,10 @@ func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText stri
 
 // searchProgress computes the fraction of the estimated maximum tests completed.
 func searchProgress(vm *ui.BisectionViewModel) float32 {
-	if vm.EstimatedMaxTests <= 0 {
+	if vm.Progress.EstimatedMaxTests <= 0 {
 		return 0
 	}
-	prog := float32(vm.StepCount) / float32(vm.EstimatedMaxTests)
+	prog := float32(vm.Progress.StepCount) / float32(vm.Progress.EstimatedMaxTests)
 	if prog > 1.0 {
 		prog = 1.0
 	}
@@ -244,7 +244,7 @@ func (s *MainScreen) layoutNormalLeft(
 
 func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel, stepText string) layout.Dimensions {
 	undoBtn := material.Button(th, &s.undoClick, "↩  Undo")
-	if vm.CanUndo {
+	if vm.Progress.CanUndo {
 		undoBtn.Background = theme.CardBgColor
 		undoBtn.Color = theme.FgColor
 	} else {
@@ -253,7 +253,7 @@ func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Them
 	}
 
 	stepBtn := material.Button(th, &s.stepClick, stepText)
-	if vm.IsReady && !vm.IsComplete {
+	if vm.IsReady && !vm.Progress.IsComplete {
 		stepBtn.Background = theme.PrimaryColor
 		stepBtn.Color = colorWhite
 	} else {
@@ -272,7 +272,7 @@ func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Them
 
 func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
 	var header, desc string
-	if vm.IsVerificationStep {
+	if vm.Progress.IsVerificationStep {
 		header = "Verification Test"
 		desc = "Start Minecraft with the current active mod set and verify whether your issue is still present.\n\n" +
 			"✗ Broken\n  The issue is still there (confirms the found conflict set is correct).\n\n" +

@@ -14,12 +14,16 @@ import (
 // until ContinueSearch archives it.
 func TestGenerateLogReportIncludesCurrentConflictSet(t *testing.T) {
 	bvm := ui.BisectionViewModel{
-		IsReady:    true,
-		IsComplete: true,
-		AllModIDs:  []string{"a", "b"},
-		ModsInfo: map[string]ui.ModViewModel{
-			"a": {ID: "a", Name: "Mod A", Version: "1.0", BaseFilename: "moda"},
-			"b": {ID: "b", Name: "Mod B", Version: "2.0", BaseFilename: "modb"},
+		IsReady: true,
+		Progress: ui.BisectionProgressViewModel{
+			IsComplete: true,
+		},
+		Mods: ui.ModsViewModel{
+			All: []string{"a", "b"},
+			Infos: map[string]ui.ModViewModel{
+				"a": {ID: "a", Name: "Mod A", Version: "1.0", BaseFilename: "moda"},
+				"b": {ID: "b", Name: "Mod B", Version: "2.0", BaseFilename: "modb"},
+			},
 		},
 	}
 	rvm := ui.ResultViewModel{
@@ -47,10 +51,16 @@ func TestGenerateLogReportIncludesCurrentConflictSet(t *testing.T) {
 // TestGenerateLogReportIncludesArchivedAndCurrentConflictSets verifies that
 // both archived and current conflict sets are rendered and labeled distinctly.
 func TestGenerateLogReportIncludesArchivedAndCurrentConflictSets(t *testing.T) {
-	bvm := ui.BisectionViewModel{IsReady: true, IsComplete: true, AllModIDs: []string{"a", "b"}}
+	bvm := ui.BisectionViewModel{
+		IsReady: true,
+		Progress: ui.BisectionProgressViewModel{
+			IsComplete: true,
+		},
+		Mods: ui.ModsViewModel{All: []string{"a", "b"}},
+	}
 	rvm := ui.ResultViewModel{
 		State: ui.StateComplete,
-		PreviousConflictSets: []ui.ConflictSetReport{
+		ArchivedConflictSets: []ui.ConflictSetReport{
 			{Mods: []ui.CascadingDisables{{Mod: ui.ModViewModel{ID: "a", Name: "Mod A"}}}},
 		},
 		CurrentConflict: ui.ConflictSetReport{
@@ -75,7 +85,7 @@ func TestGenerateLogReportIncludesArchivedAndCurrentConflictSets(t *testing.T) {
 
 // TestGenerateLogReportNoConflicts verifies the report's empty-result wording.
 func TestGenerateLogReportNoConflicts(t *testing.T) {
-	bvm := ui.BisectionViewModel{IsReady: true, IsComplete: true}
+	bvm := ui.BisectionViewModel{IsReady: true, Progress: ui.BisectionProgressViewModel{IsComplete: true}}
 	rvm := ui.ResultViewModel{State: ui.StateComplete}
 
 	report := GenerateLogReport(bvm, rvm)
@@ -96,8 +106,10 @@ func TestGenerateLogReportExecutionHistoryDetail(t *testing.T) {
 				StateBeforeTest: imcs.SearchState{Round: 1, Iteration: 1, Step: 1},
 			},
 		},
-		ModsInfo: map[string]ui.ModViewModel{
-			"a": {ID: "a", Name: "Mod A", Version: "1.0", BaseFilename: "moda"},
+		Mods: ui.ModsViewModel{
+			Infos: map[string]ui.ModViewModel{
+				"a": {ID: "a", Name: "Mod A", Version: "1.0", BaseFilename: "moda"},
+			},
 		},
 	}
 	rvm := ui.ResultViewModel{State: ui.StateNoResultsYet}

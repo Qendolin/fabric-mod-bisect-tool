@@ -89,7 +89,7 @@ func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						titleText := "Search In Progress"
-						if bvm.IsComplete {
+						if bvm.Progress.IsComplete {
 							titleText = "Bisection Complete"
 						}
 						title := material.H5(th, titleText)
@@ -201,14 +201,14 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	}
 
 	// 1b. Render older/historical independent conflict sets
-	if len(rvm.PreviousConflictSets) > 0 {
+	if len(rvm.ArchivedConflictSets) > 0 {
 		// The current conflict is implicitly #1 when it has entries; otherwise
 		// the archived sets are numbered from #1.
 		numberOffset := 2
 		if len(rvm.CurrentConflict.Mods) == 0 {
 			numberOffset = 1
 		}
-		for i, conflictSet := range rvm.PreviousConflictSets {
+		for i, conflictSet := range rvm.ArchivedConflictSets {
 			currentSet := conflictSet
 			index := i
 
@@ -269,7 +269,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	}
 
 	// 3. Next Steps / Actions Panel
-	if len(rvm.CurrentConflict.Mods) == 0 && len(rvm.PreviousConflictSets) == 0 && len(rvm.GenerallyUnresolvable) == 0 {
+	if len(rvm.CurrentConflict.Mods) == 0 && len(rvm.ArchivedConflictSets) == 0 && len(rvm.GenerallyUnresolvable) == 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body1(th, "No Conflicts Found")
 			lbl.Font.Weight = font.Bold
@@ -281,7 +281,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
 		})
-	} else if len(rvm.CurrentConflict.Mods) > 0 || len(rvm.PreviousConflictSets) > 0 {
+	} else if len(rvm.CurrentConflict.Mods) > 0 || len(rvm.ArchivedConflictSets) > 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body1(th, "What to do next")
 			lbl.Font.Weight = font.Bold
@@ -306,7 +306,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 		})
 
 		// Display Continue Search Option if candidates remain
-		if rvm.CanContinueSearch && len(bvm.CandidateSet) > 0 {
+		if rvm.CanContinueSearch && len(bvm.Sets.Candidate) > 0 {
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return s.drawInnerSeparator(gtx)
@@ -335,7 +335,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	}
 
 	// 4. Cleared Mods (Accordion without text glyph arrows)
-	clearedList := sets.MakeSlice(bvm.ClearedSet)
+	clearedList := sets.MakeSlice(bvm.Sets.Cleared)
 	if len(clearedList) > 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

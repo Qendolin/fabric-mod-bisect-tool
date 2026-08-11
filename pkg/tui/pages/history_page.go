@@ -113,7 +113,7 @@ func (p *HistoryPage) refreshHistory() {
 	}
 
 	p.historyCache = vm.ExecutionLog
-	p.detailOverviewWidget.SetAllMods(vm.AllModIDs)
+	p.detailOverviewWidget.SetAllMods(vm.Mods.All)
 
 	if len(p.historyCache) == 0 {
 		p.masterList.AddItem(tview.NewTextView().SetText("No history yet."), 1, 0, false)
@@ -129,7 +129,7 @@ func (p *HistoryPage) refreshHistory() {
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
-		overview := widgets.NewOverviewWidget(vm.AllModIDs)
+		overview := widgets.NewOverviewWidget(vm.Mods.All)
 		overview.SetBackgroundColor(tcell.ColorNone)
 		p.updateOverviewState(overview, &entry)
 
@@ -207,7 +207,7 @@ func (p *HistoryPage) updateDetailView(index int) {
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
 	combinedConflictSets := sets.Copy(state.ConflictSet)
-	for _, conflictSet := range vm.AllConflictSets {
+	for _, conflictSet := range vm.Sets.AllConflicts {
 		combinedConflictSets = sets.AddInPlace(combinedConflictSets, conflictSet)
 	}
 	problematicList := sets.MakeSlice(combinedConflictSets)

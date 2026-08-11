@@ -134,8 +134,8 @@ func (b *bisectionController) handleStepError(err error) {
 
 		vm := b.app.GetViewModel()
 
-		allKnownConflicts := sets.Copy(vm.CurrentConflictSet)
-		for _, s := range vm.AllConflictSets {
+		allKnownConflicts := sets.Copy(vm.Sets.CurrentConflict)
+		for _, s := range vm.Sets.AllConflicts {
 			allKnownConflicts = sets.Union(allKnownConflicts, s)
 		}
 

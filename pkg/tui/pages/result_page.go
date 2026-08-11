@@ -175,7 +175,7 @@ func formatInProgressContent(vm *ui.ResultViewModel) (title, message, explanatio
 	var b strings.Builder
 
 	// Current, still-growing conflict set. It is kept separate from past sets,
-	// which are rendered by writePreviousConflictSets below.
+	// which are rendered by writeArchivedConflictSets below.
 	fmt.Fprintf(&b, "[::u]Current Conflict[-:-:-] (%d mods found so far)\n", len(vm.CurrentConflict.Mods))
 	ui.WriteConflictSetMods(&b, vm.CurrentConflict.Mods, resultStyles)
 
@@ -197,7 +197,7 @@ func formatInProgressContent(vm *ui.ResultViewModel) (title, message, explanatio
 	}
 	ui.WriteConflictSetFooter(&b, vm.CurrentConflict.IfAllDisabledAlso, resultStyles)
 
-	writePreviousConflictSets(&b, vm)
+	writeArchivedConflictSets(&b, vm)
 
 	message = b.String()
 	return
@@ -209,14 +209,14 @@ func formatCompleteContent(vm *ui.ResultViewModel) (title, message, explanation 
 
 	var b strings.Builder
 
-	if len(vm.CurrentConflict.Mods) == 0 && len(vm.PreviousConflictSets) == 0 {
+	if len(vm.CurrentConflict.Mods) == 0 && len(vm.ArchivedConflictSets) == 0 {
 		b.WriteString("No problematic mods were found.")
 		explanation = "The bisection process completed without isolating a specific cause for failure."
 		message = b.String()
 		return
 	}
 
-	// The most recent conflict set. It is only archived into PreviousConflictSets
+	// The most recent conflict set. It is only archived into ArchivedConflictSets
 	// once ContinueSearch runs, so it is rendered separately here.
 	if len(vm.CurrentConflict.Mods) > 0 {
 		fmt.Fprintf(&b, "[::u]Current Conflict[-:-:-] (%d mods)\n", len(vm.CurrentConflict.Mods))
@@ -224,7 +224,7 @@ func formatCompleteContent(vm *ui.ResultViewModel) (title, message, explanation 
 	}
 
 	// Independent conflict sets isolated in previous rounds.
-	writePreviousConflictSets(&b, vm)
+	writeArchivedConflictSets(&b, vm)
 
 	// Generally unresolvable mods section (dependency issues unrelated to conflicts).
 	if len(vm.GenerallyUnresolvable) > 0 {
@@ -232,7 +232,7 @@ func formatCompleteContent(vm *ui.ResultViewModel) (title, message, explanation 
 		ui.WriteGenerallyUnresolvable(&b, vm.GenerallyUnresolvable, resultStyles)
 	}
 
-	if len(vm.PreviousConflictSets) == 0 {
+	if len(vm.ArchivedConflictSets) == 0 {
 		explanation = "To fix this conflict, disable one of the mods listed above and relaunch the game.\nOnce resolved, please report the incompatibility to the mod authors."
 	} else {
 		explanation = "To fix each conflict, disable one mod from that conflict's list and relaunch the game.\nOnce resolved, please report the incompatibilities to the mod authors."
@@ -245,15 +245,15 @@ func formatCompleteContent(vm *ui.ResultViewModel) (title, message, explanation 
 	return
 }
 
-// writePreviousConflictSets renders the archived conflict sets from previous
+// writeArchivedConflictSets renders the archived conflict sets from previous
 // rounds under numbered "Independent Conflict Set" headers. Numbering continues
 // after the current conflict set when it has entries.
-func writePreviousConflictSets(b *strings.Builder, vm *ui.ResultViewModel) {
+func writeArchivedConflictSets(b *strings.Builder, vm *ui.ResultViewModel) {
 	start := 1
 	if len(vm.CurrentConflict.Mods) > 0 {
 		start = 2
 	}
-	for i, cs := range vm.PreviousConflictSets {
+	for i, cs := range vm.ArchivedConflictSets {
 		fmt.Fprintf(b, "\n[::u]Independent Conflict Set #%d[-:-:-]\n", i+start)
 		ui.WriteConflictSet(b, cs, resultStyles)
 	}
