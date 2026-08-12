@@ -1,7 +1,6 @@
 package mods
 
 import (
-	"archive/zip"
 	"bytes"
 	"fmt"
 	"regexp"
@@ -55,26 +54,63 @@ func sanitizeJsonStringContent(data []byte) []byte {
 	return sanitizedData
 }
 
-func (p *ModParser) parseFabricModJson(zipReader *zip.Reader, manifest modManifestResult, jarIdentifier string, logBuffer *logBuffer) (mm ModMetadata, err error) {
-	fmjBytes, err := readZipFileEntry(manifest.File)
-	if err != nil {
-		return mm, fmt.Errorf("reading %s from %s: %w", manifest.Path, jarIdentifier, err)
-	}
+// fabricManifests lists the manifest files a Fabric/Quilt mod may declare, in
+// preference order (fabric.mod.json before quilt.mod.json), with the loader
+// each targets.
+var fabricManifests = []struct {
+	path   string
+	loader ManifestLoader
+}{
+	{"fabric.mod.json", ManifestLoaderFabric},
+	{"quilt.mod.json", ManifestLoaderQuilt},
+}
 
-	fmjBytes = sanitizeJsonStringContent(fmjBytes)
-
-	var fmj fabricModJson
-	if err := json5.Unmarshal(fmjBytes, &fmj); err != nil {
-		if bytes.HasPrefix(fmjBytes, []byte("PK\x03\x04")) {
-			return mm, fmt.Errorf("unmarshaling %s from %s: file appears to be a zip archive, not a json file", manifest.Path, jarIdentifier)
+// hasFabricManifest reports whether the jar declares a Fabric or Quilt manifest,
+// regardless of the active loader.
+func hasFabricManifest(jar *zipIndex) bool {
+	for _, entry := range fabricManifests {
+		if jar.File(entry.path) != nil {
+			return true
 		}
-		dataSnippet := string(fmjBytes)
-		if len(dataSnippet) > 200 {
-			dataSnippet = dataSnippet[:200] + "..."
-		}
-		return mm, fmt.Errorf("unmarshaling %s from %s (data snippet: %s): %w", manifest.Path, jarIdentifier, dataSnippet, err)
 	}
+	return false
+}
 
+// tryDecodeFabricModJson finds and decodes the jar's Fabric/Quilt manifest,
+// preferring fabric.mod.json over quilt.mod.json. It returns nil when the jar
+// declares neither.
+func tryDecodeFabricModJson(jar *zipIndex, jarIdentifier string) (*fabricModJson, ManifestLoader, error) {
+	for _, entry := range fabricManifests {
+		manifestFile := jar.File(entry.path)
+		if manifestFile == nil {
+			continue
+		}
+		data, err := readZipFileEntry(manifestFile)
+		if err != nil {
+			return nil, ManifestLoaderNone, fmt.Errorf("reading %s from %s: %w", entry.path, jarIdentifier, err)
+		}
+
+		data = sanitizeJsonStringContent(data)
+
+		var fmj fabricModJson
+		if err := json5.Unmarshal(data, &fmj); err != nil {
+			if bytes.HasPrefix(data, []byte("PK\x03\x04")) {
+				return nil, ManifestLoaderNone, fmt.Errorf("unmarshaling %s from %s: file appears to be a zip archive, not a json file", entry.path, jarIdentifier)
+			}
+			dataSnippet := string(data)
+			if len(dataSnippet) > 200 {
+				dataSnippet = dataSnippet[:200] + "..."
+			}
+			return nil, ManifestLoaderNone, fmt.Errorf("unmarshaling %s from %s (data snippet: %s): %w", entry.path, jarIdentifier, dataSnippet, err)
+		}
+		return &fmj, entry.loader, nil
+	}
+	return nil, ManifestLoaderNone, nil
+}
+
+// convertFabricModJson translates an already decoded fabric.mod.json into the
+// tool's internal ModMetadata format.
+func convertFabricModJson(fmj *fabricModJson, loader ManifestLoader) ModMetadata {
 	jars := make([]string, len(fmj.Jars))
 	for i, jar := range fmj.Jars {
 		jars[i] = jar.File
@@ -84,7 +120,7 @@ func (p *ModParser) parseFabricModJson(zipReader *zip.Reader, manifest modManife
 		ID:         fmj.ID,
 		Name:       fmj.Name,
 		Version:    fmj.Version,
-		Loader:     manifest.Loader,
+		Loader:     loader,
 		Provides:   fmj.Provides,
 		Depends:    fmj.Depends,
 		Breaks:     fmj.Breaks,
@@ -92,5 +128,5 @@ func (p *ModParser) parseFabricModJson(zipReader *zip.Reader, manifest modManife
 		Suggests:   fmj.Suggests,
 		Conflicts:  fmj.Conflicts,
 		Jars:       jars,
-	}, nil
+	}
 }

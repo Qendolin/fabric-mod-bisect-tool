@@ -1,11 +1,9 @@
 package mods
 
 import (
-	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -18,6 +16,65 @@ import (
 type neoForgeModsToml struct {
 	Mods         []neoForgeMod                   `toml:"mods"`
 	Dependencies map[string][]neoForgeDependency `toml:"dependencies"`
+	// ModProperties holds the top-level [modproperties.<modId>] tables. Values
+	// are free-form; Sinytra Connector uses the "fabric:provides" key to declare
+	// provided Fabric API modules.
+	ModProperties map[string]map[string]any `toml:"modproperties"`
+	// Properties holds the top-level [properties] table, used by Sinytra
+	// Connector placeholder mods to declare "connector:placeholder".
+	Properties map[string]any `toml:"properties"`
+}
+
+// isConnectorPlaceholder reports whether the manifest is a Sinytra Connector
+// placeholder declaring [properties] "connector:placeholder" = true. Such jars
+// are Fabric mods whose forge manifest only exists so FML surfaces a
+// missing-Connector dependency to users.
+func (t *neoForgeModsToml) isConnectorPlaceholder() bool {
+	flag, ok := t.Properties["connector:placeholder"].(bool)
+	return ok && flag
+}
+
+// connectorProvides returns the "fabric:provides" list declared for modID under
+// [modproperties.<modID>].
+func (t *neoForgeModsToml) connectorProvides(modID string) []string {
+	properties, ok := t.ModProperties[modID]
+	if !ok {
+		return nil
+	}
+	raw, ok := properties["fabric:provides"]
+	if !ok {
+		return nil
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	provides := make([]string, 0, len(values))
+	for _, value := range values {
+		if id, ok := value.(string); ok {
+			provides = append(provides, id)
+		}
+	}
+	return provides
+}
+
+// convertConnectorNeoForgeToml converts a (Neo)Forge manifest the way Sinytra
+// Connector reads it: the regular conversion, plus the "fabric:provides" lists
+// that Connector declares via [modproperties.<modId>] folded into the mod's
+// provides (deduplicated against the [[mods]] provides).
+func convertConnectorNeoForgeToml(tomlData *neoForgeModsToml, manifestPath, jarIdentifier string, jar *zipIndex, logBuffer *logBuffer) (ModMetadata, error) {
+	metadata, err := convertNeoForgeToml(tomlData, manifestPath, jarIdentifier, jar, logBuffer)
+	if err != nil {
+		return ModMetadata{}, err
+	}
+	for _, mod := range tomlData.Mods {
+		for _, provided := range tomlData.connectorProvides(mod.ModID) {
+			if !slices.Contains(metadata.Provides, provided) {
+				metadata.Provides = append(metadata.Provides, provided)
+			}
+		}
+	}
+	return metadata, nil
 }
 
 // neoForgeMod represents a single [[mods]] entry.
@@ -30,8 +87,8 @@ type neoForgeMod struct {
 
 // neoForgeDependency represents a single dependency entry.
 type neoForgeDependency struct {
-	ModID        string `toml:"modId"`
-	Type         string `toml:"type"`
+	ModID string `toml:"modId"`
+	Type  string `toml:"type"`
 	// Mandatory is used by legacy Forge mods.toml, where dependencies declare
 	// "mandatory" instead of "type". A pointer distinguishes an explicit
 	// "mandatory = false" from an omitted field (which defaults to required).
@@ -46,22 +103,60 @@ type jarJarMetadata struct {
 	} `json:"jars"`
 }
 
-// parseJarJarMetadata finds and parses a META-INF/jarjar/metadata.json file from a zip archive.
-// It returns a slice of internal file paths
-func (p *ModParser) parseJarJarMetadata(zipReader *zip.Reader, jarIdentifier string, logBuffer *logBuffer) ([]string, error) {
-	jarJarFile := getZipFileEntry(zipReader, "META-INF/jarjar/metadata.json")
+// neoForgeManifests lists the manifest files a (Neo)Forge mod may declare, in
+// preference order: the modern neoforge.mods.toml before the legacy Forge
+// mods.toml (1.20.1 and earlier).
+var neoForgeManifests = []string{"META-INF/neoforge.mods.toml", "META-INF/mods.toml"}
+
+// hasNeoForgeManifest reports whether the jar declares a (Neo)Forge manifest,
+// regardless of the active loader.
+func hasNeoForgeManifest(jar *zipIndex) bool {
+	for _, manifestPath := range neoForgeManifests {
+		if jar.File(manifestPath) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// tryDecodeNeoForgeToml finds and decodes the jar's (Neo)Forge manifest
+// (neoforge.mods.toml, falling back to the legacy Forge mods.toml). It returns
+// nil when the jar declares no such manifest.
+func tryDecodeNeoForgeToml(jar *zipIndex, jarIdentifier string) (*neoForgeModsToml, string, error) {
+	for _, manifestPath := range neoForgeManifests {
+		manifestFile := jar.File(manifestPath)
+		if manifestFile == nil {
+			continue
+		}
+		data, err := readZipFileEntry(manifestFile)
+		if err != nil {
+			return nil, manifestPath, fmt.Errorf("reading %s from %s: %w", manifestPath, jarIdentifier, err)
+		}
+		var tomlData neoForgeModsToml
+		if err := toml.Unmarshal(data, &tomlData); err != nil {
+			return nil, manifestPath, fmt.Errorf("unmarshaling %s from %s: %w", manifestPath, jarIdentifier, err)
+		}
+		return &tomlData, manifestPath, nil
+	}
+	return nil, "", nil
+}
+
+// readJarjarMetadata finds and parses META-INF/jarjar/metadata.json, returning
+// the internal file paths it declares. A missing file is not an error.
+func readJarjarMetadata(jar *zipIndex) ([]string, error) {
+	jarJarFile := jar.File("META-INF/jarjar/metadata.json")
 	if jarJarFile == nil {
-		return nil, nil // Not an error, the file is optional.
+		return nil, nil
 	}
 
 	jarJarData, err := readZipFileEntry(jarJarFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read META-INF/jarjar/metadata.json in %s: %w", jarIdentifier, err)
+		return nil, fmt.Errorf("failed to read META-INF/jarjar/metadata.json: %w", err)
 	}
 
 	var metadata jarJarMetadata
 	if err := json.Unmarshal(jarJarData, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse META-INF/jarjar/metadata.json in %s: %w", jarIdentifier, err)
+		return nil, fmt.Errorf("failed to parse META-INF/jarjar/metadata.json: %w", err)
 	}
 
 	jars := make([]string, len(metadata.Jars))
@@ -71,59 +166,10 @@ func (p *ModParser) parseJarJarMetadata(zipReader *zip.Reader, jarIdentifier str
 	return jars, nil
 }
 
-// parseNeoForgeNestedJars handles the NeoForge-specific container logic for JARs that are not mods
-// but contain nested mods via jarjar metadata. It creates a synthetic ModMetadata object for the container.
-// Returns an error if the JAR is not a valid container (no jarjar metadata and not a mod).
-// Returns nil error if the JAR is a library (no jarjar metadata) or a valid container.
-func (p *ModParser) parseNeoForgeNestedJars(zipReader *zip.Reader, mm *ModMetadata, jarIdentifier string, logBuffer *logBuffer) error {
-	jarJarEntries, jarJarErr := p.parseJarJarMetadata(zipReader, jarIdentifier, logBuffer)
-
-	// Jar is not a mod, it's either a container or just a java library
-	if mm.Loader == ManifestLoaderNone {
-		// Treat the jar as a container. Create a synthetic metadata object for it.
-		// The placeholder version is required for the struct, but will not be used in dependency resolution.
-		placeholderVersion, _ := version.Parse("0.0.0-synthetic", false)
-		*mm = ModMetadata{
-			ID:            fmt.Sprintf("library-%s", filepath.Base(jarIdentifier)),
-			Version:       VersionField{Version: placeholderVersion},
-			Name:          "Library",
-			Jars:          jarJarEntries,
-			Loader:        ManifestLoaderNone,
-			IsJavaLibrary: true,
-		}
-
-		if len(jarJarEntries) == 0 {
-			if jarJarErr != nil {
-				return fmt.Errorf("parsing metadata for %s failed and it is not a valid container: %w", jarIdentifier, jarJarErr)
-			} else {
-				// This is not an error
-				logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod and not a container, probably just a library", jarIdentifier)
-			}
-		} else {
-			logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod, but is a container for %d nested JAR(s).", jarIdentifier, len(jarJarEntries))
-		}
-	} else {
-		// Jar is a mod, Doesn't matter if it's NF or Fabric/Quilt mod, we need to add the nested jars
-		if jarJarErr != nil {
-			logBuffer.add(logging.LevelWarn, "ModLoader: Jar file is a mod, but loading nested jars failed: %v", jarJarErr)
-		}
-
-		lenBefore := len(mm.Jars)
-		for _, e := range jarJarEntries {
-			// Deduplicate. Not efficient, but whatever
-			if !slices.Contains(mm.Jars[:lenBefore], e) {
-				mm.Jars = append(mm.Jars, e)
-			}
-		}
-	}
-
-	return nil
-}
-
 // readVersionFromManifest finds and parses the META-INF/MANIFEST.MF file within a JAR
 // to extract the value of the "Implementation-Version" attribute.
-func (p *ModParser) readVersionFromManifest(zipReader *zip.Reader, jarIdentifier string) (string, error) {
-	manifestFile := getZipFileEntry(zipReader, "META-INF/MANIFEST.MF")
+func readVersionFromManifest(jar *zipIndex, jarIdentifier string) (string, error) {
+	manifestFile := jar.File("META-INF/MANIFEST.MF")
 	if manifestFile == nil {
 		return "", fmt.Errorf("mod '%s' specifies version=${file.jarVersion} but META-INF/MANIFEST.MF was not found", jarIdentifier)
 	}
@@ -157,21 +203,11 @@ func (p *ModParser) readVersionFromManifest(zipReader *zip.Reader, jarIdentifier
 	return "", fmt.Errorf("mod '%s' specifies version=${file.jarVersion} but 'Implementation-Version' was not found in META-INF/MANIFEST.MF", jarIdentifier)
 }
 
-// parseNeoForgeModToml reads a neoforge.mods.toml file and translates its contents
-// into the tool's internal ModMetadata format.
-func (p *ModParser) parseNeoForgeModToml(zipReader *zip.Reader, manifest modManifestResult, jarIdentifier string, logBuffer *logBuffer) (mm ModMetadata, err error) {
-	tomlBytes, err := readZipFileEntry(manifest.File)
-	if err != nil {
-		return mm, fmt.Errorf("reading %s from %s: %w", manifest.Path, jarIdentifier, err)
-	}
-
-	var tomlData neoForgeModsToml
-	if err := toml.Unmarshal(tomlBytes, &tomlData); err != nil {
-		return mm, fmt.Errorf("unmarshaling %s from %s: %w", manifest.Path, jarIdentifier, err)
-	}
-
+// convertNeoForgeToml translates an already decoded neoforge.mods.toml into the
+// tool's internal ModMetadata format.
+func convertNeoForgeToml(tomlData *neoForgeModsToml, manifestPath, jarIdentifier string, jar *zipIndex, logBuffer *logBuffer) (mm ModMetadata, err error) {
 	if len(tomlData.Mods) == 0 {
-		return mm, fmt.Errorf("%s from %s contains no [[mods]] entries", manifest.Path, jarIdentifier)
+		return mm, fmt.Errorf("%s from %s contains no [[mods]] entries", manifestPath, jarIdentifier)
 	}
 
 	// Translate the primary mod identity and "provides" list.
@@ -180,13 +216,13 @@ func (p *ModParser) parseNeoForgeModToml(zipReader *zip.Reader, manifest modMani
 	mm = ModMetadata{
 		ID:       primaryMod.ModID,
 		Name:     primaryMod.DisplayName,
-		Loader:   manifest.Loader,
-		Provides: primaryMod.Provides,
+		Loader:   ManifestLoaderNeoForge,
+		Provides: slices.Clone(primaryMod.Provides),
 	}
 
 	mavenModVersionStr := primaryMod.Version
 	if mavenModVersionStr == "${file.jarVersion}" {
-		versionFromManifest, err := p.readVersionFromManifest(zipReader, jarIdentifier)
+		versionFromManifest, err := readVersionFromManifest(jar, jarIdentifier)
 		if err != nil {
 			logBuffer.add(logging.LevelWarn, "ModLoader: %v", err)
 			versionFromManifest = "0.0.0"

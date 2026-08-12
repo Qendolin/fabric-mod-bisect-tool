@@ -6,13 +6,38 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
+	"slices"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods/version"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 )
 
+// zipIndex is a zip archive with its entries indexed by path for O(1) lookups.
+type zipIndex struct {
+	byName map[string]*zip.File
+}
+
+// newZipIndex indexes an archive's entries. When an archive contains duplicate
+// names, the first entry wins (matching the previous linear scan).
+func newZipIndex(reader *zip.Reader) *zipIndex {
+	byName := make(map[string]*zip.File, len(reader.File))
+	for _, file := range reader.File {
+		if _, ok := byName[file.Name]; !ok {
+			byName[file.Name] = file
+		}
+	}
+	return &zipIndex{byName: byName}
+}
+
+// File returns the entry at the given path, or nil when the archive has none.
+func (z *zipIndex) File(name string) *zip.File {
+	return z.byName[name]
+}
+
 type ModParser struct {
-	// RunLoader determines which mod manifests are recognized and in what
-	// priority order (see RunLoader.manifestOrder).
+	// RunLoader determines how a jar's manifests are resolved into a mod (see
+	// RunLoader.resolveManifest).
 	RunLoader RunLoader
 }
 
@@ -24,43 +49,134 @@ func (p *ModParser) ExtractModMetadata(jarPath, jarName string, logBuffer *logBu
 	}
 	defer zr.Close()
 
-	topLevelMetadata, err := p.parseModMetadataFromReader(&zr.Reader, jarName, logBuffer)
+	return p.parseJarTree(newZipIndex(&zr.Reader), jarName, logBuffer)
+}
+
+// jarInterpretation is the result of interpreting a single jar's manifests:
+// whether it is a mod, and which jarjar (nested) jars it bundles.
+type jarInterpretation struct {
+	metadata ModMetadata
+	isMod    bool
+	// jarjarEntries lists the nested jars declared via META-INF/jarjar/metadata.json.
+	jarjarEntries []string
+	// jarjarErr reports a failure to read or parse the jarjar metadata, if any.
+	jarjarErr error
+}
+
+// interpretJar decodes the manifests this loader reads and resolves them against
+// the active loader, then discovers its jarjar nested jars. Manifests of the
+// other family are only checked for presence, so foreign-mod errors can be
+// produced without parsing manifests the loader would reject. A jar without an
+// authoritative manifest yields an empty metadata with isMod false.
+func (p *ModParser) interpretJar(jar *zipIndex, jarIdentifier string, logBuffer *logBuffer) (jarInterpretation, error) {
+	// hasNeoForge and hasFabric report whether a manifest file of that family is
+	// present, regardless of whether this loader decodes it. The raw pointers
+	// below carry decoded data only; the resolver separates presence (foreign
+	// mod errors) from data (conversions).
+	hasNeoForge := hasNeoForgeManifest(jar)
+	hasFabric := hasFabricManifest(jar)
+
+	var neoForgeRaw *neoForgeModsToml
+	var neoForgePath string
+	if p.RunLoader.parsesNeoForge() {
+		var err error
+		neoForgeRaw, neoForgePath, err = tryDecodeNeoForgeToml(jar, jarIdentifier)
+		if err != nil {
+			return jarInterpretation{}, err
+		}
+	}
+
+	var fabricRaw *fabricModJson
+	var fabricLoader ManifestLoader
+	if p.RunLoader.parsesFabric() {
+		var err error
+		fabricRaw, fabricLoader, err = tryDecodeFabricModJson(jar, jarIdentifier)
+		if err != nil {
+			return jarInterpretation{}, err
+		}
+	}
+
+	metadata, err := p.RunLoader.resolveManifest(hasNeoForge, neoForgeRaw, neoForgePath, hasFabric, fabricRaw, fabricLoader, jar, jarIdentifier, logBuffer)
 	if err != nil {
-		return ModMetadata{}, nil, fmt.Errorf("parsing top-level metadata for %s: %w", jarName, err)
+		return jarInterpretation{}, err
+	}
+
+	interpretation := jarInterpretation{
+		metadata: metadata,
+		isMod:    metadata.Loader != ManifestLoaderNone,
+	}
+
+	if p.RunLoader.parsesNeoForge() {
+		interpretation.jarjarEntries, interpretation.jarjarErr = readJarjarMetadata(jar)
+	}
+
+	return interpretation, nil
+}
+
+// parseJarTree interprets a jar and recursively parses all of its nested jars.
+// A jar without a mod manifest is loaded as a library/container, or remains a
+// mod with its manifest-declared and jarjar nested jars merged.
+func (p *ModParser) parseJarTree(jar *zipIndex, jarIdentifier string, logBuffer *logBuffer) (ModMetadata, []NestedModule, error) {
+	interpretation, err := p.interpretJar(jar, jarIdentifier, logBuffer)
+	if err != nil {
+		return ModMetadata{}, nil, err
+	}
+
+	if interpretation.jarjarErr != nil {
+		if interpretation.isMod {
+			logBuffer.add(logging.LevelWarn, "ModLoader: Jar file is a mod, but loading nested jars failed: %v", interpretation.jarjarErr)
+		} else {
+			logBuffer.add(logging.LevelError, "ModLoader: Failed to parse jarjar metadata for %s: %v. Loading without nested jars.", jarIdentifier, interpretation.jarjarErr)
+		}
+	}
+
+	metadata := interpretation.metadata
+	if !interpretation.isMod {
+		// Only loaders that accept (Neo)Forge libraries reach here; loaders that
+		// reject manifest-less jars error inside resolveManifest instead.
+		metadata = synthesizeLibrary(jarIdentifier, interpretation.jarjarEntries)
+		if len(interpretation.jarjarEntries) == 0 {
+			if interpretation.jarjarErr == nil {
+				logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod and not a container, probably just a library", jarIdentifier)
+			}
+		} else {
+			logBuffer.add(logging.LevelDebug, "ModLoader: %s is not a mod, but is a container for %d nested JAR(s).", jarIdentifier, len(interpretation.jarjarEntries))
+		}
+	} else if len(interpretation.jarjarEntries) > 0 {
+		metadata.Jars = appendUnique(metadata.Jars, interpretation.jarjarEntries)
+	}
+
+	if err := validateMetadata(&metadata, jarIdentifier); err != nil {
+		return ModMetadata{}, nil, err
 	}
 
 	allNestedMods := []NestedModule{}
-	for _, nestedJarEntry := range topLevelMetadata.Jars {
+	for _, nestedJarEntry := range metadata.Jars {
 		if nestedJarEntry == "" {
-			logBuffer.add(logging.LevelWarn, "ModLoader: Top-level mod '%s' has a nested JAR entry with an empty 'file' path. Skipping.", topLevelMetadata.ID)
+			logBuffer.add(logging.LevelWarn, "ModLoader: Mod '%s' has a nested JAR entry with an empty 'file' path. Skipping.", metadata.ID)
 			continue
 		}
 
-		foundMods, err := p.recursivelyParseNestedJar(&zr.Reader, nestedJarEntry, jarName, logBuffer)
+		foundMods, err := p.parseNestedJar(jar, nestedJarEntry, jarIdentifier, logBuffer)
 		if err != nil {
-			if p.RunLoader.includesNeoForgeFamily() {
-				logBuffer.add(logging.LevelDebug, "ModLoader: Skipping nested JAR '%s' in '%s' (likely a non-mod library): %v", nestedJarEntry, jarName, err)
+			if p.RunLoader.parsesNeoForge() {
+				logBuffer.add(logging.LevelDebug, "ModLoader: Skipping nested JAR '%s' in '%s' (likely a non-mod library): %v", nestedJarEntry, jarIdentifier, err)
 			} else {
-				logBuffer.add(logging.LevelWarn, "ModLoader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry, jarName, err)
+				logBuffer.add(logging.LevelWarn, "ModLoader: Failed to process nested JAR '%s' in '%s': %v", nestedJarEntry, jarIdentifier, err)
 			}
 			continue
 		}
 		allNestedMods = append(allNestedMods, foundMods...)
 	}
-	return topLevelMetadata, allNestedMods, nil
+	return metadata, allNestedMods, nil
 }
 
-// recursivelyParseNestedJar parses a nested JAR and any of its own nested JARs.
-func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathInParent, currentPathPrefix string, logBuffer *logBuffer) ([]NestedModule, error) {
+// parseNestedJar extracts a nested jar from a parent archive and parses it and
+// any of its own nested jars.
+func (p *ModParser) parseNestedJar(parentJar *zipIndex, pathInParent, currentPathPrefix string, logBuffer *logBuffer) ([]NestedModule, error) {
 	fullPathInJar := path.Join(currentPathPrefix, pathInParent)
 
-	var nestedZipFile *zip.File
-	for _, f := range parentZipReader.File {
-		if f.Name == pathInParent {
-			nestedZipFile = f
-			break
-		}
-	}
+	nestedZipFile := parentJar.File(pathInParent)
 	if nestedZipFile == nil {
 		return nil, fmt.Errorf("nested JAR '%s' not found in archive", fullPathInJar)
 	}
@@ -82,171 +198,57 @@ func (p *ModParser) recursivelyParseNestedJar(parentZipReader *zip.Reader, pathI
 		return nil, fmt.Errorf("reading nested content '%s' as zip: %w", fullPathInJar, err)
 	}
 
-	currentModMetadata, err := p.parseModMetadataFromReader(innerZipReader, fullPathInJar, logBuffer)
+	currentMetadata, nestedMods, err := p.parseJarTree(newZipIndex(innerZipReader), fullPathInJar, logBuffer)
 	if err != nil {
 		return nil, fmt.Errorf("parsing metadata from '%s': %w", fullPathInJar, err)
 	}
 
-	allFoundMods := []NestedModule{{Info: currentModMetadata, PathInJar: fullPathInJar}}
-
-	for _, deeperJarEntry := range currentModMetadata.Jars {
-		if deeperJarEntry == "" {
-			continue
-		}
-
-		deeperNestedMods, err := p.recursivelyParseNestedJar(innerZipReader, deeperJarEntry, fullPathInJar, logBuffer)
-		if err != nil {
-			logBuffer.add(logging.LevelWarn, "ModLoader: Skipping deeper nested JAR '%s' within '%s': %v", deeperJarEntry, pathInParent, err)
-			continue
-		}
-		allFoundMods = append(allFoundMods, deeperNestedMods...)
-	}
-	return allFoundMods, nil
+	return append([]NestedModule{{Info: currentMetadata, PathInJar: fullPathInJar}}, nestedMods...), nil
 }
 
-type modManifestResult struct {
-	File   *zip.File
-	Path   string
-	Loader ManifestLoader
+// synthesizeLibrary builds the synthetic metadata for a jar without a mod
+// manifest. Its Jars point at the jarjar nested jars it bundles, if any.
+func synthesizeLibrary(jarIdentifier string, jarjarEntries []string) ModMetadata {
+	placeholderVersion, _ := version.Parse("0.0.0-synthetic", false)
+	return ModMetadata{
+		ID:            fmt.Sprintf("library-%s", filepath.Base(jarIdentifier)),
+		Version:       VersionField{Version: placeholderVersion},
+		Name:          "Library",
+		Jars:          jarjarEntries,
+		IsJavaLibrary: true,
+	}
 }
 
-func (p *ModParser) findModManifest(zipReader *zip.Reader) modManifestResult {
-	for _, loader := range p.RunLoader.manifestOrder() {
-		switch loader {
-		case ManifestLoaderNeoForge:
-			if file := getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml"); file != nil {
-				return modManifestResult{
-					File:   file,
-					Path:   "META-INF/neoforge.mods.toml",
-					Loader: ManifestLoaderNeoForge,
-				}
-			}
-			// Legacy (Neo)Forge (1.20.1 and earlier) uses this filename.
-			if file := getZipFileEntry(zipReader, "META-INF/mods.toml"); file != nil {
-				return modManifestResult{
-					File:   file,
-					Path:   "META-INF/mods.toml",
-					Loader: ManifestLoaderNeoForge,
-				}
-			}
-		case ManifestLoaderQuilt:
-			if file := getZipFileEntry(zipReader, "quilt.mod.json"); file != nil {
-				return modManifestResult{
-					File:   file,
-					Path:   "quilt.mod.json",
-					Loader: ManifestLoaderQuilt,
-				}
-			}
-		case ManifestLoaderFabric:
-			if file := getZipFileEntry(zipReader, "fabric.mod.json"); file != nil {
-				return modManifestResult{
-					File:   file,
-					Path:   "fabric.mod.json",
-					Loader: ManifestLoaderFabric,
-				}
-			}
+// appendUnique appends every element of src to dst that is not already present.
+func appendUnique(dst, src []string) []string {
+	for _, entry := range src {
+		if !slices.Contains(dst, entry) {
+			dst = append(dst, entry)
 		}
 	}
-
-	return modManifestResult{}
+	return dst
 }
 
-// hasNeoForgeManifest reports whether the jar declares a (Neo)Forge manifest,
-// regardless of the active loader.
-func hasNeoForgeManifest(zipReader *zip.Reader) bool {
-	return getZipFileEntry(zipReader, "META-INF/neoforge.mods.toml") != nil ||
-		getZipFileEntry(zipReader, "META-INF/mods.toml") != nil
-}
-
-// hasFabricManifest reports whether the jar declares a Fabric or Quilt manifest,
-// regardless of the active loader.
-func hasFabricManifest(zipReader *zip.Reader) bool {
-	return getZipFileEntry(zipReader, "fabric.mod.json") != nil ||
-		getZipFileEntry(zipReader, "quilt.mod.json") != nil
-}
-
-// parseModMetadataFromReader parses the metadata of a mod JAR file.
-// It attempts to find and parse the appropriate manifest file (fabric.mod.json, quilt.mod.json, or neoforge.mods.toml)
-// based on the enabled parsing flags. If the JAR is not a mod but a container (containing nested mods via jarjar/metadata.json),
-// it creates a synthetic ModMetadata object for the container.
-func (p *ModParser) parseModMetadataFromReader(zipReader *zip.Reader, jarIdentifier string, logBuffer *logBuffer) (mm ModMetadata, err error) {
-	manifest := p.findModManifest(zipReader)
-
-	// A jar whose manifest targets a loader that isn't enabled is an unsupported
-	// mod, not a library or a parseable mod. Call it out explicitly instead of
-	// silently accepting (or rejecting) it with a generic message.
-	if manifest.Loader == ManifestLoaderNone {
-		switch p.RunLoader {
-		case RunLoaderFabric:
-			if hasNeoForgeManifest(zipReader) {
-				return mm, fmt.Errorf("%s is a (Neo)Forge mod, which is not supported by the %s loader", jarIdentifier, p.RunLoader)
-			}
-		case RunLoaderNeoForge:
-			if hasFabricManifest(zipReader) {
-				return mm, fmt.Errorf("%s is a Fabric/Quilt mod, which is not supported by the %s loader", jarIdentifier, p.RunLoader)
-			}
-		}
+// validateMetadata checks a parsed mod's required fields and reserved IDs.
+func validateMetadata(metadata *ModMetadata, jarIdentifier string) error {
+	if metadata.ID == "" {
+		return fmt.Errorf("%s has a missing mod ID", jarIdentifier)
 	}
 
-	if !p.RunLoader.toleratesNonModJars() && manifest.Loader == ManifestLoaderNone {
-		// Non-mod jars are valid for (Neo)Forge, but not Fabric and Quilt.
-		return mm, fmt.Errorf("no mod manifest found in %s", jarIdentifier)
+	if metadata.Version.Version == nil {
+		return fmt.Errorf("%s is missing mandatory 'version' entry", jarIdentifier)
 	}
 
-	if p.RunLoader == RunLoaderNeoForgeWithFabric && (manifest.Loader == ManifestLoaderFabric || manifest.Loader == ManifestLoaderQuilt) {
-		// Warn once per nested subtree: a Fabric container with nested Fabric
-		// mods would otherwise spam one warning per jar.
-		if !logBuffer.warnedFallback {
-			logBuffer.add(logging.LevelWarn, "ModLoader: (Neo)Forge parsing is enabled but %s is missing a (neo)forge.mods.toml and will fall back to %s parsing.", jarIdentifier, manifest.Loader)
-			logBuffer.warnedFallback = true
-		}
+	if IsImplicitMod(metadata.ID) {
+		return fmt.Errorf("mod from '%s' illegally uses reserved ID '%s'", jarIdentifier, metadata.ID)
 	}
-
-	if manifest.Loader == ManifestLoaderNeoForge {
-		mm, err = p.parseNeoForgeModToml(zipReader, manifest, jarIdentifier, logBuffer)
-		if err != nil {
-			return
-		}
-	}
-
-	if manifest.Loader == ManifestLoaderFabric || manifest.Loader == ManifestLoaderQuilt {
-		mm, err = p.parseFabricModJson(zipReader, manifest, jarIdentifier, logBuffer)
-		if err != nil {
-			return
-		}
-	}
-
-	if p.RunLoader.includesNeoForgeFamily() {
-		// Unlike fabric mods, nested jars from META-INF/jarjar/metadata.json are loaded here
-		err = p.parseNeoForgeNestedJars(zipReader, &mm, jarIdentifier, logBuffer)
-		if err != nil {
-			logBuffer.add(logging.LevelError, "ModLoader: Failed to parse jarjar metadata for %s: %v. Loading without nested jars.", jarIdentifier, err)
-		}
-	}
-
-	// At this point, mm is guaranteed to be populated because:
-	// - If manifest.Loader is NeoForge/Fabric/Quilt, the respective parser filled mm
-	// - If manifest.Loader is ManifestLoaderNone, we either returned an error or created a synthetic container
-
-	// Validation
-	if mm.ID == "" {
-		return mm, fmt.Errorf("%s from %s has a missing mod ID", manifest.Path, jarIdentifier)
-	}
-
-	if mm.Version.Version == nil {
-		return mm, fmt.Errorf("%s from %s is missing mandatory 'version' entry", manifest.Path, jarIdentifier)
-	}
-
-	if IsImplicitMod(mm.ID) {
-		return mm, fmt.Errorf("mod from '%s' illegally uses reserved ID '%s'", jarIdentifier, mm.ID)
-	}
-	for _, providedID := range mm.Provides {
+	for _, providedID := range metadata.Provides {
 		if IsImplicitMod(providedID) {
-			return mm, fmt.Errorf("mod '%s' from '%s' illegally provides reserved ID '%s'", mm.ID, jarIdentifier, providedID)
+			return fmt.Errorf("mod '%s' from '%s' illegally provides reserved ID '%s'", metadata.ID, jarIdentifier, providedID)
 		}
 	}
 
-	return mm, nil
+	return nil
 }
 
 func readZipFileEntry(f *zip.File) ([]byte, error) {
@@ -256,13 +258,4 @@ func readZipFileEntry(f *zip.File) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
-}
-
-func getZipFileEntry(r *zip.Reader, name string) *zip.File {
-	for _, f := range r.File {
-		if f.Name == name {
-			return f
-		}
-	}
-	return nil
 }
