@@ -92,6 +92,11 @@ const timeout = 30 * time.Second
 // temp directory populated with the given specs. It returns the app, the mock,
 // and the temp mods directory.
 func newTestApp(t *testing.T, specs map[string]modSpec) (*app.App, *MockView, string) {
+	return newTestAppWithLoader(t, specs, mods.RunLoaderFabric)
+}
+
+// newTestAppWithLoader is newTestApp with an explicit mod loader.
+func newTestAppWithLoader(t *testing.T, specs map[string]modSpec, loader mods.RunLoader) (*app.App, *MockView, string) {
 	t.Helper()
 	modsDir := t.TempDir()
 	setupDummyMods(t, modsDir, specs)
@@ -101,15 +106,20 @@ func newTestApp(t *testing.T, specs map[string]modSpec) (*app.App, *MockView, st
 	a := app.NewApp(mainLogger, cliArgs)
 	mock := NewMockView()
 	a.SetView(mock)
-	a.StartLoadingProcess(modsDir, mods.RunLoaderFabric)
+	a.StartLoadingProcess(modsDir, loader)
 	return a, mock, modsDir
 }
 
 // newLoadedApp creates an app, starts loading, and waits until loading has
 // completed successfully (OnBisectionReady fired).
 func newLoadedApp(t *testing.T, specs map[string]modSpec) (*app.App, *MockView, string) {
+	return newLoadedAppWithLoader(t, specs, mods.RunLoaderFabric)
+}
+
+// newLoadedAppWithLoader is newLoadedApp with an explicit mod loader.
+func newLoadedAppWithLoader(t *testing.T, specs map[string]modSpec, loader mods.RunLoader) (*app.App, *MockView, string) {
 	t.Helper()
-	a, mock, modsDir := newTestApp(t, specs)
+	a, mock, modsDir := newTestAppWithLoader(t, specs, loader)
 	mock.WaitReady(t, timeout)
 	return a, mock, modsDir
 }
@@ -149,6 +159,57 @@ func TestLoadAndBisectionReady(t *testing.T) {
 	}
 	if vm.Loader.Preferred != "" {
 		t.Error("expected no preferred loader (no -loader flag given)")
+	}
+}
+
+// TestBridgeModForceEnabled asserts that under the Connector and Kilt loaders
+// the bridge mod is force-enabled right after loading, so it is never a search
+// candidate and is pinned into every test's effective set.
+func TestBridgeModForceEnabled(t *testing.T) {
+	connectorToml := `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "connector"
+version = "1.0"
+displayName = "Connector"`
+
+	tests := []struct {
+		name      string
+		loader    mods.RunLoader
+		bridgeMod string
+		specs     map[string]modSpec
+	}{
+		{
+			name:      "Connector",
+			loader:    mods.RunLoaderNeoForgeWithFabric,
+			bridgeMod: "connector",
+			specs: map[string]modSpec{
+				"connector-1.0.jar": {RawFiles: map[string]string{"META-INF/neoforge.mods.toml": connectorToml}},
+			},
+		},
+		{
+			name:      "Kilt",
+			loader:    mods.RunLoaderFabricWithNeoForge,
+			bridgeMod: "kilt",
+			specs: map[string]modSpec{
+				"kilt-1.0.jar": {JSONContent: `{"id": "kilt", "version": "1.0", "name": "Kilt"}`},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, _ := newLoadedAppWithLoader(t, tc.specs, tc.loader)
+
+			statuses := a.GetModStatusController().GetModStatuses()
+			st, ok := statuses[tc.bridgeMod]
+			if !ok {
+				t.Fatalf("expected bridge mod %s to be loaded", tc.bridgeMod)
+			}
+			if st.Override != ui.ModOverrideForceEnabled {
+				t.Errorf("expected bridge mod %s to be force-enabled, got override %q", tc.bridgeMod, st.Override)
+			}
+		})
 	}
 }
 

@@ -47,6 +47,7 @@ func NewModSelectionScreen(app App) *ModSelectionScreen {
 
 func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	vm := s.app.GetViewModel()
+	statuses := s.app.GetModStatusController().GetModStatuses()
 
 	// Initialize a checkbox for every mod once the mod list is known.
 	if !s.statesInitialized && vm.IsReady {
@@ -57,7 +58,9 @@ func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layo
 			}
 		}
 		for _, id := range vm.Mods.All {
-			s.checkboxStates[id] = &widget.Bool{}
+			s.checkboxStates[id] = &widget.Bool{
+				Value: statuses[id].Override == ui.ModOverrideForceEnabled,
+			}
 			s.checkboxClicks[id] = &widget.Clickable{}
 		}
 		s.statesInitialized = true

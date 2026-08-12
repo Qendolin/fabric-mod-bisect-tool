@@ -86,6 +86,25 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 
 	// Loading was successful, now create the runtime services.
 	stateMgr := mods.NewStateManager(allMods, providers)
+
+	// The loader's bridge mod must be active for every test: force-enable it so
+	// it is never a search candidate and the search doesn't spend tests toggling
+	// it (which would roughly double the number of tests).
+	var bridgeID string
+	switch a.loader {
+	case mods.RunLoaderNeoForgeWithFabric:
+		bridgeID = "connector"
+	case mods.RunLoaderFabricWithNeoForge:
+		bridgeID = "kilt"
+	}
+	if bridgeID != "" {
+		if infos := providers[bridgeID]; len(infos) > 0 {
+			bridgeMod := infos[0].TopLevelModID
+			logging.Infof("App: Force-enabling bridge mod %s for loader %s.", bridgeMod, a.loader)
+			stateMgr.SetForceEnabled(bridgeMod, true)
+		}
+	}
+
 	activator := mods.NewModActivator(a.adapter, allMods)
 
 	svc, err := bisect.NewService(stateMgr, activator)
