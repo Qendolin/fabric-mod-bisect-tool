@@ -32,6 +32,10 @@ type neoForgeMod struct {
 type neoForgeDependency struct {
 	ModID        string `toml:"modId"`
 	Type         string `toml:"type"`
+	// Mandatory is used by legacy Forge mods.toml, where dependencies declare
+	// "mandatory" instead of "type". A pointer distinguishes an explicit
+	// "mandatory = false" from an omitted field (which defaults to required).
+	Mandatory    *bool  `toml:"mandatory"`
 	VersionRange string `toml:"versionRange"`
 }
 
@@ -242,7 +246,14 @@ func (p *ModParser) parseNeoForgeModToml(zipReader *zip.Reader, manifest modMani
 
 			depType := dep.Type
 			if depType == "" {
-				depType = "required"
+				// Legacy Forge mods.toml uses "mandatory" instead of "type".
+				// An omitted mandatory flag defaults to required, matching both
+				// NeoForge's empty-type default and Forge's default-true.
+				if dep.Mandatory == nil || *dep.Mandatory {
+					depType = "required"
+				} else {
+					depType = "optional"
+				}
 			}
 
 			switch depType {

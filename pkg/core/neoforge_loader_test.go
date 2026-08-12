@@ -810,6 +810,67 @@ versionRange = "[1.0,)"`},
 		}
 	})
 
+	t.Run("Legacy_Forge_Mandatory_Dependency_Tracking", func(t *testing.T) {
+		logging.Infof("Test: Running test case %q", t.Name())
+		modsDir := newTestDir(t.Name())
+		defer os.RemoveAll(modsDir)
+		specs := map[string]neoForgeModSpec{
+			"req_dep-1.0.jar": {TOMLContent: `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "req_dep"
+version = "1.0"
+displayName = "Req Dep"`},
+			"opt_dep-1.0.jar": {TOMLContent: `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "opt_dep"
+version = "1.0"
+displayName = "Opt Dep"`},
+			"default_dep-1.0.jar": {TOMLContent: `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "default_dep"
+version = "1.0"
+displayName = "Default Dep"`},
+			"legacy_mod-1.0.jar": {TOMLContent: `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "legacy_mod"
+version = "1.0"
+displayName = "Legacy Mod"
+[[dependencies.legacy_mod]]
+modId = "req_dep"
+mandatory = true
+versionRange = "[1.0,)"
+[[dependencies.legacy_mod]]
+modId = "opt_dep"
+mandatory = false
+versionRange = "[1.0,)"
+[[dependencies.legacy_mod]]
+modId = "default_dep"
+versionRange = "[1.0,)"`},
+		}
+		setupDummyNeoForgeMods(t, modsDir, specs)
+		loadedMods, _ := loadAndCheckNeoForge(t, modsDir, []string{"req_dep", "opt_dep", "default_dep", "legacy_mod"}, 4, false)
+		if loadedMods != nil {
+			if legacyMod, ok := loadedMods["legacy_mod"]; ok {
+				if deps, ok := legacyMod.Metadata.Depends["req_dep"]; !ok || len(deps) == 0 {
+					t.Error("legacy_mod should depend on req_dep (mandatory=true)")
+				}
+				if _, ok := legacyMod.Metadata.Depends["opt_dep"]; ok {
+					t.Error("legacy_mod should not require opt_dep (mandatory=false)")
+				}
+				if recs, ok := legacyMod.Metadata.Recommends["opt_dep"]; !ok || len(recs) == 0 {
+					t.Error("legacy_mod should recommend opt_dep (mandatory=false)")
+				}
+				if deps, ok := legacyMod.Metadata.Depends["default_dep"]; !ok || len(deps) == 0 {
+					t.Error("legacy_mod should depend on default_dep (mandatory omitted defaults to required)")
+				}
+			}
+		}
+	})
+
 	// ============================================================================
 	// SECTION 4: ERROR HANDLING TESTS
 	// ============================================================================

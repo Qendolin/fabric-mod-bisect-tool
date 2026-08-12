@@ -2,8 +2,11 @@ package app
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/bisect"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
@@ -100,6 +103,21 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 	// to do with each of them.
 	report := a.bisectSvc.ReconcileState()
 	if len(report.ModsUnresolvable) > 0 {
+		modIDs := make([]string, 0, len(report.ModsUnresolvable))
+		for modID := range report.ModsUnresolvable {
+			modIDs = append(modIDs, modID)
+		}
+		sort.Strings(modIDs)
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "App: %d mod(s) are unresolvable:", len(modIDs))
+		allMods := a.bisectSvc.StateManager().GetAllMods()
+		for _, modID := range modIDs {
+			refs := formatDependencyRefs(allMods[modID], report.ModsUnresolvable[modID])
+			fmt.Fprintf(&sb, "\n  - %s: missing dependencies %s", modID, strings.Join(refs, ", "))
+		}
+		logging.Infof("%s", sb.String())
+
 		a.view.OnUnresolvableMods(a.buildUnresolvableModInfos(report.ModsUnresolvable))
 		return
 	}

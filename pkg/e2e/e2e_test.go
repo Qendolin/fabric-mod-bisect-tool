@@ -196,6 +196,40 @@ func TestUnresolvableModsAtLoad(t *testing.T) {
 	}
 }
 
+// TestUnresolvableModsLoggedAtLoad asserts that the unresolvable mods found at
+// load are logged multiline together with their failing dependencies.
+func TestUnresolvableModsLoggedAtLoad(t *testing.T) {
+	mainLogger := logging.NewLogger()
+	logging.SetDefault(mainLogger)
+
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0", "depends": {"nonexistent": ">=1.0"}}`},
+	}
+	modsDir := t.TempDir()
+	setupDummyMods(t, modsDir, specs)
+
+	a := app.NewApp(mainLogger, &app.CLIArgs{NoEmbeddedOverrides: true})
+	mock := NewMockView()
+	a.SetView(mock)
+	a.StartLoadingProcess(modsDir, mods.RunLoaderFabric)
+
+	mock.WaitUnresolvable(t, timeout)
+
+	var found bool
+	for _, e := range mainLogger.Store().GetAll() {
+		if strings.Contains(e.Message, "mod(s) are unresolvable") &&
+			strings.Contains(e.Message, "mod_c") &&
+			strings.Contains(e.Message, "nonexistent (>=1.0)") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected a multiline unresolvable log mentioning mod_c and its failing dependency 'nonexistent (>=1.0)'")
+	}
+}
+
 // TestUnresolvableModsDisableAtLoad asserts that choosing to disable an
 // unresolvable mod at load keeps it excluded from the search.
 func TestUnresolvableModsDisableAtLoad(t *testing.T) {

@@ -194,7 +194,12 @@ func (p *ModParser) parseModMetadataFromReader(zipReader *zip.Reader, jarIdentif
 	}
 
 	if p.RunLoader == RunLoaderNeoForgeWithFabric && (manifest.Loader == ManifestLoaderFabric || manifest.Loader == ManifestLoaderQuilt) {
-		logBuffer.add(logging.LevelWarn, "ModLoader: (Neo)Forge parsing is enabled but %s is missing a (neo)forge.mods.toml and will fall back to %s parsing.", jarIdentifier, manifest.Loader)
+		// Warn once per nested subtree: a Fabric container with nested Fabric
+		// mods would otherwise spam one warning per jar.
+		if !logBuffer.warnedFallback {
+			logBuffer.add(logging.LevelWarn, "ModLoader: (Neo)Forge parsing is enabled but %s is missing a (neo)forge.mods.toml and will fall back to %s parsing.", jarIdentifier, manifest.Loader)
+			logBuffer.warnedFallback = true
+		}
 	}
 
 	if manifest.Loader == ManifestLoaderNeoForge {

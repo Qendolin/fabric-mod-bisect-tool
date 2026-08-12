@@ -30,12 +30,18 @@ type bufferedLog struct {
 }
 
 // logBuffer is a slice of bufferedLogs with a helper method for appending.
-// This makes the calling code in the parser much cleaner.
-type logBuffer []bufferedLog
+// It is created once per top-level JAR and shared across the entire nested
+// subtree, so per-subtree guards (e.g. warnedFallback) stay consistent.
+type logBuffer struct {
+	entries []bufferedLog
+	// warnedFallback records whether the "(Neo)Forge parsing is enabled but ..."
+	// warning has already been emitted for this subtree.
+	warnedFallback bool
+}
 
 // add formats and appends a new log entry to the buffer.
 func (b *logBuffer) add(level logging.LogLevel, format string, v ...interface{}) {
-	*b = append(*b, bufferedLog{Level: level, Message: fmt.Sprintf(format, v...)})
+	b.entries = append(b.entries, bufferedLog{Level: level, Message: fmt.Sprintf(format, v...)})
 }
 
 // task to be processed by a worker goroutine.
@@ -169,7 +175,7 @@ func (ml *ModLoader) parseJarFilesConcurrently(filesToProcess []os.DirEntry, mod
 	for res := range results {
 		// Drain the log buffer from the worker first. This ensures log messages
 		// appear before the final status message for that file.
-		for _, logEntry := range res.logs {
+		for _, logEntry := range res.logs.entries {
 			switch logEntry.Level {
 			case logging.LevelDebug:
 				logging.Debug(logEntry.Message)
