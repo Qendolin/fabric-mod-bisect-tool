@@ -163,7 +163,7 @@ func containsConnectorModuleName(f *zip.File) bool {
 	if err != nil {
 		return false
 	}
-	return bytes.Contains(content, []byte("org.sinytra.connector"))
+	return bytes.Contains(content, []byte("Automatic-Module-Name: dev.su5ed.sinytra.connector")) || bytes.Contains(content, []byte("Automatic-Module-Name: org.sinytra.connector"))
 }
 
 // isKilt reports whether a fabric.mod.json belongs to the Kilt bridge mod.
