@@ -151,10 +151,13 @@ def build_darwin(
     # gogio produces <name>.app in project_dir; its intermediate zip lives in a
     # temp dir that is deleted. Package the .app ourselves with ditto (preserves
     # resource forks / extended attributes that plain zip drops).
-    app = project_dir / "Mod Bisect Tool.app"
+    app = project_dir / "Mod-Bisect-Tool.app"
     gogio_build("macos", goarch, icon, str(app), project_dir, app_id)
     if not app.exists():
         raise FileNotFoundError(f"gogio did not produce the expected .app {app}")
+
+    # Sign the bundle ad-hoc before zipping
+    run("codesign", "--force", "--deep", "--sign", "-", str(app))
 
     output = dist / f"mod-bisect-gui-{git_tag}-darwin-{goarch}.zip"
     run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(output))
