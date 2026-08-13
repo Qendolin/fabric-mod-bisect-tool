@@ -144,6 +144,12 @@ def build_windows(
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 
+# Oldest macOS the built app claims to support. Used both as the compiler's
+# MACOSX_DEPLOYMENT_TARGET and as Info.plist's LSMinimumSystemVersion, so the
+# two stay in sync. 11.0 (Big Sur) is the oldest version that supports Apple
+# Silicon and Gio's Metal backend.
+MACOS_MIN_VERSION = "11.0"
+
 
 def build_darwin(
     goarch: str, git_tag: str, project_dir: Path, dist: Path, icon: Path, app_id: str
@@ -151,10 +157,53 @@ def build_darwin(
     # gogio produces <name>.app in project_dir; its intermediate zip lives in a
     # temp dir that is deleted. Package the .app ourselves with ditto (preserves
     # resource forks / extended attributes that plain zip drops).
+    #
+    # MACOSX_DEPLOYMENT_TARGET is set explicitly below because, without it,
+    # clang (invoked by gogio for the cgo parts) defaults the deployment
+    # target to whatever SDK ships on the runner (e.g. "26.5"), which stamps
+    # LC_BUILD_VERSION's minos as that same version. Any user not on that
+    # exact-or-newer macOS then gets a misleading "You can't use this version
+    # of the application ... with this version of macOS" error even though
+    # the binary itself is otherwise fine.
     app = project_dir / "Mod-Bisect-Tool.app"
-    gogio_build("macos", goarch, icon, str(app), project_dir, app_id)
+    gogio_build(
+        "macos",
+        goarch,
+        icon,
+        str(app),
+        project_dir,
+        app_id,
+        extra_env={"MACOSX_DEPLOYMENT_TARGET": MACOS_MIN_VERSION},
+    )
     if not app.exists():
         raise FileNotFoundError(f"gogio did not produce the expected .app {app}")
+
+    # gogio's Info.plist template only writes CFBundleExecutable,
+    # CFBundleIconFile, CFBundleIdentifier, NSHighResolutionCapable, and a
+    # wrong CFBundlePackageType ("BNDL" instead of "APPL" — BNDL means
+    # loadable bundle/plugin, not launchable app, and is what causes macOS to
+    # refuse to open it). Fill in the rest of the conventional fields too.
+    # `plutil -replace` adds a key if it's absent and overwrites it if
+    # present, so this is safe regardless of what gogio already wrote.
+    version = git_tag.lstrip("v") or "0.0.0"
+    plist_fields = {
+        "CFBundlePackageType": "APPL",
+        "CFBundleName": "Mod Bisect Tool",
+        "CFBundleDisplayName": "Mod Bisect Tool",
+        "CFBundleVersion": version,
+        "CFBundleShortVersionString": version,
+        "CFBundleInfoDictionaryVersion": "6.0",
+        "CFBundleSignature": "????",
+        "CFBundleDevelopmentRegion": "en",
+        "NSHumanReadableCopyright": "Copyright (c) Qendolin",
+        # Matches MACOSX_DEPLOYMENT_TARGET above, so Finder/Gatekeeper agree
+        # with what the binary itself was actually built to support.
+        "LSMinimumSystemVersion": MACOS_MIN_VERSION,
+        "LSApplicationCategoryType": "public.app-category.utilities",
+    }
+    plist_path = app / "Contents" / "Info.plist"
+    for key, value in plist_fields.items():
+        run("plutil", "-replace", key, "-string", value, str(plist_path))
 
     # Sign the bundle ad-hoc before zipping
     run("codesign", "--force", "--deep", "--sign", "-", str(app))
