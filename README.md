@@ -31,10 +31,11 @@ This tool is like a smart detective for your mods folder. Instead of you having 
     * **Windows:** `windows-amd64`
     * **Linux:** `linux-amd64`
     * **macOS (Apple Silicon):** `darwin-arm64`
-3.  On Linux or macOS, you may need to make the file executable by running this command in your terminal:
+3.  On Linux or macOS, you need to make the file executable by running this command in your terminal:
     ```bash
-    chmod +x ./your-downloaded-file-name
+    chmod +x ./mod-bisect-*
     ```
+    On macOS you may also need to run `xattr -r -d Mod-Bisect-Tool.app` to remove the quarantine
 4.  Place the tool in a convenient location. You can run it from anywhere!
 
 On windows you'll likely get a blue warning that you need to dismiss. (*This warning means that the application has an unknown publisher. It doesn't mean that it is unsafe to run!*)

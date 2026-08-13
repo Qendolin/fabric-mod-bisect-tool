@@ -130,6 +130,9 @@ jobs:
           cat << EOF > new_release_notes.md
           ## Quick Download
 
+          > [!IMPORTANT]
+          > **Note for Mac/Linux users:** After downloading, you need to grant execution permissions: \`chmod +x mod-bisect-*\` or remove the quarantine attribute: \`xattr -d Mod-Bisect-Tool.app\` (macOS only).
+
           Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
 
           | Platform | Architecture | Recommended GUI Download | Recommended TUI Download |
@@ -150,8 +153,6 @@ jobs:
 
           ### Legacy & Other Builds
           Check the raw **Assets** checklist at the very bottom of this page for alternative formats.
-
-          > ⚠️ **Note for Mac/Linux users:** After downloading, you may need to grant execution permissions: \`chmod +x <filename>\`.
 
           ---
 
