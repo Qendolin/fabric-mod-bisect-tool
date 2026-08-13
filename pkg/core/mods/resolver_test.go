@@ -64,7 +64,7 @@ func TestDependencyWithORPredicates(t *testing.T) {
 		}},
 	}
 
-	dr := NewDependencyResolver(allMods, potentialProviders)
+	dr := NewDependencyResolver(allMods, potentialProviders, RunLoaderFabric)
 
 	// Only nvidium is initially targeted; sodium should be pulled in as a
 	// dependency even though it only matches one of the two predicates.
@@ -129,7 +129,7 @@ func TestDependencyWithUnmatchedORPredicates(t *testing.T) {
 		}},
 	}
 
-	dr := NewDependencyResolver(allMods, potentialProviders)
+	dr := NewDependencyResolver(allMods, potentialProviders, RunLoaderFabric)
 
 	target := sets.MakeSet([]string{"nvidium"})
 	statuses := map[string]ModStatus{

@@ -85,7 +85,8 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 	}
 
 	// Loading was successful, now create the runtime services.
-	stateMgr := mods.NewStateManager(allMods, providers)
+	resolver := mods.NewDependencyResolver(allMods, providers, a.loader)
+	stateMgr := mods.NewStateManager(allMods, resolver)
 
 	// The loader's bridge mod must be active for every test: force-enable it so
 	// it is never a search candidate and the search doesn't spend tests toggling

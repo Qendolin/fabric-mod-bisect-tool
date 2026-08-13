@@ -196,7 +196,8 @@ func TestBisectService_Integration(t *testing.T) {
 				t.Fatalf("LoadMods failed: %v", err)
 			}
 
-			stateMgr := mods.NewStateManager(allMods, providers)
+			resolver := mods.NewDependencyResolver(allMods, providers, loader.RunLoader)
+			stateMgr := mods.NewStateManager(allMods, resolver)
 			activator := mods.NewModActivator(&adapter, allMods)
 
 			if tc.stateManagerSetup != nil {
@@ -255,7 +256,8 @@ func TestBisectService_Enumeration(t *testing.T) {
 	}
 
 	// Initialize the service. NewService implicitly calls ResetSearch.
-	stateMgr := mods.NewStateManager(allMods, providers)
+	resolver := mods.NewDependencyResolver(allMods, providers, loader.RunLoader)
+	stateMgr := mods.NewStateManager(allMods, resolver)
 	activator := mods.NewModActivator(&adapter, allMods)
 	svc, err := bisect.NewService(stateMgr, activator)
 	if err != nil {

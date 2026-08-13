@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 )
 
 const (
@@ -687,6 +688,51 @@ displayName = "Shared Mod"`},
 			}
 			if winner.Metadata.Loader != mods.ManifestLoaderNeoForge {
 				t.Errorf("expected the winner to be the (Neo)Forge mod, got %q", winner.Metadata.Loader)
+			}
+		})
+	}
+}
+
+// TestModIDDashUnderscoreNormalizationInCrossLoaders verifies that when cross-loading is enabled,
+// mod IDs with '-' or '_' are normalized (stripped of '-' and '_') for dependency resolution in potentialProviders,
+// while actual parsed mod IDs remain unchanged.
+func TestModIDDashUnderscoreNormalizationInCrossLoaders(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		loader mods.RunLoader
+	}{
+		{"Kilt", mods.RunLoaderFabricWithNeoForge},
+		{"Connector", mods.RunLoaderNeoForgeWithFabric},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			modsDir := t.TempDir()
+			setupDummyMods(t, modsDir, map[string]modSpec{
+				"mod_a.jar": {JSONContent: `{"id": "my_mod_a", "version": "1.0", "depends": {"other-mod-b": ">=1.0"}}`},
+			})
+			setupDummyNeoForgeMods(t, modsDir, map[string]neoForgeModSpec{
+				"mod_b.jar": {TOMLContent: `modLoader = "javafml"
+loaderVersion = "[1,)"
+[[mods]]
+modId = "othermodb"
+version = "1.0"
+displayName = "Other Mod B"`},
+			})
+
+			allMods, providers, err := loadWith(t, modsDir, tc.loader)
+			if err != nil {
+				t.Fatalf("LoadMods failed: %v", err)
+			}
+			assertLoaded(t, allMods, "my_mod_a", "othermodb")
+
+			resolver := mods.NewDependencyResolver(allMods, providers, tc.loader)
+			stateMgr := mods.NewStateManager(allMods, resolver)
+			res := stateMgr.ResolveEffectiveSet(sets.MakeSet([]string{"my_mod_a"}))
+
+			if _, ok := res.EffectiveSet["my_mod_a"]; !ok {
+				t.Errorf("expected my_mod_a in effective set, got %v", res.EffectiveSet)
+			}
+			if _, ok := res.EffectiveSet["othermodb"]; !ok {
+				t.Errorf("expected othermodb in effective set, got %v", res.EffectiveSet)
 			}
 		})
 	}

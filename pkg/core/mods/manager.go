@@ -9,8 +9,7 @@ import (
 // StateManager provides a way to manage the state of mods.
 type StateManager struct {
 	// The canonical source of all static mod data.
-	allMods            map[string]*Mod
-	potentialProviders PotentialProvidersMap
+	allMods map[string]*Mod
 
 	// Stores the runtime status for each mod, mapping mod ID to its status.
 	modStatuses map[string]*ModStatus
@@ -28,7 +27,7 @@ type StateManager struct {
 
 // NewStateManager creates a new mod state manager.
 // It initializes the mod statuses based on the initially loaded mod data.
-func NewStateManager(allMods map[string]*Mod, potentialProviders PotentialProvidersMap) *StateManager {
+func NewStateManager(allMods map[string]*Mod, resolver *DependencyResolver) *StateManager {
 	modStatuses := make(map[string]*ModStatus, len(allMods))
 	for id, mod := range allMods {
 		modStatuses[id] = &ModStatus{
@@ -39,10 +38,9 @@ func NewStateManager(allMods map[string]*Mod, potentialProviders PotentialProvid
 		}
 	}
 	return &StateManager{
-		allMods:            allMods,
-		modStatuses:        modStatuses,
-		potentialProviders: potentialProviders,
-		resolver:           NewDependencyResolver(allMods, potentialProviders),
+		allMods:     allMods,
+		modStatuses: modStatuses,
+		resolver:    resolver,
 	}
 }
 

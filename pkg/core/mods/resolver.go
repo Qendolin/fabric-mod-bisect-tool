@@ -16,6 +16,7 @@ import (
 type DependencyResolver struct {
 	allMods            map[string]*Mod
 	potentialProviders PotentialProvidersMap
+	loader             RunLoader
 }
 
 // resolutionSession holds the state for a single dependency resolution operation.
@@ -24,6 +25,7 @@ type resolutionSession struct {
 	// Static data from the parent resolver
 	allMods            map[string]*Mod
 	potentialProviders PotentialProvidersMap
+	loader             RunLoader
 
 	// Per-call dynamic data
 	modStatuses      map[string]ModStatus
@@ -39,9 +41,9 @@ type resolutionSession struct {
 // UnresolvableDependency describes a dependency that could not be satisfied
 // during a resolution attempt.
 type UnresolvableDependency struct {
-	DepID           string
-	RequiringModID  string
-	Predicates      []*version.VersionPredicate
+	DepID          string
+	RequiringModID string
+	Predicates     []*version.VersionPredicate
 }
 
 // String formats the dependency for logging.
@@ -61,10 +63,11 @@ type ResolutionResult struct {
 }
 
 // NewDependencyResolver creates a new DependencyResolver service.
-func NewDependencyResolver(allMods map[string]*Mod, potentialProviders PotentialProvidersMap) *DependencyResolver {
+func NewDependencyResolver(allMods map[string]*Mod, potentialProviders PotentialProvidersMap, loader RunLoader) *DependencyResolver {
 	return &DependencyResolver{
 		allMods:            allMods,
 		potentialProviders: potentialProviders,
+		loader:             loader,
 	}
 }
 
@@ -76,6 +79,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 	s := &resolutionSession{
 		allMods:            dr.allMods,
 		potentialProviders: dr.potentialProviders,
+		loader:             dr.loader,
 		modStatuses:        modStatuses,
 		effectiveSet:       make(map[string]*Mod),
 		resolutionPath:     make(map[string]ResolutionInfo),
@@ -255,9 +259,9 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 	}
 
 	s.unresolvableDeps[depID] = UnresolvableDependency{
-		DepID:           depID,
-		RequiringModID:  requiringModID,
-		Predicates:      predicates,
+		DepID:          depID,
+		RequiringModID: requiringModID,
+		Predicates:     predicates,
 	}
 	// Only set the failure reason if one hasn't already been set by a deeper, more specific error.
 	if !s.resolutionFailed {
@@ -268,7 +272,7 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 
 // findBestProviders finds all activatable mods that provide a given dependency and satisfy the version predicates.
 func (s *resolutionSession) findBestProviders(depID string, predicates []*version.VersionPredicate) []*ProviderInfo {
-	providerCandidates, ok := s.potentialProviders[depID]
+	providerCandidates, ok := getProvidersForDep(s.potentialProviders, depID, s.loader)
 	if !ok || len(providerCandidates) == 0 {
 		return nil
 	}
@@ -512,7 +516,7 @@ func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates
 			// To find the root cause, we look at the potential providers for the dependencies that just failed.
 			for _, depID := range failedDeps {
 				predicates := mod.Metadata.Depends[depID]
-				if providers, ok := dr.potentialProviders[depID]; ok {
+				if providers, ok := getProvidersForDep(dr.potentialProviders, depID, dr.loader); ok {
 					for _, p := range providers {
 						// Check if this provider actually satisfied the version requirements
 						if checkAnyPredicatesSatisfied(predicates, p.VersionOfProvidedItem) {
@@ -650,7 +654,7 @@ func (dr *DependencyResolver) calculateDirectlyUnresolvable(availableMods sets.S
 // findValidProviderInSet searches for at least one provider that satisfies the dependency,
 // is available in the given set, and matches at least one version predicate.
 func (dr *DependencyResolver) findValidProviderInSet(depID string, predicates []*version.VersionPredicate, availableMods sets.Set) bool {
-	providerCandidates, found := dr.potentialProviders[depID]
+	providerCandidates, found := getProvidersForDep(dr.potentialProviders, depID, dr.loader)
 	if !found {
 		return false // No potential providers exist for this dependency at all.
 	}
@@ -681,4 +685,26 @@ func checkAnyPredicatesSatisfied(predicates []*version.VersionPredicate, v versi
 		}
 	}
 	return false
+}
+
+// getProvidersForDep retrieves providers for a dependency, supporting cross-format ID matching for multi loaders.
+func getProvidersForDep(potentialProviders PotentialProvidersMap, depID string, loader RunLoader) ([]ProviderInfo, bool) {
+	if providers, ok := potentialProviders[depID]; ok {
+		return providers, true
+	}
+	if loader == RunLoaderFabricWithNeoForge || loader == RunLoaderNeoForgeWithFabric {
+		if providers, ok := potentialProviders[strings.ReplaceAll(depID, "-", "_")]; ok {
+			return providers, true
+		}
+		if providers, ok := potentialProviders[strings.ReplaceAll(depID, "-", "")]; ok {
+			return providers, true
+		}
+		if providers, ok := potentialProviders[strings.ReplaceAll(depID, "_", "-")]; ok {
+			return providers, true
+		}
+		if providers, ok := potentialProviders[strings.ReplaceAll(depID, "_", "")]; ok {
+			return providers, true
+		}
+	}
+	return nil, false
 }
