@@ -216,8 +216,8 @@ func TestModLoader(t *testing.T) {
 		// The loader must relocate the disabled twin (foo-dup) so the pair is
 		// treated as ordinary duplicates instead of clobbering each other.
 		specs := map[string]modSpec{
-			"conf_mod.jar":           {JSONContent: `{"id": "conf_mod", "version": "1.0"}`},
-			"conf_mod.jar.disabled":  {JSONContent: `{"id": "conf_mod", "version": "2.0"}`},
+			"conf_mod.jar":          {JSONContent: `{"id": "conf_mod", "version": "1.0"}`},
+			"conf_mod.jar.disabled": {JSONContent: `{"id": "conf_mod", "version": "2.0"}`},
 		}
 		setupDummyMods(t, modsDir, specs)
 
