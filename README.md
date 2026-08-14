@@ -35,7 +35,7 @@ This tool is like a smart detective for your mods folder. Instead of you having 
     ```bash
     chmod +x ./mod-bisect-*
     ```
-    On macOS you may also need to run `xattr -r -d Mod-Bisect-Tool.app` to remove the quarantine
+    On macOS you may also need to run `xattr -dr com.apple.quarantine Mod-Bisect-Tool.app` to remove the quarantine
 4.  Place the tool in a convenient location. You can run it from anywhere!
 
 On windows you'll likely get a blue warning that you need to dismiss. (*This warning means that the application has an unknown publisher. It doesn't mean that it is unsafe to run!*)

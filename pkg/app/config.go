@@ -6,6 +6,21 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 )
 
+const AppCommonName = "mod-bisect-tool"
+const AppGuiName = "mod-bisect-gui"
+const AppTuiName = "mod-bisect-tui"
+
+const (
+	AppDistributionDevelopment   = "development"
+	AppDistributionWindowsBinary = "windows-binary"
+	AppDistributionLinuxBinary   = "linux-binary"
+	AppDistributionLinuxAppImage = "linux-appimage"
+	AppDistributionDarwinBinary  = "darwin-binary"
+	AppDistributionDarwinApp     = "darwin-app"
+)
+
+var AppDistribution = AppDistributionDevelopment
+
 // CLIArgs holds all command-line arguments passed to the application.
 type CLIArgs struct {
 	NoEmbeddedOverrides bool

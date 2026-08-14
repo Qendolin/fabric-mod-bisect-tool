@@ -210,6 +210,17 @@ func (a *App) loadAndMergeOverrides(modsPath string) *mods.DependencyOverrides {
 
 	cwd, _ := os.Getwd()
 	cwdPath := filepath.Join(cwd, "fabric_loader_dependencies.json")
+
+	if AppDistribution == AppDistributionDarwinApp {
+		// Reading from the cwd for an installed app doesn't make sense.
+		home, err := os.UserHomeDir()
+		if err != nil {
+			logging.Warnf("App: Could not determine user home directory: %v", err)
+		} else {
+			cwdPath = filepath.Join(home, "Library", "Application Support", AppCommonName, "fabric_loader_dependencies.json")
+		}
+	}
+
 	if cwdOverrides, err := mods.LoadDependencyOverridesFromPath(cwdPath, mods.OverrideSourceUserProvided); err != nil {
 		if !os.IsNotExist(err) {
 			logging.Warnf("App: Could not load dependency overrides from '%s': %v", cwdPath, err)

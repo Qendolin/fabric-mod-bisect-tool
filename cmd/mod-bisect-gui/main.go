@@ -3,13 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
 	gioapp "gioui.org/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/guiapp"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
+	"github.com/ncruces/zenity"
 )
 
 func main() {
@@ -37,19 +36,16 @@ func main() {
 		cliArgs := app.ParseCLIArgs()
 
 		mainLogger := logging.NewLogger()
-		if err := os.MkdirAll(cliArgs.LogDir, 0755); err != nil {
-			os.Stderr.WriteString(fmt.Sprintf("Failed to create log directory: %v\n", err))
-			os.Exit(1)
-		}
-		logFileName := fmt.Sprintf("bisect-gui-%s.log", time.Now().Format("2006-01-02_15-04-05"))
-		logPath := filepath.Join(cliArgs.LogDir, logFileName)
 
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		logFile, logPath, err := logging.OpenLogFile(app.AppCommonName, app.AppGuiName, cliArgs.LogDir)
 		if err != nil {
-			os.Stderr.WriteString("Failed to open log file: " + err.Error())
+			fmt.Fprintf(os.Stderr, "Fatal: could not open a log file: %v\n", err)
+			zenity.Error(err.Error(), zenity.Title("Failed to create log file"))
 			os.Exit(1)
 		}
 		defer logFile.Close()
+		fmt.Fprintf(os.Stderr, "Logging to %s\n", logPath)
+
 		mainLogger.SetWriter(logFile)
 		logging.SetDefault(mainLogger)
 

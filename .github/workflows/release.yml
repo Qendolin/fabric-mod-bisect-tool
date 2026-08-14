@@ -26,6 +26,7 @@ jobs:
           binary_name: mod-bisect-tui
           compress_assets: OFF
           md5sum: FALSE
+          ldflags: -X 'github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=${{ matrix.goos }}-binary'
 
   # --- JOB 2: Build Standalone GUI Binaries ---
   releases-matrix-gui:
@@ -131,7 +132,7 @@ jobs:
           ## Quick Download
 
           > [!IMPORTANT]
-          > **Note for Mac/Linux users:** After downloading, you need to grant execution permissions: \`chmod +x mod-bisect-*\` or remove the quarantine attribute: \`xattr -d Mod-Bisect-Tool.app\` (macOS only).
+          > **Note for Mac/Linux users:** After downloading, you need to grant execution permissions: \`chmod +x mod-bisect-*\` or remove the quarantine attribute: \`xattr -dr com.apple.quarantine Mod-Bisect-Tool.app\` (macOS only).
 
           Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
 

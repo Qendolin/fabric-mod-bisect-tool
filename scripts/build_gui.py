@@ -75,7 +75,16 @@ def build_linux(
     bin_dir = appdir / "usr" / "bin"
     bin_dir.mkdir(parents=True)
 
-    run("go", "build", "-o", str(bin_dir / "mod-bisect-gui"), ".", cwd=project_dir)
+    run(
+        "go",
+        "build",
+        "-ldflags",
+        "-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=linux-appimage",
+        "-o",
+        str(bin_dir / "mod-bisect-gui"),
+        ".",
+        cwd=project_dir,
+    )
 
     # Write AppRun — resolves the binary path relative to the AppImage at runtime.
     apprun = appdir / "AppRun"
@@ -137,7 +146,13 @@ def build_windows(
     # embeds the icon and links with -H windowsgui.
     exe = project_dir / "mod-bisect-gui.exe"
     gogio_build(
-        "windows", goarch, icon, str(exe), project_dir, app_id, ldflags="-H windowsgui"
+        "windows",
+        goarch,
+        icon,
+        str(exe),
+        project_dir,
+        app_id,
+        ldflags="-H windowsgui -X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=windows-binary",
     )
     shutil.move(exe, dist / f"mod-bisect-gui-{git_tag}-windows-{goarch}.exe")
 
@@ -173,6 +188,7 @@ def build_darwin(
         str(app),
         project_dir,
         app_id,
+        ldflags="-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=darwin-app",
         extra_env={"MACOSX_DEPLOYMENT_TARGET": MACOS_MIN_VERSION},
     )
     if not app.exists():
@@ -195,7 +211,7 @@ def build_darwin(
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleSignature": "????",
         "CFBundleDevelopmentRegion": "en",
-        "NSHumanReadableCopyright": "Copyright (c) Qendolin",
+        "NSHumanReadableCopyright": "Copyright (c) Qendolin 2026",
         # Matches MACOSX_DEPLOYMENT_TARGET above, so Finder/Gatekeeper agree
         # with what the binary itself was actually built to support.
         "LSMinimumSystemVersion": MACOS_MIN_VERSION,

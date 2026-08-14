@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"syscall"
-	"time"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
@@ -104,20 +102,13 @@ func handleShutdown(a *app.App, tuiApp *tuiapp.App, shutdownCh chan os.Signal, c
 func setupLogging(cliArgs *app.CLIArgs) (*logging.Logger, *os.File) {
 	mainLogger := logging.NewLogger()
 
-	if err := os.MkdirAll(cliArgs.LogDir, 0755); err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("Failed to create log directory: %v\n", err))
-		os.Exit(1)
-	}
-
-	logFileName := fmt.Sprintf("bisect-tui-%s.log", time.Now().Format("2006-01-02_15-04-05"))
-	logPath := filepath.Join(cliArgs.LogDir, logFileName)
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	logFile, logPath, err := logging.OpenLogFile(app.AppCommonName, app.AppTuiName, cliArgs.LogDir)
 	if err != nil {
-		// Can't use the logger yet, so print to stderr.
-		os.Stderr.WriteString("Failed to open log file: " + err.Error())
+		fmt.Fprintf(os.Stderr, "Fatal: could not open a log file: %v\n", err)
 		os.Exit(1)
 	}
+	defer logFile.Close()
+	fmt.Fprintf(os.Stderr, "Logging to %s\n", logPath)
 
 	mainLogger.SetWriter(logFile)
 	logging.SetDefault(mainLogger)
