@@ -139,19 +139,19 @@ jobs:
 
           Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
 
-          | Platform | Architecture | Recommended GUI Download | Recommended TUI Download |
+          | Platform | Architecture | GUI (Graphical) | TUI (Terminal) |
           | :--- | :--- | :--- | :--- |
-          | **Windows** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
-          | **Linux** | 64-bit (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
-          | **macOS** | Apple Silicon (arm64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
-          | **macOS** | Intel (amd64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
+          | **Windows** | x86_64 / amd64        | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-amd64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-amd64.exe) |
+          | **Linux**   | x86_64 / amd64        | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-amd64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-amd64) |
+          | **macOS**   | Apple Silicon (arm64) | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-arm64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-arm64) |
+          | **macOS**   | Intel (x86_64)        | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-darwin-amd64.zip) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-darwin-amd64) |
 
           ### Other Versions
 
-          | Platform | Architecture | GUI Download | TUI Download |
+          | Platform | Architecture | GUI (Graphical) | TUI (Terminal) |
           | :--- | :--- | :--- | :--- |
-          | **Windows** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-arm64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-arm64.exe) |
-          | **Linux** | ARM64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-arm64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-arm64) |
+          | **Windows** | arm64 / aarch64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-windows-arm64.exe) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-windows-arm64.exe) |
+          | **Linux**   | arm64 / aarch64 | [Download](${BASE_URL}/mod-bisect-gui-${TAG}-linux-arm64.AppImage) | [Download](${BASE_URL}/mod-bisect-tui-${TAG}-linux-arm64) |
 
           ---
 
