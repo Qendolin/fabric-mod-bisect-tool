@@ -6,6 +6,24 @@ using the terminal version, see the [TUI User Guide](TUI-User-Guide.md).
 The GUI follows the same bisection process as the TUI, but is driven by buttons,
 a windowed interface, and native dialogs instead of keyboard shortcuts.
 
+## Installation
+
+1. Open the [releases page](https://github.com/Qendolin/fabric-mod-bisect-tool/releases).
+2. Download the GUI build for your platform.
+   * **Windows:** `mod-bisect-gui-<tag>-windows-amd64.exe` or `windows-arm64.exe`
+   * **Linux:** `mod-bisect-gui-<tag>-linux-amd64.AppImage` or `linux-arm64.AppImage`
+   * **macOS:** `mod-bisect-gui-<tag>-darwin-arm64.zip` or `darwin-amd64.zip`
+3. For Linux AppImages, make the file executable after downloading:
+   ```bash
+   chmod +x ./mod-bisect-gui-*.AppImage
+   ```
+   This adds the execute permission bit required by Linux desktop environments.
+4. For macOS, extract the ZIP file, then open the app bundle once. If macOS refuses to open it, remove the quarantine flag:
+   ```bash
+   xattr -dr com.apple.quarantine "Mod-Bisect-Tool.app"
+   ```
+   This clears the macOS security quarantine metadata that can block downloaded applications.
+
 ## How to Use the Tool
 
 Using the tool is a simple, guided process.
@@ -68,7 +86,8 @@ Once a test is prepared, the tool switches to a **test prompt** with the **Activ
 2.  Check if the problem still occurs. Does the game crash? Does the bug you're hunting still happen?
 3.  Return to the tool and click the button that matches the outcome:
   * **✓ Works:** The problem did *not* happen. The game loaded and worked as expected.
-  * **✗ Broken:** The problem *did* happen (e.g., the game crashed or the bug was present).
+  * **✗ Broken:** The problem *did* happen, such as a crash or a visible bug.
+  * **? Can't Tell:** The result was unclear. For example, the game crashed before you could check, or something else prevented you from observing the issue.
   * **Cancel Test:** Aborts the current test and goes back.
 
 > [!IMPORTANT]
@@ -92,3 +111,28 @@ Once the tool has found a problematic mod (or set of mods), it will show you the
   * **Restart Bisection:** begin the whole search over from scratch.
 
 ![Result screen](img/gui-result-screen.jpg)
+
+
+## Dependency Overrides
+
+Sometimes a mod author forgets to list a dependency in their metadata. This tool can add or remove those entries with a file named `fabric_loader_dependencies.json`.  
+This tool also extends the standard format with the ability to override the `provides` field, which is useful for fixing complex library conflicts.
+
+The GUI loads override files in this order:
+1. The current working directory
+2. The Minecraft `config` folder next to your `mods` folder
+3. The built-in overrides included with the tool
+
+On macOS, the GUI app bundle does not use the current working directory for this file. It looks in `~/Library/Application Support/mod-bisect-tool/fabric_loader_dependencies.json` instead.
+
+## Log Files
+
+The app creates its log file in the first folder that works, in this order:
+1. The current working directory
+2. The OS log directory:
+   * macOS: `~/Library/Logs/mod-bisect-tool`
+   * Windows: `%LOCALAPPDATA%/mod-bisect-tool/logs`
+   * Linux: `$XDG_STATE_HOME/mod-bisect-tool`, or `~/.local/state/mod-bisect-tool`
+3. The OS temp directory, under `mod-bisect-tool`
+
+If you run the macOS `.app`, it will usually not create the log in the current working directory because the app is launched from its bundle location.

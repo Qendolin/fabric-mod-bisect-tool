@@ -3,6 +3,24 @@
 This guide covers the **terminal (TUI)** version of the Mod Bisect Tool. If you
 are using the graphical version, see the [GUI User Guide](GUI-User-Guide.md).
 
+## Installation
+
+1. Open the [releases page](https://github.com/Qendolin/fabric-mod-bisect-tool/releases).
+2. Download the TUI binary matching your platform and architecture.
+   * **Windows:** `mod-bisect-tui-<tag>-windows-amd64.exe` or `windows-arm64.exe`
+   * **Linux:** `mod-bisect-tui-<tag>-linux-amd64` or `linux-arm64`
+   * **macOS:** `mod-bisect-tui-<tag>-darwin-arm64` or `darwin-amd64`
+3. If your download is a raw Linux or macOS executable, make it runnable before starting it:
+   ```bash
+   chmod +x ./mod-bisect-tui-*
+   ```
+   This adds the execute bit so the operating system will allow the program to start. Without it, the file may be saved but not run.
+4. If macOS blocks the program as downloaded from the internet, clear the quarantine attribute:
+   ```bash
+   xattr -dr com.apple.quarantine ./mod-bisect-tui-*
+   ```
+   The `xattr` command removes the macOS security flag that prevents opening downloaded apps and binaries.
+
 ## How to Use the Tool
 
 Using the tool is a simple, guided process.
@@ -16,7 +34,7 @@ When you first launch the tool, you'll see the setup screen.
 1. Enter or paste the full path to your Minecraft `mods` folder.
 2. Press the **Load Mods** button.
 
-The tool will then analyze all your mods, which may take a few moments.
+The tool will then analyze all your mods, which should only take a second.
 
 ![Setup Page](img/setup-page.jpg)
 
@@ -46,7 +64,8 @@ The tool will now show you a "Test in Progress" screen. It has just enabled a sp
 2.  Check if the problem still occurs. Does the game crash? Does the bug you're hunting still happen?
 3.  Return to the tool and click the button that matches the outcome:
   * **✓ Works:** The problem did *not* happen. The game loaded and worked as expected.
-  * **✗ Broken:** The problem *did* happen (e.g., the game crashed or the bug was present).
+  * **✗ Broken:** The problem *did* happen, such as a crash or a visible bug.
+  * **? Can't Tell:** The result was unclear. For example, the game crashed before you could check, or something else prevented you from observing the issue.
 
 > [!IMPORTANT]
 > The tool will use your answer to narrow down the search and prepare the next test. **Repeat this process** until a result is found.
@@ -89,9 +108,7 @@ You can press **`Ctrl+H`** to go to the **History** page. This page provides a d
 
 You can press **`Ctrl+L`** to go to the **Log** page. This page displays the internal log of the tool in real-time. It's primarily useful for debugging purposes or for providing information when reporting an issue to the developers. You can also find the full log file saved as `bisect-tui-YYY-MM-DD_HH-MM-SS.log` in the same directory as the executable.
 
-## Advanced Features
-
-### Command-Line Options
+## Command-Line Options
 
 You can launch the tool with these optional flags for more control.
 
@@ -100,13 +117,22 @@ You can launch the tool with these optional flags for more control.
 * `--loader <loader>`: Forces the mod loader to use: `fabric`, `neoforge`, `connector` ((Neo)Forge with Fabric via Sinytra Connector) or `kilt` (Fabric with (Neo)Forge). By default the loader is auto-detected from your mods folder.
 * `--log-dir <path>`: Lets you specify a different folder to save the `bisect-tool.log` file. For example: `--log-dir "C:\my_logs"`.
 
-### Dependency Overrides
+## Dependency Overrides
 
-Sometimes, a mod developer forgets to list a dependency in their metadata file. This tool can fix that using an override file. You can create a file named `fabric_loader_dependencies.json` to add or remove dependencies.
-
-The tool loads these files in a specific priority order (1 takes precedence over 2, etc.):
-1.  A file in the **same directory where you are running the tool**.
-2.  A file in your Minecraft instance's `config` folder (e.g., `.minecraft/config/`).
-3.  The tool's own built-in list of overrides for common mods.
-
+Sometimes a mod author forgets to list a dependency in their metadata. This tool can add or remove those entries with a file named `fabric_loader_dependencies.json`.  
 This tool also extends the standard format with the ability to override the `provides` field, which is useful for fixing complex library conflicts.
+
+The GUI loads override files in this order:
+1. The current working directory
+2. The Minecraft `config` folder next to your `mods` folder
+3. The built-in overrides included with the tool
+
+## Log Files
+
+The app creates its log file in the first folder that works, in this order:
+1. The current working directory
+2. The OS log directory:
+   * macOS: `~/Library/Logs/mod-bisect-tool`
+   * Windows: `%LOCALAPPDATA%/mod-bisect-tool/logs`
+   * Linux: `$XDG_STATE_HOME/mod-bisect-tool`, or `~/.local/state/mod-bisect-tool`
+3. The OS temp directory, under `mod-bisect-tool`

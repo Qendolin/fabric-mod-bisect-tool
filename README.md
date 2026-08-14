@@ -27,16 +27,21 @@ This tool is like a smart detective for your mods folder. Instead of you having 
 ## Installation
 
 1.  Go to the [Releases page](https://github.com/Qendolin/fabric-mod-bisect-tool/releases).
-2.  Download the correct file for your system (do not download the `.md5` files).
-    * **Windows:** `windows-amd64`
-    * **Linux:** `linux-amd64`
-    * **macOS (Apple Silicon):** `darwin-arm64`
-3.  On Linux or macOS, you need to make the file executable by running this command in your terminal:
+2.  Download the build for your operating system and architecture.
+    * **Windows:** `windows-amd64` (or `windows-arm64` if you have ARM64 hardware)
+    * **Linux:** `linux-amd64` (or `linux-arm64`)
+    * **macOS:** `darwin-arm64` for Apple Silicon, or `darwin-amd64` for Intel Macs
+3.  If you downloaded a raw Unix binary (for example a Linux or macOS TUI build), make it executable before launching it:
     ```bash
     chmod +x ./mod-bisect-*
     ```
-    On macOS you may also need to run `xattr -dr com.apple.quarantine Mod-Bisect-Tool.app` to remove the quarantine
-4.  Place the tool in a convenient location. You can run it from anywhere!
+    This is required because downloaded Unix executables are often saved without the executable permission bit set.
+4.  If macOS blocks the app or binary, remove the quarantine metadata before running it:
+    ```bash
+    xattr -dr com.apple.quarantine "Mod-Bisect-Tool.app"
+    ```
+    For a raw macOS binary, run the same command on the binary instead of the `.app` bundle.
+5.  Place the tool in a convenient location. You can run it from anywhere!
 
 On windows you'll likely get a blue warning that you need to dismiss. (*This warning means that the application has an unknown publisher. It doesn't mean that it is unsafe to run!*)
 <img width="1118" height="500" alt="image" src="https://github.com/user-attachments/assets/f4a3b6bc-492d-4b16-bcf4-d789b5bbb104" />
