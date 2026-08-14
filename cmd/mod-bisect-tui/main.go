@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"syscall"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
@@ -107,7 +106,6 @@ func setupLogging(cliArgs *app.CLIArgs) (*logging.Logger, *os.File) {
 		fmt.Fprintf(os.Stderr, "Fatal: could not open a log file: %v\n", err)
 		os.Exit(1)
 	}
-	defer logFile.Close()
 	fmt.Fprintf(os.Stderr, "Logging to %s\n", logPath)
 
 	mainLogger.SetWriter(logFile)
@@ -123,15 +121,5 @@ func logStartupInfo() {
 	} else {
 		logging.Infof("Main: Current Working Directory: %s", wd)
 	}
-
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.time" {
-				logging.Infof("Main: Build Time: %s", setting.Value)
-			}
-			if setting.Key == "vcs.revision" {
-				logging.Infof("Main: Build Revision: %s", setting.Value)
-			}
-		}
-	}
+	logging.Infof("%s", app.StartupInfo())
 }

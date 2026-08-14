@@ -3,9 +3,9 @@ package pages
 import (
 	"fmt"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 
+	apppkg "github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/probe"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
@@ -126,29 +126,7 @@ func NewSetupPage(app tui.TUIApp) *SetupPage {
 		AddItem(buttonsFlex, 3, 0, false)
 	setupFlex.SetBorderPadding(1, 1, 1, 1)
 
-	buildTime := ""
-	buildRevision := ""
-	buildInfo := "Unknown"
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.time" {
-				buildTime = setting.Value
-			}
-			if setting.Key == "vcs.revision" {
-				buildRevision = setting.Value
-			}
-		}
-	}
-
-	if buildTime != "" {
-		buildInfo = buildTime
-	}
-	if buildRevision != "" {
-		if buildTime != "" {
-			buildInfo += " - "
-		}
-		buildInfo += buildRevision
-	}
+	buildInfo := apppkg.VersionText()
 
 	instructions := tview.NewTextView().
 		SetDynamicColors(true).

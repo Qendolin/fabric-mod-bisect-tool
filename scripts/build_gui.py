@@ -32,6 +32,14 @@ def run(
     subprocess.run([str(c) for c in cmd], check=True, env=env, cwd=cwd)
 
 
+def build_ldflags(distribution: str, git_tag: str, git_revision: str) -> str:
+    return (
+        f"-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution={distribution} "
+        f"-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppVersion={git_tag} "
+        f"-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppRevision={git_revision}"
+    )
+
+
 def gogio_build(
     target: str,
     arch: str,
@@ -75,11 +83,13 @@ def build_linux(
     bin_dir = appdir / "usr" / "bin"
     bin_dir.mkdir(parents=True)
 
+    git_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir).decode().strip()
+    ldflags = build_ldflags("linux-appimage", git_tag, git_revision)
     run(
         "go",
         "build",
         "-ldflags",
-        "-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=linux-appimage",
+        ldflags,
         "-o",
         str(bin_dir / "mod-bisect-gui"),
         ".",
@@ -145,6 +155,7 @@ def build_windows(
     # Windows is built pure-Go (CGO_ENABLED=0): no cross-compiler needed. gogio
     # embeds the icon and links with -H windowsgui.
     exe = project_dir / "mod-bisect-gui.exe"
+    git_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir).decode().strip()
     gogio_build(
         "windows",
         goarch,
@@ -152,7 +163,7 @@ def build_windows(
         str(exe),
         project_dir,
         app_id,
-        ldflags="-H windowsgui -X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=windows-binary",
+        ldflags=f"-H windowsgui {build_ldflags('windows-binary', git_tag, git_revision)}",
     )
     shutil.move(exe, dist / f"mod-bisect-gui-{git_tag}-windows-{goarch}.exe")
 
@@ -181,6 +192,7 @@ def build_darwin(
     # of the application ... with this version of macOS" error even though
     # the binary itself is otherwise fine.
     app = project_dir / "Mod-Bisect-Tool.app"
+    git_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir).decode().strip()
     gogio_build(
         "macos",
         goarch,
@@ -188,7 +200,7 @@ def build_darwin(
         str(app),
         project_dir,
         app_id,
-        ldflags="-X github.com/Qendolin/fabric-mod-bisect-tool/pkg/app.AppDistribution=darwin-app",
+        ldflags=build_ldflags("darwin-app", git_tag, git_revision),
         extra_env={"MACOSX_DEPLOYMENT_TARGET": MACOS_MIN_VERSION},
     )
     if not app.exists():

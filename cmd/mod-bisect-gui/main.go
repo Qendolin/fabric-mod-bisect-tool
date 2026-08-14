@@ -53,6 +53,7 @@ func main() {
 			mainLogger.SetDebug(true)
 			logging.Infof("Main: Verbose logging enabled.")
 		}
+		logStartupInfo()
 
 		a = app.NewApp(mainLogger, cliArgs)
 		guiApp = guiapp.NewApp(a, mainLogger)
@@ -80,4 +81,14 @@ func main() {
 	}()
 
 	gioapp.Main()
+}
+
+func logStartupInfo() {
+	wd, err := os.Getwd()
+	if err != nil {
+		logging.Errorf("Main: Failed to get current working directory: %v", err)
+	} else {
+		logging.Infof("Main: Current Working Directory: %s", wd)
+	}
+	logging.Infof("%s", app.StartupInfo())
 }

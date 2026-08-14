@@ -2,6 +2,8 @@ package app
 
 import (
 	"flag"
+	"fmt"
+	"runtime/debug"
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 )
@@ -20,6 +22,60 @@ const (
 )
 
 var AppDistribution = AppDistributionDevelopment
+
+var (
+	AppVersion   = "dev"
+	AppRevision  = "unknown"
+	AppBuildTime = "unknown"
+)
+
+func init() {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.time":
+				AppBuildTime = setting.Value
+			case "vcs.revision":
+				AppRevision = setting.Value
+			}
+		}
+	}
+	if AppRevision == "" {
+		AppRevision = "unknown"
+	}
+	if AppBuildTime == "" {
+		AppBuildTime = "unknown"
+	}
+}
+
+func shortRevision(rev string) string {
+	if rev == "" || rev == "unknown" {
+		return "unknown"
+	}
+	if len(rev) <= 12 {
+		return rev
+	}
+	return rev[:12]
+}
+
+func VersionText() string {
+	if AppVersion != "" && AppVersion != "dev" {
+		if AppRevision != "" && AppRevision != "unknown" {
+			return fmt.Sprintf("%s (%s)", AppVersion, shortRevision(AppRevision))
+		}
+		return AppVersion
+	}
+	if AppRevision != "" && AppRevision != "unknown" {
+		return shortRevision(AppRevision)
+	}
+	return "unknown"
+}
+
+// StartupInfo returns a compact startup message with build metadata and the
+// distribution type.
+func StartupInfo() string {
+	return fmt.Sprintf("Main: Starting %s (distribution=%s, version=%s, revision=%s, build_time=%s)", AppCommonName, AppDistribution, AppVersion, AppRevision, AppBuildTime)
+}
 
 // CLIArgs holds all command-line arguments passed to the application.
 type CLIArgs struct {

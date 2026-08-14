@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"gioui.org/x/component"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
@@ -230,7 +231,19 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 				layout.Flexed(1, layout.Spacer{}.Layout),
 			)
 		}),
-		layout.Flexed(1.2, layout.Spacer{}.Layout), // visually balanced slightly upward
+		layout.Flexed(1, layout.Spacer{}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			version := material.Body1(th, "Version: "+app.VersionText())
+			version.Color = theme.TextMutedColor
+			version.Alignment = text.End
+			version.TextSize = unit.Sp(9)
+			return layout.Inset{Right: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Flexed(1, layout.Spacer{}.Layout),
+					layout.Rigid(version.Layout),
+				)
+			})
+		}),
 	)
 }
 
