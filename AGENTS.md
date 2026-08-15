@@ -20,8 +20,7 @@ logic (`pkg/core`), and UI contracts (`pkg/ui`).
 
 - Prefer `go doc` for third-party APIs; don't read vendored/module sources
   unless necessary.
-- Keep the layered architecture clean: `core` (pure logic) → `app` (controller
-  + viewmodel) → `ui` (interfaces) → `gui`/`tui` (frontends). Shared UI-agnostic
+- Keep the layered architecture clean: `core` (pure logic) → `app` (controller + viewmodel) → `ui` (interfaces) → `gui`/`tui` (frontends). Shared UI-agnostic
   helpers live outside the frontends (e.g. `pkg/probe`).
 - The manifest loader a mod targets is `mods.ManifestLoader`; the loader the
   user runs is `mods.RunLoader` (Fabric, NeoForge, Connector, Kilt).
@@ -31,3 +30,4 @@ logic (`pkg/core`), and UI contracts (`pkg/ui`).
   New files use LF. Don't reformat the whole repo.
 - All changes: `go build`, `go vet`, `go test -count=1 ./...`, and `gofmt` on
   touched files before finishing.
+- Amend the Changelog.md before every commit or after every major feature is complete. Document only what actually affects the behavior of the app. Keep it brief.

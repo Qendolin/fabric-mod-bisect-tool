@@ -137,7 +137,8 @@ jobs:
           > [!IMPORTANT]
           > **macOS and Linux note:** Raw binaries need an execute bit before they can run: \`chmod +x ./mod-bisect-*\`. This is required because some downloads are saved without the execute permission enabled. On macOS, if the app is blocked by Gatekeeper, clear quarantine metadata with \`xattr -dr com.apple.quarantine "Mod-Bisect-Tool.app"\` (for the .app bundle) or with the same command on the raw binary itself.
 
-          Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.
+          Select the download for your operating system. For most standard computers, the **64-bit (amd64)** or **Apple Silicon** options are what you need.  
+          Using the GUI is recommended.
 
           | Platform | Architecture | GUI (Graphical) | TUI (Terminal) |
           | :--- | :--- | :--- | :--- |
