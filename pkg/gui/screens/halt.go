@@ -45,7 +45,7 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.undoClick.Clicked(gtx) {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog("Undo Last Step", "Are you sure you want to undo the last step?", "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "")
 			if !ok {
 				return
 			}
@@ -56,7 +56,7 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.resetClick.Clicked(gtx) {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog("Reset Search", "This will discard all search progress and start over. Continue?", "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("reset_search", "Reset Search", nil), s.app.Text("reset_search_confirm", "This will discard all search progress and start over. Continue?", nil), "")
 			if !ok {
 				return
 			}
@@ -71,7 +71,7 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				title := material.H5(th, "Search Halted")
+				title := material.H5(th, s.app.Text("search_halted", "Search Halted", nil))
 				title.Color = theme.DangerColor
 				title.Font.Weight = font.Bold
 				return title.Layout(gtx)
@@ -80,11 +80,10 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 			layout.Rigid(s.drawSeparator),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(th,
-					"The search cannot continue because the two groups below depend on each other through undeclared dependencies: "+
-						"at least one mod in each group silently needs a mod from the other group to run. "+
-						"This is a very rare and unfortunate situation, and the tool cannot tell which group causes the problem.\n\n"+
-						"To proceed, remove or fix one of the involved mods and start a new search.")
+				lbl := material.Body1(th, s.app.Text("halt_description", "The search cannot continue because the two groups below depend on each other through undeclared dependencies: "+
+					"at least one mod in each group silently needs a mod from the other group to run. "+
+					"This is a very rare and unfortunate situation, and the tool cannot tell which group causes the problem.\n\n"+
+					"To proceed, remove or fix one of the involved mods and start a new search.", nil))
 				lbl.Color = theme.FgColor
 				return lbl.Layout(gtx)
 			}),
@@ -105,11 +104,11 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 func (s *HaltScreen) layoutGroups(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return s.layoutGroupPanel(gtx, th, "Group A", s.groupA, &s.groupAList)
+			return s.layoutGroupPanel(gtx, th, s.app.Text("group_a", "Group A", nil), s.groupA, &s.groupAList)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(24)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return s.layoutGroupPanel(gtx, th, "Group B", s.groupB, &s.groupBList)
+			return s.layoutGroupPanel(gtx, th, s.app.Text("group_b", "Group B", nil), s.groupB, &s.groupBList)
 		}),
 	)
 }
@@ -140,15 +139,15 @@ func (s *HaltScreen) layoutGroupPanel(gtx layout.Context, th *material.Theme, ti
 }
 
 func (s *HaltScreen) layoutButtons(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	undoBtn := material.Button(th, &s.undoClick, "Undo Last Step")
+	undoBtn := material.Button(th, &s.undoClick, s.app.Text("undo_last_step", "Undo Last Step", nil))
 	undoBtn.Background = theme.CardBgColor
 	undoBtn.Color = theme.FgColor
 
-	resetBtn := material.Button(th, &s.resetClick, "Reset Search")
+	resetBtn := material.Button(th, &s.resetClick, s.app.Text("reset_search", "Reset Search", nil))
 	resetBtn.Background = theme.CardBgColor
 	resetBtn.Color = theme.FgColor
 
-	backBtn := material.Button(th, &s.backClick, "Back to Main")
+	backBtn := material.Button(th, &s.backClick, s.app.Text("back_to_main", "Back to Main", nil))
 	backBtn.Background = theme.PrimaryColor
 	backBtn.Color = colorWhite
 

@@ -104,10 +104,10 @@ func (s *ModSelectionScreen) Layout(gtx layout.Context, th *material.Theme) layo
 // ── Left Panel (Simplified Instructions) ─────────────────────────────────────
 
 func (s *ModSelectionScreen) layoutLeftPanel(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	headerText := "Select Mods to Keep Enabled"
-	descText := "If you don't know what's causing the issue, leave everything unchecked and click Next.\n\n" +
-		"If you know the issue involves a specific mod (like a shaders mod), check it here.\n\n" +
-		"This ensures it stays turned on during all tests so the tool can find what is conflicting with it."
+	headerText := s.app.Text("select_mods", "Select Mods to Keep Enabled", nil)
+	descText := s.app.Text("select_mods_description", "If you don't know what's causing the issue, leave everything unchecked and click Next.\n\n"+
+		"If you know the issue involves a specific mod (like a shaders mod), check it here.\n\n"+
+		"This ensures it stays turned on during all tests so the tool can find what is conflicting with it.", nil)
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -126,7 +126,7 @@ func (s *ModSelectionScreen) layoutLeftPanel(gtx layout.Context, th *material.Th
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1, layout.Spacer{}.Layout), // Pushes button to bottom right
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					btn := material.Button(th, &s.nextClick, "Next Step ▶")
+					btn := material.Button(th, &s.nextClick, s.app.Text("next_step", "Next Step ▶", nil))
 					btn.Background = theme.PrimaryColor
 					btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 					return btn.Layout(gtx)
@@ -141,13 +141,13 @@ func (s *ModSelectionScreen) layoutLeftPanel(gtx layout.Context, th *material.Th
 func (s *ModSelectionScreen) layoutRightPanel(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "Available Mods")
+			lbl := material.Body1(th, s.app.Text("available_mods", "Available Mods", nil))
 			lbl.Font.Weight = font.Bold
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &s.searchEditor, "Search mods...")
+			ed := material.Editor(th, &s.searchEditor, s.app.Text("search_mods", "Search mods...", nil))
 			ed.TextSize = unit.Sp(13)
 			ed.Color = theme.FgColor
 			ed.HintColor = theme.TextMutedColor
@@ -191,7 +191,7 @@ func (s *ModSelectionScreen) layoutRightPanel(gtx layout.Context, th *material.T
 								return lbl.Layout(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, modInfo.ID+" (unresolvable)")
+								lbl := material.Body2(th, modInfo.ID+" ("+s.app.Text("unresolvable_lower", "unresolvable", nil)+")")
 								lbl.Color = theme.TextMutedColor
 								lbl.MaxLines = 1
 								return lbl.Layout(gtx)

@@ -10,6 +10,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/i18n"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 )
 
@@ -48,7 +49,7 @@ func NewModList() *ModList {
 	return ml
 }
 
-func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []ModListItem) layout.Dimensions {
+func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []ModListItem, translator *i18n.Translator) layout.Dimensions {
 	for len(ml.selections) < len(items) {
 		ml.selections = append(ml.selections, new(widget.Selectable))
 	}
@@ -91,7 +92,7 @@ func (ml *ModList) Layout(gtx layout.Context, th *material.Theme, items []ModLis
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							idText := item.ID
 							if item.Tag != ModListTagNone {
-								idText += " (" + string(item.Tag) + ")"
+								idText += " (" + translator.Text("mod_tag_"+string(item.Tag), string(item.Tag), nil) + ")"
 							}
 							lbl := material.Body2(th, idText)
 							lbl.Color = theme.TextMutedColor

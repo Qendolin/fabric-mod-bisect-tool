@@ -75,14 +75,14 @@ func (s *UnresolvableScreen) Layout(gtx layout.Context, th *material.Theme) layo
 	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H6(th, "Unresolvable Mods")
+				lbl := material.H6(th, s.app.Text("unresolvable_mods", "Unresolvable Mods", nil))
 				lbl.Color = theme.PrimaryColor
 				lbl.Font.Weight = font.Bold
 				return lbl.Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, "Some mods could not be enabled because their dependencies could not be resolved.\nFor each mod, choose whether to ignore the failing dependencies (keeping it enabled) or disable it.")
+				lbl := material.Body2(th, s.app.Text("unresolvable_description", "Some mods could not be enabled because their dependencies could not be resolved.\nFor each mod, choose whether to ignore the failing dependencies (keeping it enabled) or disable it.", nil))
 				lbl.Color = theme.FgColor
 				return lbl.Layout(gtx)
 			}),
@@ -97,7 +97,7 @@ func (s *UnresolvableScreen) Layout(gtx layout.Context, th *material.Theme) layo
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Flexed(1, layout.Spacer{}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, &s.continueClick, "Continue")
+						btn := material.Button(th, &s.continueClick, s.app.Text("continue", "Continue", nil))
 						btn.Background = theme.PrimaryColor
 						btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 						return btn.Layout(gtx)
@@ -137,7 +137,7 @@ func (s *UnresolvableScreen) layoutModEntry(gtx layout.Context, th *material.The
 						)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "Unresolvable:")
+						lbl := material.Body2(th, s.app.Text("unresolvable", "Unresolvable:", nil))
 						lbl.Color = theme.WarningColor
 						return lbl.Layout(gtx)
 					}),
@@ -160,7 +160,7 @@ func (s *UnresolvableScreen) layoutModEntry(gtx layout.Context, th *material.The
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, s.ignoreClicks[m.Mod.ID], "Ignore")
+						btn := material.Button(th, s.ignoreClicks[m.Mod.ID], s.app.Text("ignore", "Ignore", nil))
 						if ignore {
 							btn.Background = theme.PrimaryColor
 							btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
@@ -174,7 +174,7 @@ func (s *UnresolvableScreen) layoutModEntry(gtx layout.Context, th *material.The
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, s.disableClicks[m.Mod.ID], "Disable")
+						btn := material.Button(th, s.disableClicks[m.Mod.ID], s.app.Text("disable", "Disable", nil))
 						if !ignore {
 							btn.Background = theme.DangerColor
 							btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}

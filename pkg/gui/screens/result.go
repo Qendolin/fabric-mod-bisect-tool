@@ -67,7 +67,7 @@ func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 
 	if s.continueClick.Clicked(gtx) {
 		go func() {
-			ok := s.app.ShowQuestionDialog("Continue Search", "This will start a new search for the next conflict set within the remaining mods. Continue?", "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("continue_search", "Continue Search", nil), s.app.Text("continue_search_confirm", "This will start a new search for the next conflict set within the remaining mods. Continue?", nil), "")
 			if ok {
 				s.app.Run(func() {
 					s.app.GetBisectionController().ContinueSearch()
@@ -88,9 +88,9 @@ func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						titleText := "Search In Progress"
+						titleText := s.app.Text("search_in_progress", "Search In Progress", nil)
 						if bvm.Progress.IsComplete {
-							titleText = "Bisection Complete"
+							titleText = s.app.Text("bisection_complete", "Bisection Complete", nil)
 						}
 						title := material.H5(th, titleText)
 						title.Color = theme.PrimaryColor
@@ -144,16 +144,16 @@ func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 							layout.Flexed(1, layout.Spacer{}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								btn := material.Button(th, &s.restartClick, "Restart Bisection")
+								btn := material.Button(th, &s.restartClick, s.app.Text("restart_bisection", "Restart Bisection", nil))
 								btn.Background = theme.CardBgColor
 								btn.Color = theme.FgColor
 								return btn.Layout(gtx)
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								btnText := "Quit"
+								btnText := s.app.Text("quit", "Quit", nil)
 								if rvm.State != ui.StateComplete {
-									btnText = "Next Step"
+									btnText = s.app.Text("next_step_plain", "Next Step", nil)
 								}
 								btn := material.Button(th, &s.primaryClick, btnText)
 								btn.Background = theme.PrimaryColor
@@ -174,14 +174,14 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	// 1a. Render the Current Conflict Set (isolated from history)
 	if len(rvm.CurrentConflict.Mods) > 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "Current Conflict")
+			lbl := material.Body1(th, s.app.Text("current_conflict", "Current Conflict", nil))
 			lbl.Font.Weight = font.Bold
 			lbl.Color = theme.WarningColor
 			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 		})
 
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "Disabling any single mod in this group will resolve the issue:")
+			lbl := material.Body2(th, s.app.Text("single_mod_resolves", "Disabling any single mod in this group will resolve the issue:", nil))
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(8), Left: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 		})
@@ -213,7 +213,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 			index := i
 
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				title := fmt.Sprintf("Independent Conflict Set #%d", index+numberOffset)
+				title := s.app.Text("independent_conflict_set", "Independent Conflict Set #{{.Number}}", map[string]any{"Number": index + numberOffset})
 				lbl := material.Body1(th, title)
 				lbl.Font.Weight = font.Bold
 				lbl.Color = theme.TextMutedColor
@@ -221,7 +221,7 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 			})
 
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, "Disabling any single mod in this group will resolve the issue:")
+				lbl := material.Body2(th, s.app.Text("single_mod_resolves", "Disabling any single mod in this group will resolve the issue:", nil))
 				lbl.Color = theme.FgColor
 				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 			})
@@ -243,14 +243,14 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	// 2. Generally Unresolvable Mods (Dependency issues unrelated to active conflicts)
 	if len(rvm.GenerallyUnresolvable) > 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "Mods with Unresolved Dependencies")
+			lbl := material.Body1(th, s.app.Text("unresolved_dependencies", "Mods with Unresolved Dependencies", nil))
 			lbl.Font.Weight = font.Bold
 			lbl.Color = theme.TextMutedColor
 			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 		})
 
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "These mods have separate dependency issues that may require manual review:")
+			lbl := material.Body2(th, s.app.Text("unresolved_dependencies_description", "These mods have separate dependency issues that may require manual review:", nil))
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 		})
@@ -271,19 +271,19 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 	// 3. Next Steps / Actions Panel
 	if len(rvm.CurrentConflict.Mods) == 0 && len(rvm.ArchivedConflictSets) == 0 && len(rvm.GenerallyUnresolvable) == 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "No Conflicts Found")
+			lbl := material.Body1(th, s.app.Text("no_conflicts", "No Conflicts Found", nil))
 			lbl.Font.Weight = font.Bold
 			lbl.Color = theme.PrimaryColor
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 		})
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "The bisection process completed without isolating a specific cause for failure. The issue might be external to the mods in this folder.")
+			lbl := material.Body2(th, s.app.Text("no_conflicts_description", "The bisection process completed without isolating a specific cause for failure. The issue might be external to the mods in this folder.", nil))
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
 		})
 	} else if len(rvm.CurrentConflict.Mods) > 0 || len(rvm.ArchivedConflictSets) > 0 {
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "What to do next")
+			lbl := material.Body1(th, s.app.Text("what_next", "What to do next", nil))
 			lbl.Font.Weight = font.Bold
 			lbl.Color = theme.FgColor
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
@@ -293,11 +293,11 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 			var explanation string
 			switch {
 			case rvm.State == ui.StateComplete:
-				explanation = "To fix each conflict, disable one mod from that conflict's list and relaunch the game.\n\nOnce confirmed, please consider reporting the incompatibility to the respective mod authors."
+				explanation = s.app.Text("result_complete_explanation", "To fix each conflict, disable one mod from that conflict's list and relaunch the game.\n\nOnce confirmed, please consider reporting the incompatibility to the respective mod authors.", nil)
 			case rvm.IsVerificationStep:
-				explanation = "A new conflicting mod was found, but it is not yet known if more are involved.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to verify whether the conflict set is complete."
+				explanation = s.app.Text("result_verification_explanation", "A new conflicting mod was found, but it is not yet known if more are involved.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to verify whether the conflict set is complete.", nil)
 			default:
-				explanation = "The current conflict involves more mods than found so far.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to find the remaining mods."
+				explanation = s.app.Text("result_incomplete_explanation", "The current conflict involves more mods than found so far.\n\nYou can already fix this conflict by disabling one of the mods above.\n\nOr continue the search to find the remaining mods.", nil)
 			}
 
 			lbl := material.Body2(th, explanation)
@@ -313,18 +313,18 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 				})
 			})
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(th, "Still having issues?")
+				lbl := material.Body1(th, s.app.Text("still_issues", "Still having issues?", nil))
 				lbl.Font.Weight = font.Bold
 				lbl.Color = theme.FgColor
 				return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
 			})
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, "If you disabled the mods above but your game still has the issue, there might be additional conflicting mods. You can continue the bisection process to find them among the remaining candidates.")
+				lbl := material.Body2(th, s.app.Text("still_issues_description", "If you disabled the mods above but your game still has the issue, there might be additional conflicting mods. You can continue the bisection process to find them among the remaining candidates.", nil))
 				lbl.Color = theme.FgColor
 				return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, lbl.Layout)
 			})
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				btn := material.Button(th, &s.continueClick, "Continue Search")
+				btn := material.Button(th, &s.continueClick, s.app.Text("continue_search", "Continue Search", nil))
 				btn.Background = theme.PrimaryColor
 				btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -343,11 +343,11 @@ func (s *ResultScreen) buildScrollableWidgets(gtx layout.Context, th *material.T
 			})
 		})
 		widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-			btnText := "Show Cleared Mods"
+			btnText := s.app.Text("show_cleared_mods", "Show Cleared Mods", nil)
 			if s.clearedExpanded {
-				btnText = "Hide Cleared Mods"
+				btnText = s.app.Text("hide_cleared_mods", "Hide Cleared Mods", nil)
 			}
-			btnText = fmt.Sprintf("%s (%d)", btnText, len(clearedList))
+			btnText = s.app.Text("cleared_mods_count", "{{.Label}} ({{.Count}})", map[string]any{"Label": btnText, "Count": len(clearedList)})
 			btn := material.Button(th, &s.clearedClick, btnText)
 			btn.Background = theme.CardBgColor
 			btn.Color = theme.FgColor
@@ -374,7 +374,7 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 	for _, entry := range set.Mods {
 		currentEntry := entry
 		modName := ui.FormatModRef(currentEntry.Mod)
-		jarName := "Unknown Jar File"
+		jarName := s.app.Text("unknown_jar", "Unknown Jar File", nil)
 		if !currentEntry.Mod.IsUnknown {
 			jarName = fmt.Sprintf("%s.jar", currentEntry.Mod.BaseFilename)
 		}
@@ -412,7 +412,7 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 				return layout.Inset{Left: unit.Dp(32), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					var cascadeChildren []layout.FlexChild
 					cascadeChildren = append(cascadeChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "Disabling this mod also requires disabling:")
+						lbl := material.Body2(th, s.app.Text("cascade_disable", "Disabling this mod also requires disabling:", nil))
 						lbl.Font.Weight = font.Bold
 						lbl.Color = theme.TextMutedColor
 						return lbl.Layout(gtx)
@@ -423,9 +423,9 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 						cascadeChildren = append(cascadeChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							name := m.ID
 							if !m.IsUnknown {
-								name = fmt.Sprintf("%s from '%s.jar'", m.ID, m.BaseFilename)
+								name = s.app.Text("from_jar", "{{.ID}} from '{{.File}}.jar'", map[string]any{"ID": m.ID, "File": m.BaseFilename})
 							} else {
-								name = fmt.Sprintf("%s from unknown", m.ID)
+								name = fmt.Sprintf("%s %s", m.ID, s.app.Text("from_unknown", "from unknown", nil))
 							}
 							lbl := material.Body2(th, name)
 							lbl.Color = theme.TextMutedColor
@@ -443,9 +443,9 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 	if showIncompleteHints {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(32), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				hintText := "And at least one more..."
+				hintText := s.app.Text("at_least_one_more", "And at least one more...", nil)
 				if isVerification {
-					hintText = "And possibly more..."
+					hintText = s.app.Text("possibly_more", "And possibly more...", nil)
 				}
 
 				lbl := material.Body2(th, hintText)
@@ -462,7 +462,7 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 			return layout.Inset{Left: unit.Dp(16), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				var footerChildren []layout.FlexChild
 				footerChildren = append(footerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, "If you disable all mods in this conflict, you must also disable:")
+					lbl := material.Body2(th, s.app.Text("cascade_all_disable", "If you disable all mods in this conflict, you must also disable:", nil))
 					lbl.Font.Weight = font.Bold
 					lbl.Color = theme.TextMutedColor
 					return lbl.Layout(gtx)
@@ -473,9 +473,9 @@ func (s *ResultScreen) layoutConflictSetEntries(gtx layout.Context, th *material
 					footerChildren = append(footerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						name := m.ID
 						if !m.IsUnknown {
-							name = fmt.Sprintf("%s from '%s.jar'", m.ID, m.BaseFilename)
+							name = s.app.Text("from_jar", "{{.ID}} from '{{.File}}.jar'", map[string]any{"ID": m.ID, "File": m.BaseFilename})
 						} else {
-							name = fmt.Sprintf("%s from unknown", m.ID)
+							name = fmt.Sprintf("%s %s", m.ID, s.app.Text("from_unknown", "from unknown", nil))
 						}
 						lbl := material.Body2(th, name)
 						lbl.Color = theme.TextMutedColor
@@ -526,7 +526,7 @@ func (s *ResultScreen) layoutGenerallyUnresolvable(gtx layout.Context, th *mater
 				return layout.Inset{Left: unit.Dp(24), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					var innerChildren []layout.FlexChild
 					innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "Unresolved or unmet dependencies:")
+						lbl := material.Body2(th, s.app.Text("unresolved_or_unmet", "Unresolved or unmet dependencies:", nil))
 						lbl.Font.Weight = font.Bold
 						lbl.Color = theme.TextMutedColor
 						return lbl.Layout(gtx)
@@ -537,9 +537,9 @@ func (s *ResultScreen) layoutGenerallyUnresolvable(gtx layout.Context, th *mater
 						innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							name := d.ID
 							if !d.IsUnknown {
-								name = fmt.Sprintf("%s from '%s.jar'", d.ID, d.BaseFilename)
+								name = s.app.Text("from_jar", "{{.ID}} from '{{.File}}.jar'", map[string]any{"ID": d.ID, "File": d.BaseFilename})
 							} else {
-								name = fmt.Sprintf("%s from unknown", d.ID)
+								name = fmt.Sprintf("%s %s", d.ID, s.app.Text("from_unknown", "from unknown", nil))
 							}
 							lbl := material.Body2(th, name)
 							lbl.Color = theme.TextMutedColor
@@ -556,7 +556,7 @@ func (s *ResultScreen) layoutGenerallyUnresolvable(gtx layout.Context, th *mater
 				return layout.Inset{Left: unit.Dp(24), Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					var innerChildren []layout.FlexChild
 					innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "Disabling this mod would also require disabling:")
+						lbl := material.Body2(th, s.app.Text("cascade_disable_would", "Disabling this mod would also require disabling:", nil))
 						lbl.Font.Weight = font.Bold
 						lbl.Color = theme.TextMutedColor
 						return lbl.Layout(gtx)
@@ -567,9 +567,9 @@ func (s *ResultScreen) layoutGenerallyUnresolvable(gtx layout.Context, th *mater
 						innerChildren = append(innerChildren, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							name := d.ID
 							if !d.IsUnknown {
-								name = fmt.Sprintf("%s from '%s.jar'", d.ID, d.BaseFilename)
+								name = s.app.Text("from_jar", "{{.ID}} from '{{.File}}.jar'", map[string]any{"ID": d.ID, "File": d.BaseFilename})
 							} else {
-								name = fmt.Sprintf("%s from unknown", d.ID)
+								name = fmt.Sprintf("%s %s", d.ID, s.app.Text("from_unknown", "from unknown", nil))
 							}
 							lbl := material.Body2(th, name)
 							lbl.Color = theme.TextMutedColor

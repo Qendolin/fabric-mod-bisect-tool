@@ -1,6 +1,9 @@
 package screens
 
-import "github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
+import (
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/i18n"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
+)
 
 // App defines the interface that screens use to communicate with the GUI App.
 type App interface {
@@ -19,4 +22,7 @@ type App interface {
 	// used to attach native dialogs to it. May be nil on platforms without a
 	// usable handle (e.g. Wayland).
 	WindowAttachID() any
+	Translator() *i18n.Translator
+	Text(id, fallback string, data map[string]any) string
+	SetLocale(locale string)
 }

@@ -83,6 +83,7 @@ type CLIArgs struct {
 	Verbose             bool
 	Loader              mods.RunLoader
 	LogDir              string
+	Locale              string
 }
 
 // ParseCLIArgs parses the command-line flags and returns a populated CLIArgs struct.
@@ -100,6 +101,7 @@ func ParseCLIArgs() *CLIArgs {
 		return nil
 	})
 	flag.StringVar(&args.LogDir, "log-dir", ".", "Specifies the directory to store log files.")
+	flag.StringVar(&args.Locale, "locale", "", "GUI language/locale. Defaults to the system locale.")
 	flag.Parse()
 
 	return args

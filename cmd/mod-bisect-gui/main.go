@@ -7,6 +7,7 @@ import (
 	gioapp "gioui.org/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/guiapp"
+	guii18n "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/i18n"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/ncruces/zenity"
 )
@@ -56,7 +57,11 @@ func main() {
 		logStartupInfo()
 
 		a = app.NewApp(mainLogger, cliArgs)
-		guiApp = guiapp.NewApp(a, mainLogger)
+		locale := cliArgs.Locale
+		if locale == "" {
+			locale = guii18n.DetectLocale()
+		}
+		guiApp = guiapp.NewApp(a, mainLogger, locale)
 		a.SetView(guiApp)
 
 		logging.Infof("Main: Application starting up.")

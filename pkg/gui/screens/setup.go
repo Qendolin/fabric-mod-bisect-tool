@@ -3,6 +3,8 @@ package screens
 import (
 	"image"
 	"image/color"
+	"slices"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -17,10 +19,12 @@ import (
 	"gioui.org/x/component"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/app"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
+	guii18n "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/i18n"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/probe"
 	"github.com/ncruces/zenity"
+	"golang.org/x/text/language"
 )
 
 // loaderChoices lists the loader options in the order they are shown.
@@ -33,6 +37,7 @@ type SetupScreen struct {
 	startClick  widget.Clickable
 
 	loaderSelect loaderSelect
+	localeSelect loaderSelect
 
 	// probeWorker serializes directory probes (one at a time, queued).
 	probeWorker *probe.Worker
@@ -43,6 +48,13 @@ type SetupScreen struct {
 
 	// lastPath tracks the last probed path to avoid re-probing on every frame.
 	lastPath string
+
+	locales []locale
+}
+
+type locale struct {
+	tag  language.Tag
+	name string
 }
 
 func NewSetupScreen(app App) *SetupScreen {
@@ -66,6 +78,21 @@ func NewSetupScreen(app App) *SetupScreen {
 		}
 		s.userSelectedLoader = true
 	}
+	s.locales = make([]locale, len(guii18n.SupportedLocales()))
+	for i, choice := range guii18n.SupportedLocales() {
+		s.locales[i] = locale{
+			tag:  choice,
+			name: s.app.Translator().TextIn(choice.String(), "locale_name", choice.String(), nil),
+		}
+	}
+	slices.SortFunc(s.locales, func(a, b locale) int {
+		return strings.Compare(a.name, b.name)
+	})
+	for i, choice := range s.locales {
+		if choice.tag == s.app.Translator().Locale() {
+			s.localeSelect.selected = i
+		}
+	}
 	return s
 }
 
@@ -75,7 +102,7 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 		initial := s.pathEditor.Text()
 		go func() {
 			opts := []zenity.Option{
-				zenity.Title("Select Mods Folder"),
+				zenity.Title(s.app.Text("select_mods_folder", "Select Mods Folder", nil)),
 				zenity.Directory(),
 				zenity.Modal(),
 				zenity.Filename(initial),
@@ -108,7 +135,7 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 			// gio frame goroutine.
 			go func() {
 				defer logging.HandlePanic()
-				s.app.ShowErrorDialog("Error", "Please select a mods folder", nil)
+				s.app.ShowErrorDialog(s.app.Text("error", "Error", nil), s.app.Text("select_mods_folder_error", "Please select a mods folder", nil), nil)
 			}()
 		} else {
 			// Read the loader selection on the UI thread: the probe worker and
@@ -121,126 +148,153 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 		}
 	}
 
-	// Centered layout configuration
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Flexed(1, layout.Spacer{}.Layout), // top spacer
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			// Center the form horizontally with a maximum width of 540dp
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				layout.Flexed(1, layout.Spacer{}.Layout),
+	// Centered layout configuration. The language control is an overlay so it
+	// stays fixed at the top-right independently of the centered form.
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Flexed(1, layout.Spacer{}.Layout), // top spacer
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					w := gtx.Dp(540)
-					if w > gtx.Constraints.Max.X {
-						w = gtx.Constraints.Max.X
-					}
-					gtx.Constraints.Min.X = w
-					gtx.Constraints.Max.X = w
+					// Center the form horizontally with a maximum width of 540dp
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+						layout.Flexed(1, layout.Spacer{}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							w := gtx.Dp(540)
+							if w > gtx.Constraints.Max.X {
+								w = gtx.Constraints.Max.X
+							}
+							gtx.Constraints.Min.X = w
+							gtx.Constraints.Max.X = w
 
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						// Title
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							title := material.H4(th, "Mod Bisect Tool")
-							title.Color = theme.PrimaryColor
-							title.Alignment = text.Middle
-							title.Font.Weight = font.Bold
-							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, title.Layout)
-						}),
-						// Instruction
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							desc := material.Body1(th, "Select your mods folder to begin.")
-							desc.Color = theme.TextMutedColor
-							desc.Alignment = text.Middle
-							return layout.Inset{Bottom: unit.Dp(32)}.Layout(gtx, desc.Layout)
-						}),
-						// Mods folder label
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							heading := material.Body2(th, "Mods Folder")
-							heading.Color = theme.TextMutedColor
-							heading.Font.Weight = font.Bold
-							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
-						}),
-						// Path entry and browse button
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									// Editor wrapped in a styled container
-									ed := material.Editor(th, &s.pathEditor, "Enter or browse mods folder path...")
-									ed.TextSize = unit.Sp(12)
-									ed.Color = theme.FgColor
-									ed.HintColor = theme.TextMutedColor
-									border := widget.Border{
-										Color:        theme.BorderColor,
-										CornerRadius: unit.Dp(4),
-										Width:        unit.Dp(1),
-									}
-									return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return layout.UniformInset(unit.Dp(10)).Layout(gtx, ed.Layout)
-									})
-								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+								// Title
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									btn := material.Button(th, &s.browseClick, "Browse...")
-									btn.Background = theme.CardBgColor
-									btn.Color = theme.FgColor
-									return btn.Layout(gtx)
+									title := material.H4(th, s.app.Text("app_name", "Mod Bisect Tool", nil))
+									title.Color = theme.PrimaryColor
+									title.Alignment = text.Middle
+									title.Font.Weight = font.Bold
+									return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, title.Layout)
+								}),
+								// Instruction
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									desc := material.Body1(th, s.app.Text("setup_description", "Select your mods folder to begin.", nil))
+									desc.Color = theme.TextMutedColor
+									desc.Alignment = text.Middle
+									return layout.Inset{Bottom: unit.Dp(32)}.Layout(gtx, desc.Layout)
+								}),
+								// Mods folder label
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									heading := material.Body2(th, s.app.Text("mods_folder", "Mods Folder", nil))
+									heading.Color = theme.TextMutedColor
+									heading.Font.Weight = font.Bold
+									return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
+								}),
+								// Path entry and browse button
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+											// Editor wrapped in a styled container
+											ed := material.Editor(th, &s.pathEditor, s.app.Text("mods_folder_hint", "Enter or browse mods folder path...", nil))
+											ed.TextSize = unit.Sp(12)
+											ed.Color = theme.FgColor
+											ed.HintColor = theme.TextMutedColor
+											border := widget.Border{
+												Color:        theme.BorderColor,
+												CornerRadius: unit.Dp(4),
+												Width:        unit.Dp(1),
+											}
+											return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												return layout.UniformInset(unit.Dp(10)).Layout(gtx, ed.Layout)
+											})
+										}),
+										layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											btn := material.Button(th, &s.browseClick, s.app.Text("browse", "Browse...", nil))
+											btn.Background = theme.CardBgColor
+											btn.Color = theme.FgColor
+											return btn.Layout(gtx)
+										}),
+									)
+								}),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
+								// Loader selection
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									heading := material.Body2(th, s.app.Text("mod_loader", "Mod Loader", nil))
+									heading.Color = theme.TextMutedColor
+									heading.Font.Weight = font.Bold
+									return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									labels := make([]string, len(loaderChoices))
+									for i, choice := range loaderChoices {
+										labels[i] = choice.String()
+									}
+									dims := s.loaderSelect.Layout(gtx, th, labels)
+									// A user selection (via the popup) must not be
+									// overridden by the probe recommendation.
+									if s.loaderSelect.UserChanged() {
+										s.userSelectedLoader = true
+									}
+									return dims
+								}),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
+								// Start Button
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									btn := material.Button(th, &s.startClick, s.app.Text("start_bisection", "Start Bisection", nil))
+									btn.Background = theme.PrimaryColor
+									btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+									btn.TextSize = unit.Sp(16)
+									btn.Inset = layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12)}
+									return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+										layout.Flexed(1, btn.Layout),
+									)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									desc := material.Body1(th, s.app.Text("by_author", "by Qendolin", nil))
+									desc.Color = theme.TextMutedColor
+									desc.Alignment = text.Middle
+									desc.TextSize = unit.Sp(10)
+									return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, desc.Layout)
 								}),
 							)
 						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
-						// Loader selection
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							heading := material.Body2(th, "Mod Loader")
-							heading.Color = theme.TextMutedColor
-							heading.Font.Weight = font.Bold
-							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, heading.Layout)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							labels := make([]string, len(loaderChoices))
-							for i, choice := range loaderChoices {
-								labels[i] = choice.String()
-							}
-							dims := s.loaderSelect.Layout(gtx, th, labels)
-							// A user selection (via the popup) must not be
-							// overridden by the probe recommendation.
-							if s.loaderSelect.UserChanged() {
-								s.userSelectedLoader = true
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
-						// Start Button
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(th, &s.startClick, "Start Bisection")
-							btn.Background = theme.PrimaryColor
-							btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-							btn.TextSize = unit.Sp(16)
-							btn.Inset = layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12)}
-							return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-								layout.Flexed(1, btn.Layout),
-							)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							desc := material.Body1(th, "by Qendolin")
-							desc.Color = theme.TextMutedColor
-							desc.Alignment = text.Middle
-							desc.TextSize = unit.Sp(10)
-							return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, desc.Layout)
-						}),
+						layout.Flexed(1, layout.Spacer{}.Layout),
 					)
 				}),
 				layout.Flexed(1, layout.Spacer{}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					version := material.Body1(th, s.app.Text("version", "Version: {{.Version}}", map[string]any{"Version": app.VersionText()}))
+					version.Color = theme.TextMutedColor
+					version.Alignment = text.End
+					version.TextSize = unit.Sp(9)
+					return layout.Inset{Right: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Flexed(1, layout.Spacer{}.Layout),
+							layout.Rigid(version.Layout),
+						)
+					})
+				}),
 			)
 		}),
-		layout.Flexed(1, layout.Spacer{}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			version := material.Body1(th, "Version: "+app.VersionText())
-			version.Color = theme.TextMutedColor
-			version.Alignment = text.End
-			version.TextSize = unit.Sp(9)
-			return layout.Inset{Right: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-					layout.Flexed(1, layout.Spacer{}.Layout),
-					layout.Rigid(version.Layout),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = 0
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min.X = 0
+						gtx.Constraints.Max.X = gtx.Dp(40)
+
+						labels := make([]string, len(s.locales))
+						for i, choice := range s.locales {
+							labels[i] = choice.name
+						}
+						dims := s.localeSelect.LayoutIcon(gtx, th, labels)
+						if s.localeSelect.UserChanged() {
+							s.localeSelect.iconOpen = false
+							s.app.SetLocale(s.locales[s.localeSelect.selected].tag.String())
+						}
+						return dims
+					}),
 				)
 			})
 		}),
@@ -287,6 +341,8 @@ type loaderSelect struct {
 	contextArea component.ContextArea
 	menu        component.MenuState
 	options     []widget.Clickable
+	iconClick   widget.Clickable
+	iconOpen    bool
 	selected    int
 	menuInit    bool
 	userChanged bool
@@ -336,6 +392,49 @@ func (s *loaderSelect) Layout(gtx layout.Context, th *material.Theme, labels []s
 					gtx.Constraints.Min.X = box.Size.X
 					return component.Menu(th, &s.menu).Layout(gtx)
 				})
+			})
+		}),
+	)
+}
+
+// LayoutIcon renders a compact language button with the same popover menu as
+// the loader select. It is used in the setup overlay rather than in the form.
+func (s *loaderSelect) LayoutIcon(gtx layout.Context, th *material.Theme, labels []string) layout.Dimensions {
+	for len(s.options) < len(labels) {
+		s.options = append(s.options, widget.Clickable{})
+	}
+	if s.selected < 0 || s.selected >= len(labels) {
+		s.selected = 0
+	}
+	if !s.menuInit {
+		s.menuInit = true
+		s.buildMenu(th, labels)
+	}
+	for i := range s.options {
+		if s.options[i].Clicked(gtx) {
+			s.selected = i
+			s.userChanged = true
+		}
+	}
+	if s.iconClick.Clicked(gtx) {
+		s.iconOpen = !s.iconOpen
+	}
+
+	button := material.Button(th, &s.iconClick, "文")
+	button.Background = theme.CardBgColor
+	button.Color = theme.FgColor
+	button.Inset = layout.UniformInset(unit.Dp(8))
+	box := button.Layout
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(box),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if !s.iconOpen {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(40)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Dp(140)
+				gtx.Constraints.Max.X = gtx.Dp(180)
+				return component.Menu(th, &s.menu).Layout(gtx)
 			})
 		}),
 	)

@@ -2,7 +2,6 @@ package screens
 
 import (
 	"errors"
-	"fmt"
 	"image"
 	"image/color"
 	"sort"
@@ -91,16 +90,16 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.undoClick.Clicked(gtx) && vm.Progress.CanUndo {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog("Undo Last Step", "Are you sure you want to undo the last step?", "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "")
 			if !ok {
 				return
 			}
 			err := s.app.GetBisectionController().Undo()
 			if err != nil {
 				if errors.Is(err, bisect.ErrUndoStackEmpty) {
-					s.app.ShowInfoDialog("Cannot Undo", "Nothing left to undo.", "")
+					s.app.ShowInfoDialog(s.app.Text("cannot_undo", "Cannot Undo", nil), s.app.Text("nothing_to_undo", "Nothing left to undo.", nil), "")
 				} else {
-					s.app.ShowErrorDialog("Cannot Undo", "The undo operation failed.", err)
+					s.app.ShowErrorDialog(s.app.Text("cannot_undo", "Cannot Undo", nil), s.app.Text("undo_failed", "The undo operation failed.", nil), err)
 				}
 			}
 		}()
@@ -139,16 +138,16 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 // ── Normal view ───────────────────────────────────────────────────────────────
 
 func (s *MainScreen) layoutNormalView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
-	title, desc, stepBtnText, progress := normalViewContent(vm)
+	title, desc, stepBtnText, progress := normalViewContent(s.app, vm)
 
 	var candidates []exwidgets.ModListItem
 	var listHeader string
 	if vm.Progress.IsVerificationStep {
-		listHeader = "Conflict Set"
+		listHeader = s.app.Text("conflict_set", "Conflict Set", nil)
 		candidates = modItemsFromSet(vm.Mods.Infos, vm.Sets.CurrentConflict)
 	} else {
 		candidates = modItemsFromSet(vm.Mods.Infos, vm.Sets.Candidate)
-		listHeader = fmt.Sprintf("Remaining Candidates (%d)", len(candidates))
+		listHeader = s.app.Translator().Plural("remaining_candidates", "Remaining Candidate ({{.Count}})", "Remaining Candidates ({{.Count}})", len(candidates), map[string]any{"Count": len(candidates)})
 	}
 
 	return s.layoutTwoPanel(gtx,
@@ -163,38 +162,41 @@ func (s *MainScreen) layoutNormalView(gtx layout.Context, th *material.Theme, vm
 
 // normalViewContent derives all display strings and progress from the view model.
 // Kept as a plain function (no receiver) since it is pure data transformation.
-func normalViewContent(vm *ui.BisectionViewModel) (title, desc, stepBtnText string, progress float32) {
+func normalViewContent(app App, vm *ui.BisectionViewModel) (title, desc, stepBtnText string, progress float32) {
+	t := app.Translator()
 	switch {
 	case !vm.IsReady:
-		return "Initializing...", "", "▶  Start Bisection", 0
+		return t.Text("initializing", "Initializing...", nil), "", t.Text("start_bisection_button", "▶  Start Bisection", nil), 0
 
 	case vm.Progress.IsHalted:
-		return "Search Halted",
-			"The search stopped because two groups of mods appear to depend on each other.\n" +
+		return t.Text("search_halted", "Search Halted", nil),
+			t.Text("search_halted_description", "The search stopped because two groups of mods appear to depend on each other.\n"+
 				"The halt page shows the two groups; resolve one of the involved mods and start a new search.",
-			"View Halted Groups",
+				nil),
+			t.Text("view_halted_groups", "View Halted Groups", nil),
 			searchProgress(vm)
 
 	case vm.Progress.IsVerificationStep:
-		return "Verifying final set...",
-			"The next test verifies that the found set of mods is the cause of the issue. " +
+		return t.Text("verifying_final_set", "Verifying final set...", nil),
+			t.Text("verification_step_description", "The next test verifies that the found set of mods is the cause of the issue. "+
 				"If the issue DOES NOT persist, a new round of tests is started to find other problematic mods.",
-			"▶  Verification Step",
+				nil),
+			t.Text("verification_step", "▶  Verification Step", nil),
 			float32(vm.Progress.StepCount) / float32(vm.Progress.StepCount+1)
 
 	case vm.Progress.StepCount == 0:
-		return "Ready to begin",
-			"This tool uses binary search to isolate problematic mods.\n" +
-				"Each test halves the candidate set, finding conflicts efficiently.\n" +
-				"Close the game if it is currently open!\n" +
-				"Be ready to start the game when prompted.",
-			"▶  Start Bisection",
+		return t.Text("ready_to_begin", "Ready to begin", nil),
+			t.Text("ready_to_begin_description", "This tool uses binary search to isolate problematic mods.\n"+
+				"Each test halves the candidate set, finding conflicts efficiently.\n"+
+				"Close the game if it is currently open!\n"+
+				"Be ready to start the game when prompted.", nil),
+			t.Text("start_bisection_button", "▶  Start Bisection", nil),
 			0
 
 	default:
-		return fmt.Sprintf("Round %d · Iteration %d", vm.Progress.Round, vm.Progress.Iteration),
-			fmt.Sprintf("Step %d of ~%d estimated tests.", vm.Progress.StepCount, vm.Progress.EstimatedMaxTests),
-			"▶  Next Step",
+		return t.Text("round_iteration", "Round {{.Round}} · Iteration {{.Iteration}}", map[string]any{"Round": vm.Progress.Round, "Iteration": vm.Progress.Iteration}),
+			t.Text("estimated_tests", "Step {{.Step}} of ~{{.Max}} estimated tests.", map[string]any{"Step": vm.Progress.StepCount, "Max": vm.Progress.EstimatedMaxTests}),
+			t.Text("next_step_button", "▶  Next Step", nil),
 			searchProgress(vm)
 	}
 }
@@ -243,7 +245,7 @@ func (s *MainScreen) layoutNormalLeft(
 }
 
 func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel, stepText string) layout.Dimensions {
-	undoBtn := material.Button(th, &s.undoClick, "↩  Undo")
+	undoBtn := material.Button(th, &s.undoClick, s.app.Text("undo", "↩  Undo", nil))
 	if vm.Progress.CanUndo {
 		undoBtn.Background = theme.CardBgColor
 		undoBtn.Color = theme.FgColor
@@ -273,17 +275,17 @@ func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Them
 func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel) layout.Dimensions {
 	var header, desc string
 	if vm.Progress.IsVerificationStep {
-		header = "Verification Test"
-		desc = "Start Minecraft with the current active mod set and verify whether your issue is still present.\n\n" +
-			"✗ Broken\n  The issue is still there (confirms the found conflict set is correct).\n\n" +
-			"✓ Works\n  The issue is gone (suggests the set is incomplete).\n\n" +
-			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present."
+		header = s.app.Text("verification_test", "Verification Test", nil)
+		desc = s.app.Text("verification_test_description", "Start Minecraft with the current active mod set and verify whether your issue is still present.\n\n"+
+			"✗ Broken\n  The issue is still there (confirms the found conflict set is correct).\n\n"+
+			"✓ Works\n  The issue is gone (suggests the set is incomplete).\n\n"+
+			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present.", nil)
 	} else {
-		header = "Bisection Test"
-		desc = "Start Minecraft with the current active mod set and verify whether your issue is resolved.\n\n" +
-			"✓ Works\n  The game runs fine and the issue is gone.\n\n" +
-			"✗ Broken\n  The issue is still present in the game.\n\n" +
-			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present."
+		header = s.app.Text("bisection_test", "Bisection Test", nil)
+		desc = s.app.Text("bisection_test_description", "Start Minecraft with the current active mod set and verify whether your issue is resolved.\n\n"+
+			"✓ Works\n  The game runs fine and the issue is gone.\n\n"+
+			"✗ Broken\n  The issue is still present in the game.\n\n"+
+			"? Can't Tell\n  The game crashed or you cannot observe whether the issue is present.", nil)
 	}
 
 	return s.layoutTwoPanel(gtx,
@@ -292,7 +294,7 @@ func (s *MainScreen) layoutTestPromptView(gtx layout.Context, th *material.Theme
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			return s.layoutListPanel(gtx, th, &s.activeModsList,
-				fmt.Sprintf("Active mods (%d)", len(s.activeMods)),
+				s.app.Translator().Plural("active_mods", "Active mod ({{.Count}})", "Active mods ({{.Count}})", len(s.activeMods), map[string]any{"Count": len(s.activeMods)}),
 				s.activeMods,
 			)
 		},
@@ -326,15 +328,15 @@ func (s *MainScreen) layoutTestPromptLeft(gtx layout.Context, th *material.Theme
 }
 
 func (s *MainScreen) layoutSuccessFailureButtons(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	successBtn := material.Button(th, &s.successClick, "✓ Works")
+	successBtn := material.Button(th, &s.successClick, s.app.Text("works", "✓ Works", nil))
 	successBtn.Background = theme.SuccessColor
 	successBtn.Color = colorWhite
 
-	indeterminateBtn := material.Button(th, &s.indeterminateClick, "? Can't Tell")
+	indeterminateBtn := material.Button(th, &s.indeterminateClick, s.app.Text("cant_tell", "? Can't Tell", nil))
 	indeterminateBtn.Background = color.NRGBA{R: 90, G: 62, B: 12, A: 255} // Dark amber
 	indeterminateBtn.Color = theme.WarningColor
 
-	failureBtn := material.Button(th, &s.failureClick, "✗ Broken")
+	failureBtn := material.Button(th, &s.failureClick, s.app.Text("broken", "✗ Broken", nil))
 	failureBtn.Background = theme.DangerColor
 	failureBtn.Color = colorWhite
 
@@ -348,7 +350,7 @@ func (s *MainScreen) layoutSuccessFailureButtons(gtx layout.Context, th *materia
 }
 
 func (s *MainScreen) layoutCancelButton(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	btn := material.Button(th, &s.cancelClick, "Cancel Test")
+	btn := material.Button(th, &s.cancelClick, s.app.Text("cancel_test", "Cancel Test", nil))
 	btn.Background = theme.CardBgColor
 	btn.Color = theme.FgColor
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -381,7 +383,7 @@ func (s *MainScreen) layoutListPanel(gtx layout.Context, th *material.Theme, lis
 			return layout.Inset{Bottom: unit.Dp(10)}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return list.Layout(gtx, th, items)
+			return list.Layout(gtx, th, items, s.app.Translator())
 		}),
 	)
 }

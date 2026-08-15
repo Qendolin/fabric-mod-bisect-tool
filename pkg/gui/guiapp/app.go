@@ -12,6 +12,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	guii18n "github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/i18n"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/screens"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/gui/theme"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
@@ -27,9 +28,10 @@ type Screen interface {
 type App struct {
 	ui.AppController
 
-	window *gioapp.Window
-	theme  *material.Theme
-	logger *logging.Logger
+	window     *gioapp.Window
+	theme      *material.Theme
+	logger     *logging.Logger
+	translator *guii18n.Translator
 
 	// Screen pages
 	setupScreen        *screens.SetupScreen
@@ -62,15 +64,17 @@ type App struct {
 	attachID any
 }
 
-func NewApp(controller ui.AppController, logger *logging.Logger) *App {
+func NewApp(controller ui.AppController, logger *logging.Logger, locale string) *App {
+	translator := guii18n.New(locale)
 	window := new(gioapp.Window)
-	window.Option(gioapp.Title("Mod Bisect Tool"), gioapp.Size(unit.Dp(800), unit.Dp(600)), gioapp.Decorated(false))
+	window.Option(gioapp.Title(translator.Text("app_name", "Mod Bisect Tool", nil)), gioapp.Size(unit.Dp(800), unit.Dp(600)), gioapp.Decorated(false))
 
 	a := &App{
 		AppController: controller,
 		window:        window,
 		theme:         theme.NewTheme(),
 		logger:        logger,
+		translator:    translator,
 	}
 
 	a.setupScreen = screens.NewSetupScreen(a)
@@ -82,6 +86,17 @@ func NewApp(controller ui.AppController, logger *logging.Logger) *App {
 	a.activeScreen = a.setupScreen
 
 	return a
+}
+
+func (a *App) Translator() *guii18n.Translator { return a.translator }
+
+func (a *App) Text(id, fallback string, data map[string]any) string {
+	return a.translator.Text(id, fallback, data)
+}
+
+func (a *App) SetLocale(locale string) {
+	a.translator.SetLocale(locale)
+	a.Update()
 }
 
 func (a *App) Stop() {
@@ -126,8 +141,8 @@ func (a *App) ShowQuitDialog() {
 		return
 	}
 	defer a.quitDialogOpen.Store(false)
-	opts := append(a.dialogOptions(), zenity.Title("Quit"))
-	err := zenity.Question("Are you sure you want to quit?\nThe current search progress will be lost.", opts...)
+	opts := append(a.dialogOptions(), zenity.Title(a.translator.Text("quit", "Quit", nil)))
+	err := zenity.Question(a.translator.Text("quit_message", "Are you sure you want to quit?\nThe current search progress will be lost.", nil), opts...)
 	if err == nil {
 		a.Stop()
 	}
@@ -193,7 +208,7 @@ func (a *App) layout(gtx layout.Context) {
 
 	decoStyle := material.Decorations(a.theme, &a.decorations,
 		system.ActionMinimize|system.ActionMaximize|system.ActionClose,
-		"Mod Bisect Tool")
+		a.translator.Text("app_name", "Mod Bisect Tool", nil))
 	decoStyle.Background = theme.BorderColor
 	decoStyle.Foreground = theme.FgColor
 	decoStyle.Title.Color = theme.TextMutedColor

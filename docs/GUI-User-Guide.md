@@ -22,7 +22,17 @@ a windowed interface, and native dialogs instead of keyboard shortcuts.
    ```bash
    xattr -dr com.apple.quarantine "Mod-Bisect-Tool.app"
    ```
-   This clears the macOS security quarantine metadata that can block downloaded applications.
+    This clears the macOS security quarantine metadata that can block downloaded applications.
+
+### Language
+
+The GUI uses the operating system locale automatically. The setup screen includes
+a language selector; English is currently the only available language. For testing
+or scripting, the locale can also be selected with the `--locale` option:
+
+```text
+mod-bisect-gui --locale en
+```
 
 ## How to Use the Tool
 

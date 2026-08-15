@@ -1,8 +1,6 @@
 package guiapp
 
 import (
-	"fmt"
-
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/ncruces/zenity"
 )
@@ -10,7 +8,7 @@ import (
 func (a *App) ShowErrorDialog(title, message string, err error) {
 	fullMsg := message
 	if err != nil {
-		fullMsg += "\n\nDetails: " + err.Error()
+		fullMsg += "\n\n" + a.translator.Text("details", "Details: {{.Error}}", map[string]any{"Error": err.Error()})
 	}
 	opts := append(a.dialogOptions(), zenity.Title(title))
 	_ = zenity.Error(fullMsg, opts...)
@@ -37,48 +35,48 @@ func (a *App) ShowQuestionDialog(title, message, details string) (ok bool) {
 
 // Dialogs (Blocking)
 func (a *App) ShowDialogErrorModLoadingGeneric(path string, err error) {
-	a.ShowErrorDialog("Mod Loading Error", fmt.Sprintf("Failed to load mods from '%s", path), err)
+	a.ShowErrorDialog(a.translator.Text("mod_loading_error", "Mod Loading Error", nil), a.translator.Text("failed_load_mods", "Failed to load mods from '{{.Path}}'", map[string]any{"Path": path}), err)
 	a.SetActiveScreen(a.setupScreen)
 }
 
 func (a *App) ShowDialogErrorModLoadingNoMods(path string) {
-	a.ShowErrorDialog("Mod Loading Error", fmt.Sprintf("No mods were found at '%s'.\nPlease ensure that you've entered the path correctly.", path), nil)
+	a.ShowErrorDialog(a.translator.Text("mod_loading_error", "Mod Loading Error", nil), a.translator.Text("no_mods_found", "No mods were found at '{{.Path}}'.\nPlease ensure that you've entered the path correctly.", map[string]any{"Path": path}), nil)
 	a.SetActiveScreen(a.setupScreen)
 }
 
 func (a *App) ShowDialogErrorBisectionInitialization(err error) {
-	a.ShowErrorDialog("Initialization Error", "Failed to initialize the bisection!", err)
+	a.ShowErrorDialog(a.translator.Text("initialization_error", "Initialization Error", nil), a.translator.Text("failed_initialize", "Failed to initialize the bisection!", nil), err)
 	a.SetActiveScreen(a.setupScreen)
 }
 
 func (a *App) ShowDialogErrorBisectionCannotContinue(err error) {
-	a.ShowErrorDialog("Bisection Error", "Cannot continue the search!", err)
+	a.ShowErrorDialog(a.translator.Text("bisection_error", "Bisection Error", nil), a.translator.Text("cannot_continue", "Cannot continue the search!", nil), err)
 }
 
 func (a *App) ShowDialogErrorBisectionPrepare(err error) {
-	a.ShowErrorDialog("Bisection Error", "An error occurred and the next step could not be prepared.\nIf another program, like Minecraft, is currently accessing your mods, please close it.\n\nPlease check the application log for details.", err)
+	a.ShowErrorDialog(a.translator.Text("bisection_error", "Bisection Error", nil), a.translator.Text("prepare_error", "An error occurred and the next step could not be prepared.\nIf another program, like Minecraft, is currently accessing your mods, please close it.\n\nPlease check the application log for details.", nil), err)
 }
 
 func (a *App) ShowDialogInfoBisectionModsMissingExpected(missingMods sets.Set) {
 	a.ShowInfoDialog(
-		"Known Problematic Mod(s) Removed",
-		"The following mod(s), which were part of a known conflict set, have been detected as missing. This is expected. The search will now proceed with the updated mod list.",
+		a.translator.Text("problematic_mods_removed", "Known Problematic Mod(s) Removed", nil),
+		a.translator.Text("problematic_mods_removed_message", "The following mod(s), which were part of a known conflict set, have been detected as missing. This is expected. The search will now proceed with the updated mod list.", nil),
 		sets.FormatSet(missingMods).String(),
 	)
 }
 
 func (a *App) ShowDialogInfoBisectionUnresolvableModsDisabled(disabledMods sets.Set) {
 	a.ShowInfoDialog(
-		"Disabled Mods",
-		"The following mods were automatically disabled due to unmet dependencies:",
+		a.translator.Text("disabled_mods", "Disabled Mods", nil),
+		a.translator.Text("disabled_mods_message", "The following mods were automatically disabled due to unmet dependencies:", nil),
 		sets.FormatSet(disabledMods).String(),
 	)
 }
 
 func (a *App) ShowDialogQuestionBisectionContinueWithMissingMods(missingMods sets.Set) bool {
 	return a.ShowQuestionDialog(
-		"Missing Mod Files Detected",
-		"The following mod files were unexpectedly missing. Do you want to continue the search without them?",
+		a.translator.Text("missing_mod_files", "Missing Mod Files Detected", nil),
+		a.translator.Text("missing_mod_files_message", "The following mod files were unexpectedly missing. Do you want to continue the search without them?", nil),
 		sets.FormatSet(missingMods).String(),
 	)
 }

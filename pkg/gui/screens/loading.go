@@ -45,7 +45,7 @@ func (s *LoadingScreen) Layout(gtx layout.Context, th *material.Theme) layout.Di
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 						// Title
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							title := material.H4(th, "Loading Mods...")
+							title := material.H4(th, s.app.Text("loading_mods", "Loading Mods...", nil))
 							title.Color = theme.PrimaryColor
 							title.Alignment = text.Middle
 							title.Font.Weight = font.Bold
@@ -53,7 +53,7 @@ func (s *LoadingScreen) Layout(gtx layout.Context, th *material.Theme) layout.Di
 						}),
 						// Message
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							desc := material.Body1(th, "This should only take a few seconds.")
+							desc := material.Body1(th, s.app.Text("loading_mods_description", "This should only take a few seconds.", nil))
 							desc.Color = theme.TextMutedColor
 							desc.Alignment = text.Middle
 							return layout.Inset{Bottom: unit.Dp(32)}.Layout(gtx, desc.Layout)
