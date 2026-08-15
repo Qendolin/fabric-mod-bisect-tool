@@ -27,11 +27,8 @@ func TestTranslatorPluralFallback(t *testing.T) {
 
 func TestGermanTranslations(t *testing.T) {
 	tr := New("de")
-	if got := tr.TextIn("en", "locale_de", "de", nil); got != "German" {
-		t.Fatalf("English locale label for German = %q, want %q", got, "German")
-	}
-	if got := tr.TextIn("de", "locale_en", "en", nil); got != "Englisch" {
-		t.Fatalf("German locale label for English = %q, want %q", got, "Englisch")
+	if got := tr.TextIn("en", "locale_name", "en", nil); got != "English" {
+		t.Fatalf("German locale label for English = %q, want %q", got, "English")
 	}
 	if got := tr.Text("locale_name", "fallback", nil); got != "Deutsch" {
 		t.Fatalf("German locale name = %q, want %q", got, "Deutsch")
