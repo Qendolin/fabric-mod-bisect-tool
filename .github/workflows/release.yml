@@ -155,8 +155,11 @@ jobs:
 
           ---
 
-          ### Legacy & Other Builds
-          Check the raw **Assets** checklist at the very bottom of this page for alternative formats.
+          ## How to use
+
+          Please see the respective guide for instructions:
+
+          [GUI User Guide](docs/GUI-User-Guide.md) | [TUI User Guide](docs/TUI-User-Guide.md)
 
           ---
 
