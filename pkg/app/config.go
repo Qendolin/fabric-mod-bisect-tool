@@ -100,7 +100,7 @@ func ParseCLIArgs() *CLIArgs {
 		args.Loader = loader
 		return nil
 	})
-	flag.StringVar(&args.LogDir, "log-dir", ".", "Specifies the directory to store log files.")
+	flag.StringVar(&args.LogDir, "log-dir", "", "Specifies the directory to store log files.")
 	flag.StringVar(&args.Locale, "locale", "", "GUI language/locale. Defaults to the system locale.")
 	flag.Parse()
 

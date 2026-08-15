@@ -8,8 +8,8 @@ mod-bisect-gui
 mod-bisect-tui
 !mod-bisect-tui/
 
-fyne_metadata_init.go
 # gogio build artifact (regenerated on each build)
 *.syso
+/dist
 
 Changelog.md
