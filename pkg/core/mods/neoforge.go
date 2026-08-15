@@ -260,7 +260,8 @@ func convertNeoForgeToml(tomlData *neoForgeModsToml, manifestPath, jarIdentifier
 	if modDependencies, ok := tomlData.Dependencies[primaryMod.ModID]; ok {
 		for _, dep := range modDependencies {
 			if dep.ModID == "" {
-				continue // Skip malformed dependencies with no ID.
+				logging.Debugf("ModLoader: Skipping dependency with no ID in %s", jarIdentifier)
+				continue
 			}
 
 			// A single Maven range string can translate to multiple Fabric predicate strings (OR relationship).
@@ -291,6 +292,7 @@ func convertNeoForgeToml(tomlData *neoForgeModsToml, manifestPath, jarIdentifier
 					depType = "optional"
 				}
 			}
+			depType = strings.ToLower(depType)
 
 			switch depType {
 			case "required":
@@ -301,6 +303,8 @@ func convertNeoForgeToml(tomlData *neoForgeModsToml, manifestPath, jarIdentifier
 				mm.Breaks[dep.ModID] = predicates
 			case "discouraged":
 				mm.Conflicts[dep.ModID] = predicates
+			default:
+				logging.Warnf("ModLoader: Unknown dependency type '%s' for dep '%s' in %s; treating as optional", depType, dep.ModID, jarIdentifier)
 			}
 		}
 	}

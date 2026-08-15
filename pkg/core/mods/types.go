@@ -223,7 +223,7 @@ func (rp ResolutionPath) String() string {
 		if info.SelectedProvider != nil {
 			providerStr = fmt.Sprintf(" (via %s v%s)", info.SelectedProvider.TopLevelModID, info.SelectedProvider.VersionOfProvidedItem)
 		}
-		depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required for: [%s]",
+		depLogMessages = append(depLogMessages, fmt.Sprintf("  - Mod '%s': Satisfies: '%s'%s, Required by: [%s]",
 			info.ModID, info.SatisfiedDep, providerStr, neededForStr))
 	}
 
