@@ -37,17 +37,16 @@ func (vf VersionField) String() string {
 func (vf *VersionField) UnmarshalJSON(data []byte) error {
 	var versionStr string
 	if err := json.Unmarshal(data, &versionStr); err != nil {
-		logging.Debugf("VersionField: Unmarshal to string failed: %v", err) // DEBUG
+		logging.Debugf("VersionField: Unmarshal to string failed: %v", err)
 		return fmt.Errorf("version field is not a string: %w", err)
 	}
 
 	parsed, err := version.Parse(versionStr, false)
 	if err != nil {
-		logging.Debugf("VersionField: version.Parse failed for '%s': %v", versionStr, err) // DEBUG
+		logging.Debugf("VersionField: version.Parse failed for '%s': %v", versionStr, err)
 		return fmt.Errorf("parsing version string '%s': %w", versionStr, err)
 	}
 
-	logging.Debugf("VersionField: Successfully parsed '%s'", versionStr) // DEBUG
 	vf.Version = parsed
 	return nil
 }
