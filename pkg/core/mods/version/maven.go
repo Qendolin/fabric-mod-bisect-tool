@@ -202,7 +202,7 @@ func mavenQualifierName(tokens []mavenVersionToken) string {
 func semverQualifier(tokens []mavenVersionToken) string {
 	parts := make([]string, 0, len(tokens))
 	for _, token := range tokens {
-		value := strings.ToLower(token.value)
+		value := sanitizeSemverQualifier(token.value)
 		if len(parts) == 0 {
 			switch value {
 			case "a":
@@ -233,6 +233,27 @@ func semverQualifier(tokens []mavenVersionToken) string {
 		}
 	}
 	return strings.Join(parts, ".")
+}
+
+func sanitizeSemverQualifier(value string) string {
+	value = strings.ToLower(value)
+	var sanitized strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+			sanitized.WriteByte(c)
+		case c == '+':
+			sanitized.WriteString("plus")
+		default:
+			sanitized.WriteString("x")
+			sanitized.WriteString(strconv.FormatInt(int64(c), 16))
+		}
+	}
+	if sanitized.Len() == 0 {
+		return "x"
+	}
+	return sanitized.String()
 }
 
 func postReleaseBase(baseVersion string) string {

@@ -106,6 +106,23 @@ func TestMavenVersionAliasContext(t *testing.T) {
 	}
 }
 
+func TestMavenPlusQualifiedRangesProduceValidPredicates(t *testing.T) {
+	for _, input := range []string{
+		"[1.0.0-beta.1+1.21.1,)",
+		"[1.0.0-alpha.13+1.21.1,)",
+	} {
+		translated, err := version.TranslateMavenVersionRange(input)
+		if err != nil {
+			t.Fatalf("unexpected error translating %q: %v", input, err)
+		}
+		for _, predicateString := range translated {
+			if _, err := version.ParseVersionPredicate(predicateString); err != nil {
+				t.Errorf("translated predicate %q from %q is invalid: %v", predicateString, input, err)
+			}
+		}
+	}
+}
+
 func TestMavenVersionRangesAgainstVersions(t *testing.T) {
 	tests := []struct {
 		name   string
