@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 )
@@ -11,7 +12,7 @@ import (
 // GenerateLogReport creates a detailed plain-text summary of the entire
 // bisection process, including the execution history and all conflict sets,
 // suitable for logging.
-func GenerateLogReport(bvm ui.BisectionViewModel, rvm ui.ResultViewModel) string {
+func GenerateLogReport(bvm ui.BisectionViewModel, hvm ui.ExecutionLogViewModel, rvm ui.ResultViewModel) string {
 	var builder strings.Builder
 
 	// --- Section 1: Overview ---
@@ -21,7 +22,7 @@ func GenerateLogReport(bvm ui.BisectionViewModel, rvm ui.ResultViewModel) string
 
 	// --- Section 2: Detailed Execution History ---
 	builder.WriteString("===== Bisection History (Execution Log) =====\n")
-	writeExecutionHistory(&builder, &bvm)
+	writeExecutionHistory(&builder, &hvm, &bvm)
 	builder.WriteString("\n")
 
 	// --- Section 3: Final Conflict Sets ---
@@ -75,15 +76,15 @@ func writeOverview(b *strings.Builder, bvm *ui.BisectionViewModel, rvm *ui.Resul
 }
 
 // writeExecutionHistory renders every completed test with full context.
-func writeExecutionHistory(b *strings.Builder, bvm *ui.BisectionViewModel) {
-	if len(bvm.ExecutionLog) == 0 {
+func writeExecutionHistory(b *strings.Builder, hvm *ui.ExecutionLogViewModel, bvm *ui.BisectionViewModel) {
+	if len(hvm.Entries) == 0 {
 		b.WriteString("No tests were executed.\n")
 		return
 	}
 
-	for i, entry := range bvm.ExecutionLog {
-		state := entry.StateBeforeTest
-		isVerification := entry.Plan.IsVerificationStep
+	for i, entry := range hvm.Entries {
+		isVerification := entry.Kind == imcs.TestPlanVerification
+		testSet := entry.Plan.ModIDsToTest
 
 		verificationTag := ""
 		if isVerification {
@@ -92,24 +93,23 @@ func writeExecutionHistory(b *strings.Builder, bvm *ui.BisectionViewModel) {
 
 		fmt.Fprintf(b, "#%-3d: Step %-3d | Round %d, Iter %d | Test(%d mods)%s -> %s\n",
 			i+1,
-			state.Step,
-			state.Round,
-			state.Iteration,
-			len(entry.Plan.ModIDsToTest),
+			entry.Step,
+			entry.Round,
+			entry.Iteration,
+			len(testSet),
 			verificationTag,
 			entry.Result,
 		)
 
-		fmt.Fprintf(b, "    Tested mods: %s\n", formatModList(sets.MakeSlice(entry.Plan.ModIDsToTest), bvm.Mods.Infos))
+		fmt.Fprintf(b, "    Tested mods: %s\n", formatModList(sets.MakeSlice(testSet), bvm.Mods.Infos))
 
 		// Context captured before the test was executed.
 		fmt.Fprintf(b, "    Conflict set so far (%d): %s\n",
-			len(state.ConflictSet), formatModList(sets.MakeSlice(state.ConflictSet), bvm.Mods.Infos))
+			len(entry.ConflictSet), formatModList(sets.MakeSlice(entry.ConflictSet), bvm.Mods.Infos))
 		fmt.Fprintf(b, "    Candidate set before test (%d): %s\n",
-			len(state.Candidates), formatModList(sets.MakeSlice(state.GetCandidateSet()), bvm.Mods.Infos))
-		cleared := state.GetClearedSet()
+			len(entry.Candidates), formatModList(sets.MakeSlice(entry.Candidates), bvm.Mods.Infos))
 		fmt.Fprintf(b, "    Cleared set before test (%d): %s\n",
-			len(cleared), formatModList(sets.MakeSlice(cleared), bvm.Mods.Infos))
+			len(entry.ClearedSet), formatModList(sets.MakeSlice(entry.ClearedSet), bvm.Mods.Infos))
 	}
 }
 

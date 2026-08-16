@@ -2,10 +2,44 @@ package imcs
 
 import "github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 
+// TestPlanKind identifies the algorithm branch that produced a test plan.
+type TestPlanKind string
+
+const (
+	TestPlanComplement   TestPlanKind = "complement"
+	TestPlanContinuation TestPlanKind = "continuation"
+	TestPlanVerification TestPlanKind = "verification"
+	TestPlanNewBisection TestPlanKind = "new_bisection"
+)
+
 // TestPlan is an immutable object representing a single, well-defined test.
+// Its fields retain the algorithm's split data so the engine can explain how
+// the plan was produced without recalculating the decision.
 type TestPlan struct {
-	ModIDsToTest       sets.Set
-	IsVerificationStep bool
+	Kind        TestPlanKind
+	StableSet   sets.Set
+	C1          sets.OrderedSet
+	C2          sets.OrderedSet
+	ConflictSet sets.Set
+}
+
+// ModIDsToTest returns the effective mod set represented by the plan.
+func (p TestPlan) ModIDsToTest() sets.Set {
+	switch p.Kind {
+	case TestPlanComplement:
+		return sets.Union(p.StableSet, sets.MakeSet(p.C2))
+	case TestPlanContinuation, TestPlanNewBisection:
+		return sets.Union(p.StableSet, sets.MakeSet(p.C1))
+	case TestPlanVerification:
+		return p.ConflictSet
+	default:
+		return sets.Set{}
+	}
+}
+
+// IsVerificationStep reports whether this plan tests the current conflict set.
+func (p TestPlan) IsVerificationStep() bool {
+	return p.Kind == TestPlanVerification
 }
 
 // CompletedTest is a record of a test that was planned and executed.

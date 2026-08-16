@@ -36,7 +36,7 @@ func TestGenerateLogReportIncludesCurrentConflictSet(t *testing.T) {
 		},
 	}
 
-	report := GenerateLogReport(bvm, rvm)
+	report := GenerateLogReport(bvm, ui.ExecutionLogViewModel{}, rvm)
 
 	for _, want := range []string{"moda", "modb", "Conflict Set #1", "(current round)"} {
 		if !strings.Contains(report, want) {
@@ -68,7 +68,7 @@ func TestGenerateLogReportIncludesArchivedAndCurrentConflictSets(t *testing.T) {
 		},
 	}
 
-	report := GenerateLogReport(bvm, rvm)
+	report := GenerateLogReport(bvm, ui.ExecutionLogViewModel{}, rvm)
 
 	for _, want := range []string{
 		"Found 2 conflict set(s)",
@@ -88,7 +88,7 @@ func TestGenerateLogReportNoConflicts(t *testing.T) {
 	bvm := ui.BisectionViewModel{IsReady: true, Progress: ui.BisectionProgressViewModel{IsComplete: true}}
 	rvm := ui.ResultViewModel{State: ui.StateComplete}
 
-	report := GenerateLogReport(bvm, rvm)
+	report := GenerateLogReport(bvm, ui.ExecutionLogViewModel{}, rvm)
 	if !strings.Contains(report, "No problematic mods were found") {
 		t.Errorf("expected no-problem message, got:\n%s", report)
 	}
@@ -99,13 +99,6 @@ func TestGenerateLogReportNoConflicts(t *testing.T) {
 func TestGenerateLogReportExecutionHistoryDetail(t *testing.T) {
 	bvm := ui.BisectionViewModel{
 		IsReady: true,
-		ExecutionLog: []imcs.CompletedTest{
-			{
-				Plan:            imcs.TestPlan{ModIDsToTest: sets.MakeSet([]string{"a"})},
-				Result:          imcs.TestResultGood,
-				StateBeforeTest: imcs.SearchState{Round: 1, Iteration: 1, Step: 1},
-			},
-		},
 		Mods: ui.ModsViewModel{
 			Infos: map[string]ui.ModViewModel{
 				"a": {ID: "a", Name: "Mod A", Version: "1.0", BaseFilename: "moda"},
@@ -114,7 +107,13 @@ func TestGenerateLogReportExecutionHistoryDetail(t *testing.T) {
 	}
 	rvm := ui.ResultViewModel{State: ui.StateNoResultsYet}
 
-	report := GenerateLogReport(bvm, rvm)
+	hvm := ui.ExecutionLogViewModel{Entries: []ui.ExecutionLogEntryViewModel{{
+		Step: 1, Round: 1, Iteration: 1,
+		Result: imcs.TestResultGood,
+		Kind:   imcs.TestPlanVerification,
+		Plan:   ui.TestPlanViewModel{ModIDsToTest: sets.MakeSet([]string{"a"})},
+	}}}
+	report := GenerateLogReport(bvm, hvm, rvm)
 
 	for _, want := range []string{"-> GOOD", "Tested mods: Mod A (a 1.0)"} {
 		if !strings.Contains(report, want) {

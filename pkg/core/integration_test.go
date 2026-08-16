@@ -38,7 +38,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			break
 		}
 
-		effectiveSet := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest).EffectiveSet
+		effectiveSet := svc.StateManager().ResolveEffectiveSet(plan.ModIDsToTest()).EffectiveSet
 
 		allProvidedIDsByEffectiveSet := sets.Copy(effectiveSet)
 		for modID := range effectiveSet {
@@ -67,7 +67,7 @@ func runBisectionTest(t *testing.T, svc *bisect.Service, allMods map[string]*mod
 			result = imcs.TestResultIndeterminate
 		}
 
-		t.Logf("Step %d: Testing %v -> Effective %v -> Result: %s", testCount+1, sets.MakeSlice(plan.ModIDsToTest), sets.MakeSlice(effectiveSet), result)
+		t.Logf("Step %d: Testing %v -> Effective %v -> Result: %s", testCount+1, sets.MakeSlice(plan.ModIDsToTest()), sets.MakeSlice(effectiveSet), result)
 		if err := svc.Engine().SubmitTestResult(result); err != nil {
 			t.Fatalf("SubmitTestResult failed: %v", err)
 		}

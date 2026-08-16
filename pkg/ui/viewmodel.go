@@ -144,6 +144,27 @@ type TestPlanViewModel struct {
 // IsPlanned reports whether a test is actually planned (the zero value is not).
 func (p TestPlanViewModel) IsPlanned() bool { return len(p.ModIDsToTest) > 0 }
 
+// ExecutionLogEntryViewModel is the UI-ready record of one completed test.
+type ExecutionLogEntryViewModel struct {
+	Step      int
+	Round     int
+	Iteration int
+	Result    imcs.TestResult
+	Kind      imcs.TestPlanKind
+	Plan      TestPlanViewModel
+
+	ConflictSet sets.Set
+	Candidates  sets.Set
+	StableSet   sets.Set
+	ClearedSet  sets.Set
+}
+
+// ExecutionLogViewModel contains completed test history. It is fetched
+// separately because history is not needed during every regular redraw.
+type ExecutionLogViewModel struct {
+	Entries []ExecutionLogEntryViewModel
+}
+
 // BisectionViewModel provides a snapshot of the current bisection state,
 // tailored for UI consumption. It decouples the UI from the underlying engine's implementation.
 type BisectionViewModel struct {
@@ -155,5 +176,4 @@ type BisectionViewModel struct {
 	Loader   LoaderViewModel
 
 	CurrentTestPlan TestPlanViewModel
-	ExecutionLog    []imcs.CompletedTest
 }

@@ -62,26 +62,21 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 	// test on the second half to determine where the primary conflict lies.
 	if state.IsHandlingIndeterminate {
 		stable, candidates := indeterminateContext(state)
-		_, c2 := sets.Split(candidates)
-		testSet := sets.Union(stable, sets.MakeSet(c2))
-		logging.Debugf("IMCSAlgorithm.PlanNextTest: Planning complement test after INDETERMINATE. StableSet: %v, Candidates: %v. Testing second half: %v", sets.FormatSet(stable), candidates, c2)
-		return &TestPlan{ModIDsToTest: testSet, IsVerificationStep: false}, nil
+		c1, c2 := sets.Split(candidates)
+		return &TestPlan{Kind: TestPlanComplement, StableSet: stable, C1: c1, C2: c2, ConflictSet: state.ConflictSet}, nil
 	}
 
 	// Priority 1: A bisection search for an element is in progress.
 	if len(state.SearchStack) > 0 {
 		currentStep := state.SearchStack[len(state.SearchStack)-1]
-		c1, _ := sets.Split(currentStep.Candidates)
-		testSet := sets.Union(currentStep.StableSet, sets.MakeSet(c1))
-		logging.Debugf("IMCSAlgorithm.PlanNextTest: Continuing bisection (stack depth %d). StableSet: %v, Candidates: %v. Testing first half: %v", len(state.SearchStack), sets.FormatSet(currentStep.StableSet), currentStep.Candidates, c1)
-		return &TestPlan{ModIDsToTest: testSet, IsVerificationStep: false}, nil
+		c1, c2 := sets.Split(currentStep.Candidates)
+		return &TestPlan{Kind: TestPlanContinuation, StableSet: currentStep.StableSet, C1: c1, C2: c2, ConflictSet: state.ConflictSet}, nil
 	}
 
 	// Priority 2: No bisection, but we need to run the `test(ConflictSet)` optimization.
 	if state.IsVerifyingConflictSet {
-		logging.Debugf("IMCSAlgorithm.PlanNextTest: Planning verification test for ConflictSet: %v", sets.FormatSet(state.ConflictSet))
 		// This test only includes the conflict set itself, no other context.
-		return &TestPlan{ModIDsToTest: state.ConflictSet, IsVerificationStep: true}, nil
+		return &TestPlan{Kind: TestPlanVerification, StableSet: sets.Set{}, C1: sets.OrderedSet{}, C2: sets.OrderedSet{}, ConflictSet: state.ConflictSet}, nil
 	}
 
 	// Priority 3: No bisection, no verification. Time to start a new search for the next element.
@@ -93,12 +88,9 @@ func (a *IMCSAlgorithm) PlanNextTest(state SearchState) (*TestPlan, error) {
 	// This is the start of a "FindNextConflictElement" call. Plan the first test.
 	// The StableSet for this new bisection is the globally confirmed ConflictSet.
 	stableSet := state.ConflictSet
-	c1, _ := sets.Split(state.Candidates)
-	testSet := sets.Union(stableSet, sets.MakeSet(c1))
+	c1, c2 := sets.Split(state.Candidates)
 
-	logging.Debugf("IMCSAlgorithm.PlanNextTest: Starting new bisection. StableSet: %v, All Candidates: %v. Testing first half: %v", sets.FormatSet(stableSet), state.Candidates, c1)
-
-	return &TestPlan{ModIDsToTest: testSet, IsVerificationStep: false}, nil
+	return &TestPlan{Kind: TestPlanNewBisection, StableSet: stableSet, C1: c1, C2: c2, ConflictSet: state.ConflictSet}, nil
 }
 
 // applyComplementResult processes the result of the complement test that was
@@ -159,7 +151,7 @@ func (a *IMCSAlgorithm) ApplyResult(state SearchState, plan TestPlan, result Tes
 	newState.Step++
 
 	// --- Handle Verification Step Result ---
-	if plan.IsVerificationStep {
+	if plan.IsVerificationStep() {
 		newState.Step = 0
 		if result == TestResultFail {
 			// The current ConflictSet is sufficient to cause a crash. We are done.

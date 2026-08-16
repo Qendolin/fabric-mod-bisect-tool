@@ -18,6 +18,7 @@ type AppController interface {
 	CompleteLoading()
 
 	GetViewModel() BisectionViewModel
+	GetExecutionLogViewModel() ExecutionLogViewModel
 	GetResultViewModel() ResultViewModel
 
 	GetBisectionController() BisectionController

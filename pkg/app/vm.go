@@ -3,6 +3,7 @@ package app
 import (
 	"sort"
 
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/imcs"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/mods"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
@@ -39,7 +40,7 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	engine := a.bisectSvc.Engine()
 	enumState := a.bisectSvc.EnumerationState()
 	state := engine.GetCurrentState()
-	currentPlan, _ := engine.GetCurrentTestPlan()
+	currentPlan, _ := a.bisectSvc.GetCurrentTestPlan()
 	allMods := a.bisectSvc.StateManager().GetAllMods()
 
 	isVerification := currentPlan != nil && currentPlan.IsVerificationStep
@@ -67,8 +68,6 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	if currentPlan != nil {
 		vm.CurrentTestPlan = ui.TestPlanViewModel{ModIDsToTest: currentPlan.ModIDsToTest}
 	}
-	vm.ExecutionLog = a.bisectSvc.GetCombinedExecutionLog()
-
 	vm.Mods = ui.ModsViewModel{
 		All:   state.AllModIDs,
 		Infos: make(map[string]ui.ModViewModel, len(allMods)),
@@ -78,6 +77,39 @@ func (a *App) GetViewModel() ui.BisectionViewModel {
 	}
 
 	return vm
+}
+
+// GetExecutionLogViewModel materializes history only when a history consumer
+// requests it, rather than copying it during every regular redraw.
+func (a *App) GetExecutionLogViewModel() ui.ExecutionLogViewModel {
+	return makeExecutionLogVM(a.bisectSvc.GetCombinedExecutionLog())
+}
+
+func makeExecutionLogVM(entries []imcs.CompletedTest) ui.ExecutionLogViewModel {
+	vm := ui.ExecutionLogViewModel{Entries: make([]ui.ExecutionLogEntryViewModel, 0, len(entries))}
+	for _, entry := range entries {
+		state := entry.StateBeforeTest
+		vm.Entries = append(vm.Entries, ui.ExecutionLogEntryViewModel{
+			Step:        state.Step,
+			Round:       state.Round,
+			Iteration:   state.Iteration,
+			Result:      entry.Result,
+			Kind:        entry.Plan.Kind,
+			Plan:        ui.TestPlanViewModel{ModIDsToTest: sets.Copy(entry.Plan.ModIDsToTest())},
+			ConflictSet: sets.Copy(state.ConflictSet),
+			Candidates:  historyCandidates(state, entry.Plan.IsVerificationStep()),
+			StableSet:   sets.Copy(state.GetStableSet()),
+			ClearedSet:  sets.Copy(state.GetClearedSet()),
+		})
+	}
+	return vm
+}
+
+func historyCandidates(state imcs.SearchState, verification bool) sets.Set {
+	if verification {
+		return sets.Set{}
+	}
+	return sets.Copy(state.GetCandidateSet())
 }
 
 // GetResultViewModel processes raw bisection data into a clean structured view model.
@@ -99,7 +131,7 @@ func (a *App) GetResultViewModel() (result ui.ResultViewModel) {
 	}
 
 	modState := a.bisectSvc.StateManager()
-	currentPlan := a.bisectSvc.Engine().GetActiveTestPlan()
+	currentPlan := a.bisectSvc.GetActiveTestPlan()
 
 	modMap := modState.GetAllMods()
 	allModsSet := sets.MakeSet(modState.GetAllModIDs())

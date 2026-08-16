@@ -23,7 +23,7 @@ func runSearchToCompletion(t *testing.T, initialState SearchState, oracle oracle
 		if err != nil {
 			t.Fatalf("PlanNextTest failed: %v", err)
 		}
-		result := oracle(plan.ModIDsToTest)
+		result := oracle(plan.ModIDsToTest())
 		if err := engine.SubmitTestResult(result); err != nil {
 			t.Fatalf("SubmitTestResult failed: %v", err)
 		}
@@ -36,6 +36,51 @@ func initialStateFor(mods ...string) SearchState {
 	state.AllModIDs = mods
 	state.Candidates = mods
 	return state
+}
+
+func TestTestPlanKindsDeriveExpectedTestSets(t *testing.T) {
+	stable := sets.MakeSet([]string{"stable"})
+	c1 := sets.OrderedSet{"a", "b"}
+	c2 := sets.OrderedSet{"c", "d"}
+	conflict := sets.MakeSet([]string{"conflict"})
+
+	tests := []struct {
+		name string
+		plan TestPlan
+		want sets.Set
+	}{
+		{
+			name: "complement",
+			plan: TestPlan{Kind: TestPlanComplement, StableSet: stable, C1: c1, C2: c2, ConflictSet: conflict},
+			want: sets.MakeSet([]string{"stable", "c", "d"}),
+		},
+		{
+			name: "continuation",
+			plan: TestPlan{Kind: TestPlanContinuation, StableSet: stable, C1: c1, C2: c2, ConflictSet: conflict},
+			want: sets.MakeSet([]string{"stable", "a", "b"}),
+		},
+		{
+			name: "new bisection",
+			plan: TestPlan{Kind: TestPlanNewBisection, StableSet: stable, C1: c1, C2: c2, ConflictSet: conflict},
+			want: sets.MakeSet([]string{"stable", "a", "b"}),
+		},
+		{
+			name: "verification",
+			plan: TestPlan{Kind: TestPlanVerification, StableSet: stable, C1: c1, C2: c2, ConflictSet: conflict},
+			want: sets.MakeSet([]string{"conflict"}),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.plan.ModIDsToTest(); !sets.Equal(got, tc.want) {
+				t.Fatalf("expected test set %v, got %v", sets.MakeSlice(tc.want), sets.MakeSlice(got))
+			}
+			if got := tc.plan.IsVerificationStep(); got != (tc.plan.Kind == TestPlanVerification) {
+				t.Fatalf("unexpected verification classification: %t", got)
+			}
+		})
+	}
 }
 
 // TestIndeterminateMaskingModExcluded verifies that a masking mod which always
@@ -92,7 +137,7 @@ func TestComplementDescentReplacesStackFrame(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PlanNextTest failed: %v", err)
 		}
-		if err := engine.SubmitTestResult(oracle(plan.ModIDsToTest)); err != nil {
+		if err := engine.SubmitTestResult(oracle(plan.ModIDsToTest())); err != nil {
 			t.Fatalf("SubmitTestResult failed: %v", err)
 		}
 	}
@@ -242,7 +287,7 @@ func TestIndeterminateCountAndEstimate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PlanNextTest failed: %v", err)
 		}
-		result := oracle(plan.ModIDsToTest)
+		result := oracle(plan.ModIDsToTest())
 		if result == TestResultIndeterminate {
 			indeterminateSeen++
 		}

@@ -8,6 +8,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -30,7 +31,7 @@ type HistoryPage struct {
 	detailSummaryText    *tview.TextView
 	detailSetsText       *tview.TextView
 
-	historyCache []imcs.CompletedTest
+	historyCache []ui.ExecutionLogEntryViewModel
 }
 
 // NewHistoryPage creates a new page for viewing bisection history.
@@ -112,7 +113,7 @@ func (p *HistoryPage) refreshHistory() {
 		return
 	}
 
-	p.historyCache = vm.ExecutionLog
+	p.historyCache = p.app.GetExecutionLogViewModel().Entries
 	p.detailOverviewWidget.SetAllMods(vm.Mods.All)
 
 	if len(p.historyCache) == 0 {
@@ -123,9 +124,8 @@ func (p *HistoryPage) refreshHistory() {
 
 	for i, entry := range p.historyCache {
 		number := i + 1
-		state := entry.StateBeforeTest
 		summary := fmt.Sprintf("#%d: Round %d - Iter %d - Step %d: [yellow]%s[-]",
-			number, state.Round, state.Iteration, state.Step, entry.Result)
+			number, entry.Round, entry.Iteration, entry.Step, entry.Result)
 
 		summaryView := tview.NewTextView().SetDynamicColors(true).SetText(summary)
 		summaryView.SetBackgroundColor(tcell.ColorNone)
@@ -156,17 +156,9 @@ func (p *HistoryPage) refreshHistory() {
 	}
 }
 
-func (p *HistoryPage) updateOverviewState(overview *widgets.OverviewWidget, entry *imcs.CompletedTest) {
+func (p *HistoryPage) updateOverviewState(overview *widgets.OverviewWidget, entry *ui.ExecutionLogEntryViewModel) {
 	effective := p.app.GetModStatusController().ResolveEffectiveSet(entry.Plan.ModIDsToTest)
-
-	candidates := sets.Set{}
-	// This makes the display more intuitive
-	if !entry.StateBeforeTest.IsVerifyingConflictSet {
-		candidates = entry.StateBeforeTest.GetCandidateSet()
-	}
-
-	cleared := entry.StateBeforeTest.GetClearedSet()
-	overview.UpdateState(entry.StateBeforeTest.ConflictSet, cleared, candidates, effective)
+	overview.UpdateState(entry.ConflictSet, entry.ClearedSet, entry.Candidates, effective)
 }
 
 // updateDetailView shows the details for the selected history entry.
@@ -185,34 +177,34 @@ func (p *HistoryPage) updateDetailView(index int) {
 
 	// Derive summary text
 	number := index + 1
-	state := entry.StateBeforeTest
-	numTested := len(entry.Plan.ModIDsToTest)
-	numCandidates := len(state.Candidates)
+	testSet := entry.Plan.ModIDsToTest
+	numTested := len(testSet)
+	numCandidates := len(entry.Candidates)
 
 	// Generate StateDescription on the fly for display
 	stateDesc := ""
-	if entry.Plan.IsVerificationStep {
+	if entry.Kind == imcs.TestPlanVerification {
 		stateDesc = "This was a verification test of the current conflict set."
-	} else if state.IsHandlingIndeterminate {
+	} else if entry.Kind == imcs.TestPlanComplement {
 		stateDesc = "This was a complement test of the second half after an indeterminate result."
-	} else if len(state.SearchStack) > 0 {
+	} else if entry.Kind == imcs.TestPlanContinuation {
 		stateDesc = "This was a bisection step within a candidate set."
 	} else {
 		stateDesc = "This was the initial test of a candidate set."
 	}
 
 	summary := fmt.Sprintf("#%d: Round %d - Iteration %d - Step %d\nResult: [yellow]%s[-]\n%s\nTested: %d mods, Candidates: %d mods remaining",
-		number, state.Round, state.Iteration, state.Step, entry.Result, stateDesc, numTested, numCandidates)
+		number, entry.Round, entry.Iteration, entry.Step, entry.Result, stateDesc, numTested, numCandidates)
 	p.detailSummaryText.SetText(summary)
 
 	// Display the sets. Convert maps to sorted slices for consistent display.
-	combinedConflictSets := sets.Copy(state.ConflictSet)
+	combinedConflictSets := sets.Copy(entry.ConflictSet)
 	for _, conflictSet := range vm.Sets.AllConflicts {
 		combinedConflictSets = sets.AddInPlace(combinedConflictSets, conflictSet)
 	}
 	problematicList := sets.MakeSlice(combinedConflictSets)
-	testSetList := sets.MakeSlice(entry.Plan.ModIDsToTest)
-	clearedList := sets.MakeSlice(state.GetClearedSet())
+	testSetList := sets.MakeSlice(testSet)
+	clearedList := sets.MakeSlice(entry.ClearedSet)
 
 	sets := fmt.Sprintf("[::b]Problematic Mods[-:-:-] (%d):\n%s\n\n[::b]Mods Tested[-:-:-] (%d):\n%s\n\n[::b]Cleared Mods[-:-:-] (%d):\n%s",
 		len(problematicList), strings.Join(problematicList, "\n"),

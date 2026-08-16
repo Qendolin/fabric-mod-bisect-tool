@@ -27,6 +27,12 @@ type ActionReport struct {
 	HasChanges       bool
 }
 
+// TestPlan is the service-facing representation of an upcoming bisection test.
+type TestPlan struct {
+	ModIDsToTest       sets.Set
+	IsVerificationStep bool
+}
+
 // Service encapsulates the entire bisection business logic.
 type Service struct {
 	state     *mods.StateManager
@@ -71,6 +77,31 @@ func (s *Service) EnumerationState() *Enumeration   { return s.enumState }
 // GetCurrentState returns a read-only snapshot of the engine's state.
 func (s *Service) GetCurrentState() imcs.SearchState {
 	return s.engine.GetCurrentState()
+}
+
+// GetCurrentTestPlan returns a copied, service-facing preview of the next test.
+func (s *Service) GetCurrentTestPlan() (*TestPlan, error) {
+	plan, err := s.engine.GetCurrentTestPlan()
+	if err != nil {
+		return nil, err
+	}
+	return toServiceTestPlan(plan), nil
+}
+
+// GetActiveTestPlan returns a copied, service-facing representation of the
+// test currently being executed.
+func (s *Service) GetActiveTestPlan() *TestPlan {
+	return toServiceTestPlan(s.engine.GetActiveTestPlan())
+}
+
+func toServiceTestPlan(plan *imcs.TestPlan) *TestPlan {
+	if plan == nil {
+		return nil
+	}
+	return &TestPlan{
+		ModIDsToTest:       sets.Copy(plan.ModIDsToTest()),
+		IsVerificationStep: plan.IsVerificationStep(),
+	}
 }
 
 // DirectlyUnresolvableMods returns each directly-unresolvable mod mapped to the
@@ -145,10 +176,6 @@ func (s *Service) ReconcileState() (report ActionReport) {
 	return
 }
 
-func (s *Service) GetActiveTestPlan() *imcs.TestPlan {
-	return s.engine.GetActiveTestPlan()
-}
-
 // PlanAndApplyNextTest is the single entry point for the UI's "Step" action.
 // It will fail if the system state is inconsistent.
 func (s *Service) PlanAndApplyNextTest() error {
@@ -162,11 +189,12 @@ func (s *Service) PlanAndApplyNextTest() error {
 		return err // Search is complete, test in progress or cannot proceed.
 	}
 
-	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(plan.ModIDsToTest))
+	testSet := plan.ModIDsToTest()
+	logging.Debugf("BisectService: Plan generated. Resolving effective set for test targets: %v", sets.FormatSet(testSet))
 
 	// 3. Resolve and activate the mod set for the test.
 	logging.Info("BisectService: Resolving effective set for test targets.")
-	result := s.state.ResolveEffectiveSet(plan.ModIDsToTest)
+	result := s.state.ResolveEffectiveSet(testSet)
 	logging.Infof("BisectService: %v", result.Path)
 	for _, dep := range result.UnresolvableDeps {
 		logging.Error("BisectService: " + dep.String())

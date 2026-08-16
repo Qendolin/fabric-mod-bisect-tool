@@ -58,8 +58,25 @@ func (e *Engine) PlanNextTest() (*TestPlan, error) {
 	}
 
 	e.activePlan = plan
-	logging.Infof("IMCSEngine: Committed to test plan with %d mods.", len(plan.ModIDsToTest))
+	e.logPlan(plan)
+	logging.Infof("IMCSEngine: Committed to test plan with %d mods.", len(plan.ModIDsToTest()))
 	return plan, nil
+}
+
+func (e *Engine) logPlan(plan *TestPlan) {
+	candidates := append(sets.OrderedSet{}, plan.C1...)
+	candidates = append(candidates, plan.C2...)
+
+	switch plan.Kind {
+	case TestPlanComplement:
+		logging.Debugf("IMCSEngine.PlanNextTest: Planning complement test after INDETERMINATE. StableSet: %v, Candidates: %v. Testing second half: %v", sets.FormatSet(plan.StableSet), candidates, plan.C2)
+	case TestPlanContinuation:
+		logging.Debugf("IMCSEngine.PlanNextTest: Continuing bisection (stack depth %d). StableSet: %v, Candidates: %v. Testing first half: %v", len(e.state.SearchStack), sets.FormatSet(plan.StableSet), candidates, plan.C1)
+	case TestPlanVerification:
+		logging.Debugf("IMCSEngine.PlanNextTest: Planning verification test for ConflictSet: %v", sets.FormatSet(plan.ConflictSet))
+	case TestPlanNewBisection:
+		logging.Debugf("IMCSEngine.PlanNextTest: Starting new bisection. StableSet: %v, All Candidates: %v. Testing first half: %v", sets.FormatSet(plan.StableSet), candidates, plan.C1)
+	}
 }
 
 // InvalidateActivePlan cancels any in-progress test plan, usually due to an

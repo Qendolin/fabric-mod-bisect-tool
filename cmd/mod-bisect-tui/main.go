@@ -71,6 +71,7 @@ func main() {
 	if a.IsBisectionReady() {
 		finalReport := app.GenerateLogReport(
 			a.GetViewModel(),
+			a.GetExecutionLogViewModel(),
 			a.GetResultViewModel(),
 		)
 		logging.Infof("\n===== Bisection Report =====\n\n%s", finalReport)
