@@ -14,6 +14,7 @@ import (
 // DependencyResolver is a long-lived service that holds the static universe of all mods
 // and their potential providers. It is safe for concurrent use.
 type DependencyResolver struct {
+	// allMods contains only top-level mods, keyed by top-level mod ID.
 	allMods            map[string]*Mod
 	potentialProviders PotentialProvidersMap
 	loader             RunLoader
@@ -23,6 +24,7 @@ type DependencyResolver struct {
 // It is created for a single call to ResolveEffectiveSet and is not reused.
 type resolutionSession struct {
 	// Static data from the parent resolver
+	// allMods contains only top-level mods, keyed by top-level mod ID.
 	allMods            map[string]*Mod
 	potentialProviders PotentialProvidersMap
 	loader             RunLoader
@@ -62,7 +64,8 @@ type ResolutionResult struct {
 	UnresolvableDeps []UnresolvableDependency
 }
 
-// NewDependencyResolver creates a new DependencyResolver service.
+// NewDependencyResolver creates a new DependencyResolver service. allMods must
+// contain only top-level mods keyed by top-level mod ID.
 func NewDependencyResolver(allMods map[string]*Mod, potentialProviders PotentialProvidersMap, loader RunLoader) *DependencyResolver {
 	return &DependencyResolver{
 		allMods:            allMods,
@@ -71,7 +74,8 @@ func NewDependencyResolver(allMods map[string]*Mod, potentialProviders Potential
 	}
 }
 
-// ResolveEffectiveSet calculates the set of active top-level mods based on targets, dependencies, and force flags.
+// ResolveEffectiveSet calculates the set of active top-level mods based on
+// top-level target IDs, dependencies, and force flags.
 func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuses map[string]ModStatus) ResolutionResult {
 	startTime := time.Now()
 	logging.Infof("Resolver: Resolving effective set for %d mods: %v", len(targetSet), sets.FormatSet(targetSet))
@@ -105,7 +109,7 @@ func (dr *DependencyResolver) ResolveEffectiveSet(targetSet sets.Set, modStatuse
 		if status.ForceEnabled {
 			reason = "Forced"
 		}
-		s.ensureModActive(modID, "System (Initial Set)", reason, modID)
+		s.ensureModActive(modID, "System (Initial Set)", reason, modID, "")
 	}
 	duration := time.Since(startTime)
 	if s.resolutionFailed {
@@ -152,8 +156,8 @@ func (s *resolutionSession) collectUnresolvableDeps() []UnresolvableDependency {
 	return deps
 }
 
-// ensureModActive is the main recursive function. It attempts to activate a mod and its dependencies.
-func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDep string) bool {
+// ensureModActive attempts to activate a top-level mod and its dependencies.
+func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDep, logPrefix string) bool {
 	if s.resolutionFailed {
 		return false
 	}
@@ -180,27 +184,38 @@ func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDe
 	}
 
 	s.dfsStack[modID] = true
-	logging.Debugf("Resolver: > Attempting to activate '%s' (for '%s')", modID, neededBy)
+	s.debugf(logPrefix, "> activate top-level '%s' (for '%s')", modID, neededBy)
+	dependencyLogPrefix := logPrefix + "│  "
 
 	// Tentatively add the mod to the set for this recursive path.
 	originalState := s.copyState()
 	s.effectiveSet[modID] = mod
 
-	allDepsOK := true
-	for depID, predicates := range mod.Metadata.Depends {
-		if IsImplicitMod(depID) {
-			continue
-		}
-		if !s.resolveDependency(depID, predicates, modID) {
-			allDepsOK = false
-			break
+	allDepsOK := s.resolveDependencies(modID, mod.Metadata.Depends, dependencyLogPrefix)
+	if allDepsOK {
+		for i, nested := range mod.NestedModules {
+			branch := "├─"
+			if i == len(mod.NestedModules)-1 {
+				branch = "└─"
+			}
+			if !hasNonImplicitDependencies(nested.Info.Depends) {
+				s.debugf(dependencyLogPrefix, "%s nested '%s' bundled in '%s': no dependencies", branch, nested.Info.ID, modID)
+				continue
+			}
+			s.debugf(dependencyLogPrefix, "%s nested '%s' bundled in '%s'", branch, nested.Info.ID, modID)
+			nestedDependencyLogPrefix := dependencyLogPrefix + "│  "
+			if !s.resolveDependencies(nested.Info.ID, nested.Info.Depends, nestedDependencyLogPrefix) {
+				s.debugf(nestedDependencyLogPrefix, "└─ nested '%s' blocked activation of '%s'", nested.Info.ID, modID)
+				allDepsOK = false
+				break
+			}
 		}
 	}
 
 	s.dfsStack[modID] = false // Pop from the virtual stack.
 
 	if allDepsOK {
-		logging.Debugf("Resolver: < Successfully activated '%s'", modID)
+		s.debugf(logPrefix, "< activated top-level '%s'", modID)
 		s.updateResolutionPath(modID, neededBy, reason, satisfiedDep)
 		return true
 	} else {
@@ -208,14 +223,47 @@ func (s *resolutionSession) ensureModActive(modID, neededBy, reason, satisfiedDe
 		// Restore the state to before we tried activating this mod.
 		s.restoreState(originalState)
 		// Refined log message for clarity during backtracking.
-		logging.Debugf("Resolver: < Backtracking from '%s'; could not satisfy its dependencies.", modID)
+		s.debugf(logPrefix, "< backtrack top-level '%s': dependencies unsatisfied", modID)
 		return false
 	}
 }
 
+func (s *resolutionSession) debugf(logPrefix, format string, args ...any) {
+	logging.Debugf("Resolver: %s%s", logPrefix, fmt.Sprintf(format, args...))
+}
+
+// resolveDependencies activates providers for all required dependencies of a
+// top-level or nested module. Nested modules are validated without being added
+// to the effective top-level set.
+func (s *resolutionSession) resolveDependencies(requiringModID string, dependencies VersionRanges, logPrefix string) bool {
+	for depID, predicates := range dependencies {
+		if IsImplicitMod(depID) {
+			continue
+		}
+		if !s.resolveDependency(depID, predicates, requiringModID, logPrefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasNonImplicitDependencies(dependencies VersionRanges) bool {
+	for depID := range dependencies {
+		if !IsImplicitMod(depID) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveDependency finds a valid provider for a dependency and activates it. This is the heart of the backtracking logic.
-func (s *resolutionSession) resolveDependency(depID string, predicates []*version.VersionPredicate, requiringModID string) bool {
+func (s *resolutionSession) resolveDependency(depID string, predicates []*version.VersionPredicate, requiringModID, logPrefix string) bool {
+	predicateStr := formatPredicates(predicates)
+	s.debugf(logPrefix, "└─ require '%s %s' for '%s'", depID, predicateStr, requiringModID)
+	childLogPrefix := logPrefix + "│  "
+
 	if _, ok := s.unresolvableDeps[depID]; ok {
+		s.debugf(childLogPrefix, "└─ dependency '%s' unresolved: previous attempt failed", depID)
 		return false
 	}
 
@@ -228,25 +276,31 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 			return false
 		}
 		// The cached provider is compatible, ensure it's active. This will handle cycles correctly.
-		return s.ensureModActive(cachedProvider.TopLevelModID, requiringModID, "Dependency", depID)
+		active := s.ensureModActive(cachedProvider.TopLevelModID, requiringModID, "Dependency", depID, childLogPrefix)
+		if active {
+			s.debugf(childLogPrefix, "└─ dependency '%s' satisfied by cached '%s'", depID, cachedProvider.TopLevelModID)
+		} else {
+			s.debugf(childLogPrefix, "└─ dependency '%s' unresolved: cached provider '%s' could not activate", depID, cachedProvider.TopLevelModID)
+		}
+		return active
 	}
 
 	candidates := s.findBestProviders(depID, predicates)
-	predicateStr := formatPredicates(predicates)
 
 	if logging.IsDebugEnabled() {
 		var candidateNames []string
 		for _, c := range candidates {
 			candidateNames = append(candidateNames, fmt.Sprintf("%s v%s", c.TopLevelModID, c.VersionOfProvidedItem))
 		}
-		logging.Debugf("Resolver:  ? Trying to satisfy '%s %s' for '%s'. Found %d valid candidates: %v", depID, predicateStr, requiringModID, len(candidates), candidateNames)
+		s.debugf(childLogPrefix, "├─ candidates (%d): %v", len(candidates), candidateNames)
 	}
 
 	originalState := s.copyState()
 	for _, provider := range candidates {
-		logging.Debugf("Resolver:    - Trying candidate: %s (v%s)", provider.TopLevelModID, provider.VersionOfProvidedItem)
-		if s.ensureModActive(provider.TopLevelModID, requiringModID, "Dependency", depID) {
+		s.debugf(childLogPrefix, "├─ candidate '%s' v%s", provider.TopLevelModID, provider.VersionOfProvidedItem)
+		if s.ensureModActive(provider.TopLevelModID, requiringModID, "Dependency", depID, childLogPrefix+"│  ") {
 			s.cachedProviders[depID] = provider
+			s.debugf(childLogPrefix, "└─ dependency '%s' satisfied", depID)
 			return true
 		}
 
@@ -254,7 +308,7 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 			return false
 		}
 
-		logging.Debugf("Resolver:    - Candidate %s failed. Backtracking.", provider.TopLevelModID)
+		s.debugf(childLogPrefix, "└─ candidate '%s' failed; trying next", provider.TopLevelModID)
 		s.restoreState(originalState)
 	}
 
@@ -267,6 +321,7 @@ func (s *resolutionSession) resolveDependency(depID string, predicates []*versio
 	if !s.resolutionFailed {
 		s.failureReason = fmt.Sprintf("failed to resolve dependency '%s %s' for mod '%s'", depID, predicateStr, requiringModID)
 	}
+	s.debugf(childLogPrefix, "└─ dependency '%s' unresolved: no candidate could activate", depID)
 	return false
 }
 
@@ -427,51 +482,6 @@ func (s *resolutionSession) collectResolutionPath() ResolutionPath {
 	return ResolutionPath(pathSlice)
 }
 
-// FindTransitiveDependersOf calculates the complete set of mods that depend,
-// directly or indirectly, on any mod in the initial target set.
-// This function operates on dependency IDs and does not evaluate versions.
-func (dr *DependencyResolver) FindTransitiveDependersOf(targets sets.Set) sets.Set {
-	if len(targets) == 0 {
-		return nil
-	}
-
-	// This set will grow to include the targets and all found dependers.
-	problematicSet := sets.Copy(targets)
-	// This set stores only the dependers, not the initial targets.
-	dependerSet := make(sets.Set)
-
-	for {
-		newlyFound := make(sets.Set)
-		for _, mod := range dr.allMods {
-			// Skip if this mod is already known to be problematic or is a target.
-			if _, isProblematic := problematicSet[mod.Metadata.ID]; isProblematic {
-				continue
-			}
-
-			// Check if this mod depends on any mod in the current problematic set.
-			for depID := range mod.Metadata.Depends {
-				if _, isTargetDep := problematicSet[depID]; isTargetDep {
-					newlyFound[mod.Metadata.ID] = struct{}{}
-					dependerSet[mod.Metadata.ID] = struct{}{}
-					break // Move to the next mod once a dependency is found.
-				}
-			}
-		}
-
-		// If we didn't find any new dependers in a full pass, we are done.
-		if len(newlyFound) == 0 {
-			break
-		}
-
-		// Add the newly found dependers to the problematic set for the next iteration.
-		for id := range newlyFound {
-			problematicSet[id] = struct{}{}
-		}
-	}
-
-	return dependerSet
-}
-
 // UnresolvableModDetails contains categorized information about unresolvable mods,
 // separating direct failures from transitive failures and mapping their root causes.
 type UnresolvableModDetails struct {
@@ -488,6 +498,7 @@ type UnresolvableModDetails struct {
 // Use Case: Ideal for generating detailed, user-facing error reports or logs where explaining
 // *why* a mod is broken is just as important as knowing that it is broken.
 // Note: This is slightly more resource-intensive than CalculateTransitivelyUnresolvableMods.
+// initialCandidates must contain top-level mod IDs.
 func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates sets.Set) UnresolvableModDetails {
 	available := sets.Copy(initialCandidates)
 
@@ -557,6 +568,7 @@ func (dr *DependencyResolver) CalculateUnresolvableModsDetails(initialCandidates
 //
 // Use Case: Ideal for background processing, bisection loops, or filtering where you only
 // need to know *if* a mod is broken to exclude it from further testing.
+// initialCandidates must contain top-level mod IDs.
 func (dr *DependencyResolver) CalculateTransitivelyUnresolvableMods(initialCandidates sets.Set) sets.Set {
 	currentlyAvailable := sets.Copy(initialCandidates)
 	totalUnresolvable := sets.Set{}
@@ -586,6 +598,7 @@ func (dr *DependencyResolver) CalculateTransitivelyUnresolvableMods(initialCandi
 //
 // Use Case: Used internally as the fast-path engine for CalculateTransitivelyUnresolvableMods,
 // or for quick surface-level validation of a mod set.
+// availableMods must contain top-level mod IDs.
 func (dr *DependencyResolver) CalculateDirectlyUnresolvableMods(availableMods sets.Set) sets.Set {
 	resMap := dr.calculateDirectlyUnresolvable(availableMods, true)
 	resSet := make(sets.Set, len(resMap))
@@ -604,6 +617,7 @@ func (dr *DependencyResolver) CalculateDirectlyUnresolvableMods(availableMods se
 //
 // Use Case: Useful when you need a shallow, immediate error report for a specific subset
 // of mods, without traversing the entire dependency tree.
+// availableMods must contain top-level mod IDs.
 func (dr *DependencyResolver) CalculateDirectlyUnresolvableModsWithDetails(availableMods sets.Set) map[string][]string {
 	return dr.calculateDirectlyUnresolvable(availableMods, false)
 }
@@ -616,6 +630,8 @@ func (dr *DependencyResolver) CalculateDirectlyUnresolvableModsWithDetails(avail
 //   - earlyExit: If true, optimizes performance by instantly marking a mod as unresolvable
 //     upon its first missing dependency and skipping slice allocations. If false, it
 //     exhaustively maps all missing dependencies for each broken mod.
+//
+// availableMods must contain top-level mod IDs.
 func (dr *DependencyResolver) calculateDirectlyUnresolvable(availableMods sets.Set, earlyExit bool) map[string][]string {
 	unresolvable := make(map[string][]string)
 	sortedCandidates := sets.MakeSlice(availableMods)

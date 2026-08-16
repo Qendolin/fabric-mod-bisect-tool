@@ -8,7 +8,7 @@ import (
 
 // StateManager provides a way to manage the state of mods.
 type StateManager struct {
-	// The canonical source of all static mod data.
+	// The canonical source of all static top-level mod data, keyed by mod ID.
 	allMods map[string]*Mod
 
 	// Stores the runtime status for each mod, mapping mod ID to its status.
@@ -272,7 +272,7 @@ func (sm *StateManager) GetModStatusesSnapshot() map[string]ModStatus {
 	return snapshot
 }
 
-// GetAllModIDs returns a sorted slice of all mod IDs known to the manager.
+// GetAllModIDs returns sorted IDs for all known top-level mods.
 func (sm *StateManager) GetAllModIDs() []string {
 	ids := make([]string, 0, len(sm.allMods))
 	for id := range sm.allMods {
@@ -282,7 +282,7 @@ func (sm *StateManager) GetAllModIDs() []string {
 	return ids
 }
 
-// GetAllMods returns the map of all loaded mods.
+// GetAllMods returns the map of loaded top-level mods keyed by mod ID.
 func (sm *StateManager) GetAllMods() map[string]*Mod {
 	return sm.allMods
 }

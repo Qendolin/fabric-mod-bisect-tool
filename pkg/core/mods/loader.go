@@ -87,6 +87,7 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 
 	parsedFileResults := ml.parseJarFilesConcurrently(filesToProcess, modsDir, progressReport)
 
+	// allMods contains only the winning top-level mod for each top-level ID.
 	allMods := make(map[string]*Mod)
 	if err := ml.resolveModConflicts(parsedFileResults, allMods); err != nil {
 		logging.Errorf("ModLoader: Error during mod conflict resolution: %v. Proceeding with available mods.", err)

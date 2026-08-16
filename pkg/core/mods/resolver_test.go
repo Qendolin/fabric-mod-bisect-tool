@@ -151,3 +151,81 @@ func TestDependencyWithUnmatchedORPredicates(t *testing.T) {
 		t.Errorf("nvidium should be marked unresolvable with an unmatched dependency, got %v", sets.MakeSlice(unresolvable))
 	}
 }
+
+func TestNestedModuleMissingDependencyMakesContainerUnresolvable(t *testing.T) {
+	container := &Mod{
+		Metadata: ModMetadata{ID: "container"},
+		NestedModules: []NestedModule{{Info: ModMetadata{
+			ID: "nested",
+			Depends: VersionRanges{
+				"missing": {parsePred(t, ">=1.0")},
+			},
+		}}},
+	}
+
+	dr := NewDependencyResolver(
+		map[string]*Mod{"container": container},
+		PotentialProvidersMap{},
+		RunLoaderFabric,
+	)
+	result := dr.ResolveEffectiveSet(
+		sets.MakeSet([]string{"container"}),
+		map[string]ModStatus{"container": {ID: "container", Mod: container}},
+	)
+
+	if _, ok := result.EffectiveSet["container"]; ok {
+		t.Fatalf("container with an unresolved nested dependency was activated: %v", result.EffectiveSet)
+	}
+	if len(result.UnresolvableDeps) != 1 ||
+		result.UnresolvableDeps[0].DepID != "missing" ||
+		result.UnresolvableDeps[0].RequiringModID != "nested" {
+		t.Fatalf("expected nested dependency failure, got %v", result.UnresolvableDeps)
+	}
+}
+
+func TestNestedModuleDependencyActivatesTopLevelProvider(t *testing.T) {
+	container := &Mod{
+		Metadata: ModMetadata{ID: "container"},
+		NestedModules: []NestedModule{{Info: ModMetadata{
+			ID: "nested",
+			Depends: VersionRanges{
+				"dependency": {parsePred(t, ">=1.0")},
+			},
+		}}},
+	}
+	dependency := &Mod{
+		Metadata: ModMetadata{
+			ID:      "dependency",
+			Version: VersionField{Version: mustParseVersion(t, "1.0")},
+		},
+	}
+
+	dr := NewDependencyResolver(
+		map[string]*Mod{"container": container, "dependency": dependency},
+		PotentialProvidersMap{
+			"dependency": {{
+				TopLevelModID:         "dependency",
+				VersionOfProvidedItem: mustParseVersion(t, "1.0"),
+				TopLevelModVersion:    mustParseVersion(t, "1.0"),
+				IsDirectProvide:       true,
+			}},
+		},
+		RunLoaderFabric,
+	)
+	result := dr.ResolveEffectiveSet(
+		sets.MakeSet([]string{"container"}),
+		map[string]ModStatus{
+			"container":  {ID: "container", Mod: container},
+			"dependency": {ID: "dependency", Mod: dependency},
+		},
+	)
+
+	for _, id := range []string{"container", "dependency"} {
+		if _, ok := result.EffectiveSet[id]; !ok {
+			t.Errorf("expected %q in effective set, got %v", id, result.EffectiveSet)
+		}
+	}
+	if _, ok := result.EffectiveSet["nested"]; ok {
+		t.Error("nested module must not be added as a top-level effective-set entry")
+	}
+}
