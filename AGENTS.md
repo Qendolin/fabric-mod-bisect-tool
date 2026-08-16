@@ -31,3 +31,4 @@ logic (`pkg/core`), and UI contracts (`pkg/ui`).
 - All changes: `go build`, `go vet`, `go test -count=1 ./...`, and `gofmt` on
   touched files before finishing.
 - Amend the Changelog.md before every commit or after every major feature is complete. Document only what actually affects the behavior of the app. Keep it brief.
+- Before a commit, make sure the translations for the GUI have been updated, if needed.
