@@ -125,7 +125,7 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 	path := s.pathEditor.Text()
 	if path != s.lastPath {
 		s.lastPath = path
-		s.probeLoader(path)
+		s.probeLoader(path, nil)
 	}
 
 	if s.startClick.Clicked(gtx) {
@@ -138,13 +138,13 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 				s.app.ShowErrorDialog(s.app.Text("error", "Error", nil), s.app.Text("select_mods_folder_error", "Please select a mods folder", nil), nil)
 			}()
 		} else {
-			// Read the loader selection on the UI thread: the probe worker and
-			// the dropdown can update it concurrently, so reading it here (the
-			// UI goroutine) avoids a data race.
-			s.app.Run(func() {
-				defer logging.HandlePanic()
-				s.app.StartLoadingProcess(path, s.selectedLoader())
-			})
+			if probe.IsValidDir(path) {
+				s.probeLoader(path, func() {
+					s.startLoading(path)
+				})
+			} else {
+				s.startLoading(path)
+			}
 		}
 	}
 
@@ -303,15 +303,33 @@ func (s *SetupScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dime
 
 // probeLoader queues a probe of the given path, updating the recommended loader
 // unless the user has made a manual selection. Probes run one at a time.
-func (s *SetupScreen) probeLoader(path string) {
+func (s *SetupScreen) probeLoader(path string, after func()) {
+	if !probe.IsValidDir(path) {
+		return
+	}
 	s.probeWorker.Request(path, func(res probe.ProbeResult) {
 		s.app.Run(func() {
+			if path != s.pathEditor.Text() {
+				return
+			}
 			if !s.userSelectedLoader && res.PrimaryLoader != "" {
 				if idx, ok := loaderChoiceIndex(res.PrimaryLoader); ok {
 					s.loaderSelect.selected = idx
 				}
 			}
+			if after != nil {
+				after()
+			}
 		})
+	})
+}
+
+func (s *SetupScreen) startLoading(path string) {
+	// Read the loader selection on the UI thread: the probe worker and the
+	// dropdown can update it concurrently, so reading it here avoids a data race.
+	s.app.Run(func() {
+		defer logging.HandlePanic()
+		s.app.StartLoadingProcess(path, s.selectedLoader())
 	})
 }
 
