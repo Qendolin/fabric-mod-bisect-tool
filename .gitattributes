@@ -1,0 +1,2 @@
+# Keep tracked text files normalized in the repository and working tree.
+* text=auto eol=lf
