@@ -82,8 +82,10 @@ func TestActivatorRestoreReDisables(t *testing.T) {
 	if err := act.Initialize(statuses); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	// Initialize enables every non-missing mod, so c is now active.
-	assertModFileState(t, adapter, "c", true)
+	// Initialize records initial state without altering files on disk.
+	assertModFileState(t, adapter, "a", true)
+	assertModFileState(t, adapter, "b", true)
+	assertModFileState(t, adapter, "c", false)
 
 	// Disable c, then snapshot the state to roll back to.
 	if err := act.Activate(sets.MakeSet([]string{"a", "b"})); err != nil {
@@ -195,8 +197,8 @@ func TestActivatorRestoreInitialState(t *testing.T) {
 	if err := act.Initialize(statuses); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	// Initialize enables every non-missing mod, so b is now active.
-	assertModFileState(t, adapter, "b", true)
+	// Initialize does not change the mod state, so b is still disabled.
+	assertModFileState(t, adapter, "b", false)
 
 	// Run a test that flips both mods.
 	if err := act.Activate(sets.MakeSet([]string{"b"})); err != nil {
