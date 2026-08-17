@@ -29,6 +29,20 @@ func (a *App) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 	})
 }
 
+func (a *App) OnInitialModStateSelection(initiallyDisabled []string) {
+	a.Run(func() {
+		screen := screens.NewInitialModStateScreen(a, initiallyDisabled)
+		a.SetActiveScreen(screen)
+		if _, present := a.GetViewModel().Mods.Infos["crash_assistant"]; present {
+			go func() {
+				if a.ShowCrashAssistantDialog() {
+					a.Run(func() { screen.KeepDisabled("crash_assistant") })
+				}
+			}()
+		}
+	})
+}
+
 func (a *App) OnTestReady() {
 	a.Run(func() {
 		a.mainScreen.ShowTestPrompt()

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/util"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/gdamore/tcell/v2"
@@ -51,6 +52,7 @@ func NewUnresolvablePage(app tui.TUIApp, mods []ui.UnresolvableModInfo) *Unresol
 		p.selected = index
 		p.updateAllStates()
 	})
+	p.list.SetBorderPadding(0, 0, 1, 1)
 	p.rebuildList()
 	// Focus the first entry by default.
 	p.setSelected(0)
@@ -62,7 +64,8 @@ func NewUnresolvablePage(app tui.TUIApp, mods []ui.UnresolvableModInfo) *Unresol
 	listFrame := widgets.NewTitleFrame(p.list, "Unresolvable Mods")
 	buttons := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(nil, 0, 1, false).
-		AddItem(p.continueBt, 16, 0, true)
+		AddItem(p.continueBt, 16, 0, true).
+		AddItem(nil, 1, 0, false)
 
 	p.AddItem(listFrame, 0, 1, true).
 		AddItem(widgets.NewHorizontalSeparator(tcell.ColorGray), 1, 0, false).
@@ -235,12 +238,14 @@ func (p *UnresolvablePage) inputHandler() func(event *tcell.EventKey) *tcell.Eve
 			p.toggleSelected()
 			return nil
 		}
+
+		if util.IsTextInput(p.app.GetFocus()) {
+			return event
+		}
+
 		switch event.Rune() {
-		case ' ', 'i', 'I':
+		case ' ':
 			p.toggleSelected()
-			return nil
-		case 'c', 'C':
-			p.continueAction()
 			return nil
 		}
 		return event
@@ -268,7 +273,6 @@ func (p *UnresolvablePage) continueAction() {
 func (p *UnresolvablePage) GetActionPrompts() []tui.ActionPrompt {
 	return []tui.ActionPrompt{
 		{Input: "Enter/Space", Action: "Toggle Decision"},
-		{Input: "C", Action: "Continue"},
 	}
 }
 

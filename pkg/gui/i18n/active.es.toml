@@ -351,3 +351,15 @@ other = "de origen desconocido"
 
 [from_jar]
 other = "{{.ID}} de '{{.File}}.jar'"
+[initial_mod_state]
+other = "Estado de los mods antes de la búsqueda"
+[initial_mod_state_description]
+other = "Mantén desactivados los mods que ya estaban desactivados u omite otros mods de la búsqueda si ya sabes que son buenos, malos o molestos durante las pruebas. Las opciones para omitirlos están abajo."
+[all]
+other = "Todos"
+[none]
+other = "Ninguno"
+[keep_mods_disabled]
+other = "Mantener los mods deshabilitados"
+[omit_mods_from_search]
+other = "Excluir mods de la búsqueda"

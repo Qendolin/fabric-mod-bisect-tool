@@ -174,12 +174,6 @@ func (a *App) SetActiveScreen(screen Screen) {
 
 func (a *App) SwitchToMainScreen() {
 	a.SetActiveScreen(a.mainScreen)
-	vm := a.GetViewModel()
-	if vm.Progress.StepCount == 0 {
-		if _, detected := vm.Mods.Infos["crash_assistant"]; detected {
-			go a.ShowCrashAssistantDialog()
-		}
-	}
 }
 
 func (a *App) processCallbacks() {

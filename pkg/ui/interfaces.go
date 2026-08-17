@@ -16,6 +16,7 @@ type AppController interface {
 	// participate in the search immediately, and signals the UI that loading is
 	// done.
 	CompleteLoading()
+	CompleteInitialModState(keepDisabled, omitted sets.Set)
 
 	GetViewModel() BisectionViewModel
 	GetExecutionLogViewModel() ExecutionLogViewModel
@@ -94,6 +95,7 @@ type View interface {
 	// with an ignore/disable choice; once the user is done, it must call
 	// AppController.ResolveUnresolvableMods to continue.
 	OnUnresolvableMods(mods []UnresolvableModInfo)
+	OnInitialModStateSelection(initiallyDisabled []string)
 	OnBisectionReady()
 	OnTestReady()
 	OnIterationComplete()

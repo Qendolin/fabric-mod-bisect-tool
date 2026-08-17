@@ -45,7 +45,7 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.undoClick.Clicked(gtx) {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "", true)
 			if !ok {
 				return
 			}
@@ -56,7 +56,7 @@ func (s *HaltScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.resetClick.Clicked(gtx) {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog(s.app.Text("reset_search", "Reset Search", nil), s.app.Text("reset_search_confirm", "This will discard all search progress and start over. Continue?", nil), "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("reset_search", "Reset Search", nil), s.app.Text("reset_search_confirm", "This will discard all search progress and start over. Continue?", nil), "", false)
 			if !ok {
 				return
 			}

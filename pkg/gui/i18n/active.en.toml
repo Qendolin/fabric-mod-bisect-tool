@@ -246,3 +246,16 @@ other = "Disabling this mod would also require disabling:"
 other = "from unknown"
 [from_jar]
 other = "{{.ID}} from '{{.File}}.jar'"
+[initial_mod_state]
+other = "Mod State Before Search"
+[initial_mod_state_description]
+other = "Keep known-disabled mods disabled, or omit other mods from the search if you already know they are good, bad, or distracting during testing. The omission choices are below."
+[all]
+other = "All"
+[none]
+other = "None"
+[keep_mods_disabled]
+other = "Keep Mods Disabled"
+
+[omit_mods_from_search]
+other = "Omit Mods from Search"

@@ -1,7 +1,6 @@
 package mods
 
 import (
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -123,6 +122,17 @@ func (a *Activator) Snapshot() ActivationSnapshot {
 		logging.Errorf("Activator: Accessed snapshot before initialization")
 	}
 	return a.copySnapshot(a.snap)
+}
+
+func (a *Activator) InitiallyDisabledModIDs() []string {
+	ids := make([]string, 0, len(a.initial.States))
+	for id, state := range a.initial.States {
+		if !state.Missing && !state.Active {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // copySnapshot returns a deep copy of the given snapshot so that later
@@ -363,26 +373,13 @@ func (a *Activator) set(id string, active bool) error {
 
 // Initialize enables all non-missing mods and initializes the snapshot state
 func (a *Activator) Initialize(statuses map[string]ModStatus) error {
-	logging.Info("Activator: Enabling all non-missing mods for a clean initial state.")
-	targetSet := make(sets.Set, len(a.allMods))
-	for id, status := range statuses {
-		if !status.IsMissing {
-			targetSet[id] = struct{}{}
-		}
-	}
-
 	snap, err := a.createSnapshot()
 	if err != nil {
 		return err
 	}
 	a.snap = snap
-	// Keep the pre-activation state as an independent copy so the initial
-	// Activate below (and any later mutations) cannot corrupt it.
+	// Keep the pre-activation state as an independent copy
 	a.initial = a.copySnapshot(snap)
-
-	if err := a.Activate(targetSet); err != nil {
-		return fmt.Errorf("failed during initial enabling of all mods: %w", err)
-	}
 
 	return nil
 }

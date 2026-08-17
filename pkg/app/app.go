@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -118,6 +119,11 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 	a.bisectSvc = svc
 	a.bisectSvc.ResetSearch()
 
+	initiallyDisabled := svc.Activator().InitiallyDisabledModIDs()
+	a.view.OnInitialModStateSelection(initiallyDisabled)
+}
+
+func (a *App) finishLoading() {
 	// Initial reconciliation scans the full mod set for unresolvable mods and
 	// reports the directly-unresolvable roots so the UI can ask the user what
 	// to do with each of them.
@@ -142,6 +148,35 @@ func (a *App) onLoadingComplete(modsPath string, allMods map[string]*mods.Mod, p
 		return
 	}
 	a.view.OnBisectionReady()
+}
+
+func (a *App) CompleteInitialModState(keepDisabled, omitted sets.Set) {
+	if !a.IsBisectionReady() {
+		return
+	}
+	initiallyDisabled := a.bisectSvc.Activator().InitiallyDisabledModIDs()
+	initialSet := make(map[string]struct{}, len(initiallyDisabled))
+	for _, id := range initiallyDisabled {
+		initialSet[id] = struct{}{}
+		_, keep := keepDisabled[id]
+		a.bisectSvc.StateManager().SetForceDisabled(id, keep)
+		a.bisectSvc.StateManager().SetOmitted(id, false)
+	}
+	for id := range keepDisabled {
+		if _, ok := initialSet[id]; !ok {
+			a.bisectSvc.StateManager().SetForceDisabled(id, true)
+			a.bisectSvc.StateManager().SetOmitted(id, false)
+		}
+	}
+	for id := range omitted {
+		if slices.Contains(initiallyDisabled, id) {
+			continue
+		}
+		a.bisectSvc.StateManager().SetForceDisabled(id, false)
+		a.bisectSvc.StateManager().SetOmitted(id, true)
+	}
+	// TODO: Make app loading a state machine, this is horrible
+	a.finishLoading()
 }
 
 // CompleteLoading finishes the loading phase. After the unresolvable mods

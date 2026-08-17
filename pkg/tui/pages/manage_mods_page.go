@@ -6,6 +6,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/util"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/gdamore/tcell/v2"
@@ -26,7 +27,7 @@ type ManageModsPage struct {
 	// committed or discarded yet.
 	dirty bool
 
-	modTable          *widgets.SearchableTable
+	modTable          *widgets.ExtendedTable
 	forceEnabledList  *tview.TextView
 	forceDisabledList *tview.TextView
 	statusText        *tview.TextView
@@ -43,7 +44,9 @@ func NewManageModsPage(app tui.TUIApp) *ManageModsPage {
 	}
 
 	headers := []string{"Status", "ID", "Name", "File"}
-	p.modTable = widgets.NewSearchableTable(headers, 1, 2) // Search on ID (col 1) and Name (col 2)
+	p.modTable = widgets.NewExtendedTable(headers, true)
+	p.modTable.SetMaxColumnWidths(0, 0, 35, 0) // Set name column max width
+	p.modTable.SetSearchColumns(1, 2)          // Search on ID (col 1) and Name (col 2)
 	p.modTable.SetBorderPadding(0, 0, 1, 1)
 
 	p.forceDisabledList.SetBorderPadding(0, 0, 1, 1)
@@ -85,6 +88,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 				"Outstanding Changes",
 				"You have unsaved changes. Apply them?",
 				"",
+				true,
 				func() {
 					p.commitChanges()
 				},
@@ -95,7 +99,7 @@ func (p *ManageModsPage) inputHandler() func(event *tcell.EventKey) *tcell.Event
 			return nil
 		}
 
-		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
+		if util.IsTextInput(p.app.GetFocus()) {
 			return event
 		}
 

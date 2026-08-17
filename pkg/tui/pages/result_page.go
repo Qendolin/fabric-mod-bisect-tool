@@ -70,6 +70,7 @@ func NewResultPage(app tui.TUIApp) *ResultPage {
 				"Confirmation",
 				"This will start a new search for the next conflict set within the remaining mods. Continue?",
 				"",
+				true,
 				func() { // OnYes
 					p.app.Navigation().CloseModal()
 					go func() {

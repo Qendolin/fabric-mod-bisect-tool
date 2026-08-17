@@ -224,6 +224,7 @@ func (a *App) ShowDialogQuestionBisectionContinueWithMissingMods(missingMods set
 			"Missing Mod Files Detected",
 			"The following mod files were unexpectedly missing. Do you want to continue the search without them?",
 			sets.FormatSet(missingMods).String(),
+			true,
 			func() { onDismiss(true) },
 			func() { onDismiss(false) },
 		)
@@ -244,23 +245,18 @@ func (a *App) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 	})
 }
 
-func (a *App) OnBisectionReady() {
+func (a *App) OnInitialModStateSelection(initiallyDisabled []string) {
 	a.ExecuteAndDraw(func() {
-		a.navManager.SwitchTo(tui.PageMainID)
-		if _, detected := a.GetViewModel().Mods.Infos["crash_assistant"]; !detected {
-			return
+		page := pages.NewInitialModStatePage(a, initiallyDisabled)
+		a.navManager.ShowModal("initial_mod_state", page)
+		if _, present := a.GetViewModel().Mods.Infos["crash_assistant"]; present {
+			a.dialogManager.ShowQuestionDialog("Crash Assistant Detected", "Crash Assistant can slow down the search. Do you want to disable it?", "", true, func() { page.KeepDisabled("crash_assistant") }, nil)
 		}
-		a.dialogManager.ShowQuestionDialog(
-			"Crash Assistant Detected",
-			"Crash Assistant can slow down the search. Do you want to disable it?",
-			"",
-			func() {
-				a.GetModStatusController().SetOverride("crash_assistant", ui.ModOverrideForceDisabled)
-				a.GetModStatusController().Commit()
-			},
-			nil,
-		)
 	})
+}
+
+func (a *App) OnBisectionReady() {
+	a.ExecuteAndDraw(func() { a.navManager.SwitchTo(tui.PageMainID) })
 }
 
 func (a *App) OnTestReady() {

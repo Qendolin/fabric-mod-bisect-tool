@@ -67,7 +67,7 @@ func (s *ResultScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 
 	if s.continueClick.Clicked(gtx) {
 		go func() {
-			ok := s.app.ShowQuestionDialog(s.app.Text("continue_search", "Continue Search", nil), s.app.Text("continue_search_confirm", "This will start a new search for the next conflict set within the remaining mods. Continue?", nil), "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("continue_search", "Continue Search", nil), s.app.Text("continue_search_confirm", "This will start a new search for the next conflict set within the remaining mods. Continue?", nil), "", true)
 			if ok {
 				s.app.Run(func() {
 					s.app.GetBisectionController().ContinueSearch()

@@ -67,7 +67,7 @@ func (m *DialogManager) ShowQuitDialog() {
 	m.app.Navigation().ShowModal("quit_dialog", NewModalPage(modal))
 }
 
-func (m *DialogManager) ShowQuestionDialog(title, question, details string, onYes func(), onNo func()) {
+func (m *DialogManager) ShowQuestionDialog(title, question, details string, initial bool, onYes func(), onNo func()) {
 	modal := widgets.NewRichModal().
 		SetCenteredText(question).
 		AddButtons([]string{"No", "Yes"}).
@@ -86,6 +86,9 @@ func (m *DialogManager) ShowQuestionDialog(title, question, details string, onYe
 				}
 			})
 		})
+	if initial {
+		modal.SetFocus(1)
+	}
 	if details != "" {
 		modal.SetDetailsText(details)
 	}

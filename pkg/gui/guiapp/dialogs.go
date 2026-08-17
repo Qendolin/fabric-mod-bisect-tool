@@ -2,7 +2,6 @@ package guiapp
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
-	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/ncruces/zenity"
 )
 
@@ -24,25 +23,21 @@ func (a *App) ShowInfoDialog(title, message, details string) {
 	_ = zenity.Info(fullMsg, opts...)
 }
 
-func (a *App) ShowQuestionDialog(title, message, details string) (ok bool) {
+func (a *App) ShowQuestionDialog(title, message, details string, initial bool) (ok bool) {
 	fullMsg := message
 	if details != "" {
 		fullMsg += "\n\n" + details
 	}
 	opts := append(a.dialogOptions(), zenity.Title(title))
+	if !initial {
+		opts = append(opts, zenity.DefaultCancel())
+	}
 	err := zenity.Question(fullMsg, opts...)
 	return err == nil
 }
 
-func (a *App) ShowCrashAssistantDialog() {
-	if !a.ShowQuestionDialog(
-		a.translator.Text("crash_assistant_detected", "Crash Assistant Detected", nil),
-		a.translator.Text("crash_assistant_disable_question", "Crash Assistant can slow down the search. Do you want to disable it?", nil),
-		"") {
-		return
-	}
-	a.GetModStatusController().SetOverride("crash_assistant", ui.ModOverrideForceDisabled)
-	a.GetModStatusController().Commit()
+func (a *App) ShowCrashAssistantDialog() bool {
+	return a.ShowQuestionDialog(a.translator.Text("crash_assistant_detected", "Crash Assistant Detected", nil), a.translator.Text("crash_assistant_disable_question", "Crash Assistant can slow down the search. Do you want to disable it?", nil), "", true)
 }
 
 // Dialogs (Blocking)
@@ -90,5 +85,6 @@ func (a *App) ShowDialogQuestionBisectionContinueWithMissingMods(missingMods set
 		a.translator.Text("missing_mod_files", "Missing Mod Files Detected", nil),
 		a.translator.Text("missing_mod_files_message", "The following mod files were unexpectedly missing. Do you want to continue the search without them?", nil),
 		sets.FormatSet(missingMods).String(),
+		true,
 	)
 }

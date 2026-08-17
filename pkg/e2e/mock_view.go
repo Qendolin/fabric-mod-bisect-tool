@@ -273,6 +273,10 @@ func (m *MockView) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 	}
 }
 
+func (m *MockView) OnInitialModStateSelection(initiallyDisabled []string) {
+	m.record("OnInitialModStateSelection")
+}
+
 func (m *MockView) OnTestReady() {
 	m.record("OnTestReady")
 }

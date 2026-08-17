@@ -90,7 +90,7 @@ func (s *MainScreen) Layout(gtx layout.Context, th *material.Theme) layout.Dimen
 	if s.undoClick.Clicked(gtx) && vm.Progress.CanUndo {
 		go func() {
 			defer logging.HandlePanic()
-			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "")
+			ok := s.app.ShowQuestionDialog(s.app.Text("undo_last_step", "Undo Last Step", nil), s.app.Text("undo_confirm", "Are you sure you want to undo the last step?", nil), "", true)
 			if !ok {
 				return
 			}

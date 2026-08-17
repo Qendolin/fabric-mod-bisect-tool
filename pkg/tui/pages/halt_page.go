@@ -66,7 +66,7 @@ func NewHaltPage(app tui.TUIApp, groupA, groupB sets.Set, onClose func()) *HaltP
 		AddItem(groupBFrame, 0, 1, false)
 
 	undoAction := func() {
-		p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", "", func() {
+		p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", "", true, func() {
 			p.onClose()
 			go func() {
 				defer logging.HandlePanic()
@@ -75,7 +75,7 @@ func NewHaltPage(app tui.TUIApp, groupA, groupB sets.Set, onClose func()) *HaltP
 		}, nil)
 	}
 	resetAction := func() {
-		p.app.Dialogs().ShowQuestionDialog("Confirmation", "This will discard all search progress and start over. Continue?", "", func() {
+		p.app.Dialogs().ShowQuestionDialog("Confirmation", "This will discard all search progress and start over. Continue?", "", false, func() {
 			p.onClose()
 			go func() {
 				defer logging.HandlePanic()

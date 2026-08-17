@@ -9,6 +9,7 @@ import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/logging"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/util"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/tui/widgets"
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/gdamore/tcell/v2"
@@ -143,7 +144,7 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 	return func(event *tcell.EventKey) *tcell.EventKey {
 
 		// I don't know a proper fix for this
-		if _, ok := p.app.GetFocus().(*tview.InputField); ok {
+		if util.IsTextInput(p.app.GetFocus()) {
 			return event
 		}
 
@@ -164,7 +165,7 @@ func (p *MainPage) inputHandler() func(event *tcell.EventKey) *tcell.EventKey {
 				p.app.Navigation().SwitchTo(PageManageModsID)
 				return nil
 			case 'r', 'R':
-				p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to reset the search?", "", func() {
+				p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to reset the search?", "", false, func() {
 					go func() {
 						defer logging.HandlePanic()
 						p.app.GetBisectionController().ResetSearch()
@@ -338,7 +339,7 @@ func (p *MainPage) formatModList(modIDs []string, modsInfo map[string]ui.ModView
 }
 
 func (p *MainPage) confirmUndo() {
-	p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", "", func() {
+	p.app.Dialogs().ShowQuestionDialog("Confirmation", "Are you sure you want to undo the last step?", "", true, func() {
 		go func() {
 			defer logging.HandlePanic()
 			err := p.app.GetBisectionController().Undo()

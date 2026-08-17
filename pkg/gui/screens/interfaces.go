@@ -16,7 +16,8 @@ type App interface {
 	ShowQuitDialog()
 	ShowErrorDialog(title, message string, err error)
 	ShowInfoDialog(title, message, details string)
-	ShowQuestionDialog(title, message, details string) (ok bool)
+	ShowQuestionDialog(title, message, details string, initial bool) (ok bool)
+	ShowCrashAssistantDialog() bool
 
 	// WindowAttachID returns the platform window handle for the main window,
 	// used to attach native dialogs to it. May be nil on platforms without a
