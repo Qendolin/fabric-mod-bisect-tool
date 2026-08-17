@@ -13,7 +13,7 @@ logic (`pkg/core`), and UI contracts (`pkg/ui`).
   `go doc gioui.org/op/clip.Path`).
 - `go build ./...` — build everything.
 - `go vet ./...` — static checks.
-- `go test -count=1 ./...` — run the full test suite (fresh, no cache).
+- `go test -count=1 -timeout 10s ./...` — run the full test suite (fresh, no cache) with a ten-second Go test timeout.
 - `gofmt -l <dir>` — list unformatted files.
 
 ## Conventions
@@ -22,6 +22,10 @@ logic (`pkg/core`), and UI contracts (`pkg/ui`).
   unless necessary.
 - Keep the layered architecture clean: `core` (pure logic) → `app` (controller + viewmodel) → `ui` (interfaces) → `gui`/`tui` (frontends). Shared UI-agnostic
   helpers live outside the frontends (e.g. `pkg/probe`).
+- The controller/view boundary must communicate through serializable data only.
+  Do not add callbacks, function values, channels, or other executable state to
+  shared `pkg/ui` interfaces or their data contracts. Existing exceptions may
+  be cleaned up when touched, but must not be expanded.
 - The manifest loader a mod targets is `mods.ManifestLoader`; the loader the
   user runs is `mods.RunLoader` (Fabric, NeoForge, Connector, Kilt).
 - Probe results return an empty `PrimaryLoader` when nothing is detected; UI
