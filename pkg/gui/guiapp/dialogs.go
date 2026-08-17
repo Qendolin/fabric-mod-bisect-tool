@@ -2,6 +2,7 @@ package guiapp
 
 import (
 	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/core/sets"
+	"github.com/Qendolin/fabric-mod-bisect-tool/pkg/ui"
 	"github.com/ncruces/zenity"
 )
 
@@ -31,6 +32,17 @@ func (a *App) ShowQuestionDialog(title, message, details string) (ok bool) {
 	opts := append(a.dialogOptions(), zenity.Title(title))
 	err := zenity.Question(fullMsg, opts...)
 	return err == nil
+}
+
+func (a *App) ShowCrashAssistantDialog() {
+	if !a.ShowQuestionDialog(
+		a.translator.Text("crash_assistant_detected", "Crash Assistant Detected", nil),
+		a.translator.Text("crash_assistant_disable_question", "Crash Assistant can slow down the search. Do you want to disable it?", nil),
+		"") {
+		return
+	}
+	a.GetModStatusController().SetOverride("crash_assistant", ui.ModOverrideForceDisabled)
+	a.GetModStatusController().Commit()
 }
 
 // Dialogs (Blocking)

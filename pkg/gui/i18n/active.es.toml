@@ -196,6 +196,10 @@ other = "Haz una "
 other = "copia de seguridad"
 [world_backup_suffix]
 other = " de los mundos que cargues!"
+[crash_assistant_detected]
+other = "Crash Assistant detectado"
+[crash_assistant_disable_question]
+other = "Crash Assistant puede ralentizar la búsqueda. ¿Quieres desactivarlo?"
 
 [round_iteration]
 other = "Ronda {{.Round}} · Iteración {{.Iteration}}"

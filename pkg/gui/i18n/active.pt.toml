@@ -196,6 +196,10 @@ other = "Faz um "
 other = "backup"
 [world_backup_suffix]
 other = " dos mundos que carregares!"
+[crash_assistant_detected]
+other = "Crash Assistant detetado"
+[crash_assistant_disable_question]
+other = "O Crash Assistant pode tornar a pesquisa mais lenta. Queres desativá-lo?"
 
 [round_iteration]
 other = "Ronda {{.Round}} · Iteração {{.Iteration}}"

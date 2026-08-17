@@ -186,6 +186,10 @@ other = "Erstelle ein "
 other = "Backup"
 [world_backup_suffix]
 other = " für geladene Welten!"
+[crash_assistant_detected]
+other = "Crash Assistant erkannt"
+[crash_assistant_disable_question]
+other = "Crash Assistant kann die Suche verlangsamen. Möchtest du ihn deaktivieren?"
 [round_iteration]
 other = "Runde {{.Round}} · Iteration {{.Iteration}}"
 [estimated_tests]

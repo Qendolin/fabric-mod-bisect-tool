@@ -245,7 +245,22 @@ func (a *App) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 }
 
 func (a *App) OnBisectionReady() {
-	a.ExecuteAndDraw(func() { a.navManager.SwitchTo(tui.PageMainID) })
+	a.ExecuteAndDraw(func() {
+		a.navManager.SwitchTo(tui.PageMainID)
+		if _, detected := a.GetViewModel().Mods.Infos["crash_assistant"]; !detected {
+			return
+		}
+		a.dialogManager.ShowQuestionDialog(
+			"Crash Assistant Detected",
+			"Crash Assistant can slow down the search. Do you want to disable it?",
+			"",
+			func() {
+				a.GetModStatusController().SetOverride("crash_assistant", ui.ModOverrideForceDisabled)
+				a.GetModStatusController().Commit()
+			},
+			nil,
+		)
+	})
 }
 
 func (a *App) OnTestReady() {

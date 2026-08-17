@@ -140,6 +140,10 @@ other = "Make a "
 other = "backup"
 [world_backup_suffix]
 other = " of worlds you load!"
+[crash_assistant_detected]
+other = "Crash Assistant Detected"
+[crash_assistant_disable_question]
+other = "Crash Assistant can slow down the search. Do you want to disable it?"
 [round_iteration]
 other = "Round {{.Round}} · Iteration {{.Iteration}}"
 [estimated_tests]
