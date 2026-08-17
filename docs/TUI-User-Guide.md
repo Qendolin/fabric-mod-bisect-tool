@@ -52,6 +52,9 @@ This is your mission control. You'll see several lists showing the status of you
 >
 > For example, if you're using Iris and something only breaks when shaders are turned on, you'll need to force-enable Iris. Otherwise, the tool might disable it during testing, and you wouldn't even be able to tell if the issue still happens.
 
+> [!WARNING]
+> **Back up worlds before testing if you will load them!** This is not needed for servers, new test worlds, or tests that do not load a world.
+
 ![Main Page](img/main-page-start.jpg)
 
 ### Step 3: The Test

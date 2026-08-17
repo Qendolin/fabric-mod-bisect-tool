@@ -84,6 +84,9 @@ has been found).
 * Press the **▶ Start Bisection** button to begin the first test. On later steps the button reads **▶ Next Step**.
 * You can also press **↩ Undo** to step back to a previous test.
 
+> [!WARNING]
+> **Back up worlds before testing if you will load them!** This is not needed for servers, new test worlds, or tests that do not load a world.
+
 ![Main screen](img/gui-main-screen.jpg)
 
 ### Step 4: The Test Screen

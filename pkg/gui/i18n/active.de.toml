@@ -180,6 +180,12 @@ other = "▶  Überprüfungsschritt"
 other = "Bereit zum Start"
 [ready_to_begin_description]
 other = "Dieses Tool verwendet eine binäre Suche, um problematische Mods zu isolieren.\nJeder Test halbiert die Kandidatenmenge und findet Konflikte effizient.\nSchließe das Spiel, falls es gerade geöffnet ist!\nSei bereit, das Spiel zu starten, sobald du dazu aufgefordert wirst."
+[world_backup_prefix]
+other = "Erstelle ein "
+[world_backup_word]
+other = "Backup"
+[world_backup_suffix]
+other = " für geladene Welten!"
 [round_iteration]
 other = "Runde {{.Round}} · Iteration {{.Iteration}}"
 [estimated_tests]

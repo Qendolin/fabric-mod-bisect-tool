@@ -228,9 +228,19 @@ func (s *MainScreen) layoutNormalLeft(
 		layout.Rigid(s.layoutDivider),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, desc)
-			lbl.Color = theme.FgColor
-			return lbl.Layout(gtx)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, desc)
+					lbl.Color = theme.FgColor
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !vm.IsReady || vm.Progress.StepCount != 0 {
+						return layout.Dimensions{}
+					}
+					return s.layoutBackupWarning(gtx, th)
+				}),
+			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			pb := material.ProgressBar(th, progress)
@@ -242,6 +252,26 @@ func (s *MainScreen) layoutNormalLeft(
 			return s.layoutUndoStepButtons(gtx, th, vm, stepBtnText)
 		}),
 	)
+}
+
+func (s *MainScreen) layoutBackupWarning(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	prefix := material.Body2(th, s.app.Text("world_backup_prefix", "Make a ", nil))
+	prefix.Color = theme.FgColor
+
+	backup := material.Body2(th, s.app.Text("world_backup_word", "backup", nil))
+	backup.Color = theme.WarningColor
+	backup.Font.Weight = font.Bold
+
+	suffix := material.Body2(th, s.app.Text("world_backup_suffix", " of worlds you load!", nil))
+	suffix.Color = theme.FgColor
+
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(prefix.Layout),
+			layout.Rigid(backup.Layout),
+			layout.Rigid(suffix.Layout),
+		)
+	})
 }
 
 func (s *MainScreen) layoutUndoStepButtons(gtx layout.Context, th *material.Theme, vm *ui.BisectionViewModel, stepText string) layout.Dimensions {

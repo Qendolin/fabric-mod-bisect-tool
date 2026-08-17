@@ -190,6 +190,12 @@ other = "Pronto per iniziare"
 
 [ready_to_begin_description]
 other = "Questo strumento utilizza una ricerca binaria per isolare le mod problematiche.\nOgni test dimezza il gruppo di candidati, trovando i conflitti in modo efficiente.\nChiudi il gioco se è attualmente aperto!\nTieniti pronto ad avviare il gioco quando richiesto."
+[world_backup_prefix]
+other = "Fai un "
+[world_backup_word]
+other = "backup"
+[world_backup_suffix]
+other = " dei mondi che carichi!"
 
 [round_iteration]
 other = "Round {{.Round}} · Iterazione {{.Iteration}}"

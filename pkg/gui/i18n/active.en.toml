@@ -134,6 +134,12 @@ other = "▶  Verification Step"
 other = "Ready to begin"
 [ready_to_begin_description]
 other = "This tool uses binary search to isolate problematic mods.\nEach test halves the candidate set, finding conflicts efficiently.\nClose the game if it is currently open!\nBe ready to start the game when prompted."
+[world_backup_prefix]
+other = "Make a "
+[world_backup_word]
+other = "backup"
+[world_backup_suffix]
+other = " of worlds you load!"
 [round_iteration]
 other = "Round {{.Round}} · Iteration {{.Iteration}}"
 [estimated_tests]
