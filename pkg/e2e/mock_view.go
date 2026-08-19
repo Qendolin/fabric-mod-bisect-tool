@@ -83,7 +83,8 @@ type MockView struct {
 	// unresolvableCh receives the mods passed to OnUnresolvableMods (once).
 	unresolvableCh chan []ui.UnresolvableModInfo
 	// haltedCh receives the groups passed to OnBisectionHalted (once each).
-	haltedCh chan HaltInvocation
+	haltedCh                   chan HaltInvocation
+	initialModStateSelectionCh chan []string
 }
 
 // HaltInvocation describes a single OnBisectionHalted call.
@@ -95,10 +96,11 @@ type HaltInvocation struct {
 // NewMockView creates an empty recording view.
 func NewMockView() *MockView {
 	return &MockView{
-		dialogCh:       make(chan DialogInvocation),
-		readyCh:        make(chan struct{}),
-		unresolvableCh: make(chan []ui.UnresolvableModInfo, 1),
-		haltedCh:       make(chan HaltInvocation, 1),
+		dialogCh:                   make(chan DialogInvocation),
+		readyCh:                    make(chan struct{}),
+		unresolvableCh:             make(chan []ui.UnresolvableModInfo, 1),
+		haltedCh:                   make(chan HaltInvocation, 1),
+		initialModStateSelectionCh: make(chan []string, 1),
 	}
 }
 
@@ -183,6 +185,18 @@ func (m *MockView) WaitHalted(t *testing.T, timeout time.Duration) HaltInvocatio
 		t.Fatalf("MockView: timed out waiting for OnBisectionHalted; calls: %v", m.Calls())
 	}
 	return HaltInvocation{}
+}
+
+// WaitInitialModStateSelection blocks until OnInitialModStateSelection fires and returns the reported mods, or fails the test on timeout.
+func (m *MockView) WaitInitialModStateSelection(t *testing.T, timeout time.Duration) []string {
+	t.Helper()
+	select {
+	case mods := <-m.initialModStateSelectionCh:
+		return mods
+	case <-time.After(timeout):
+		t.Fatalf("MockView: timed out waiting for OnInitialModStateSelection; calls: %v", m.Calls())
+	}
+	return nil
 }
 
 // block sends an invocation to the dialog channel and blocks until Respond.
@@ -275,6 +289,10 @@ func (m *MockView) OnUnresolvableMods(mods []ui.UnresolvableModInfo) {
 
 func (m *MockView) OnInitialModStateSelection(initiallyDisabled []string) {
 	m.record("OnInitialModStateSelection")
+	select {
+	case m.initialModStateSelectionCh <- initiallyDisabled:
+	default:
+	}
 }
 
 func (m *MockView) OnTestReady() {

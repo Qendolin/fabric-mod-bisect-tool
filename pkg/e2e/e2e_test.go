@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,8 @@ func newLoadedApp(t *testing.T, specs map[string]modSpec) (*app.App, *MockView, 
 func newLoadedAppWithLoader(t *testing.T, specs map[string]modSpec, loader mods.RunLoader) (*app.App, *MockView, string) {
 	t.Helper()
 	a, mock, modsDir := newTestAppWithLoader(t, specs, loader)
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{})
 	mock.WaitReady(t, timeout)
 	return a, mock, modsDir
 }
@@ -226,6 +229,9 @@ func TestUnresolvableModsAtLoad(t *testing.T) {
 	}
 	a, mock, _ := newTestApp(t, specs)
 
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{})
+
 	// The unresolvable mods must be reported without any Step having run.
 	mods := mock.WaitUnresolvable(t, timeout)
 	if len(mods) != 1 || mods[0].Mod.ID != "mod_c" {
@@ -275,6 +281,9 @@ func TestUnresolvableModsLoggedAtLoad(t *testing.T) {
 	a.SetView(mock)
 	a.StartLoadingProcess(modsDir, mods.RunLoaderFabric)
 
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{})
+
 	mock.WaitUnresolvable(t, timeout)
 
 	var found bool
@@ -300,6 +309,9 @@ func TestUnresolvableModsDisableAtLoad(t *testing.T) {
 	}
 	a, mock, _ := newTestApp(t, specs)
 
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{})
+
 	mock.WaitUnresolvable(t, timeout)
 	// Empty decisions map == every mod stays disabled (the default).
 	a.GetModStatusController().ResolveUnresolvableMods(nil)
@@ -324,6 +336,9 @@ func TestForceEnableUnresolvableBlocked(t *testing.T) {
 		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0", "depends": {"nonexistent": ">=1.0"}}`},
 	}
 	a, mock, _ := newTestApp(t, specs)
+
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{})
 
 	mock.WaitUnresolvable(t, timeout)
 	a.GetModStatusController().ResolveUnresolvableMods(nil) // keep mod_c disabled
@@ -854,4 +869,85 @@ func TestBisectionHaltsOnDoubleIndeterminate(t *testing.T) {
 	// Pressing Step again must not plan a new test; it re-reports the halt.
 	a.GetBisectionController().Step()
 	mock.WaitHalted(t, timeout)
+}
+
+// TestLoadFiresOnInitialModStateSelection asserts that the OnInitialModStateSelection callback is fired after loading, and that the initial disabled set is reported correctly.
+func TestInitialModStateSelectionInitiallyDisabled(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar.disabled": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-b-1.0.jar":          {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+		"mod-c-1.0.jar":          {JSONContent: `{"id": "mod_c", "version": "1.0"}`},
+	}
+	_, mock, _ := newTestApp(t, specs)
+
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	if !slices.Contains(initiallyDisabled, "mod_a") {
+		t.Errorf("expected mod_a to be initially disabled, got %v", initiallyDisabled)
+	}
+
+	if len(initiallyDisabled) != 1 {
+		t.Errorf("expected only mod_a to be initially disabled, got %v", initiallyDisabled)
+	}
+}
+
+func TestLoadFiresOnInitialModStateSelection(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+		"mod-c-1.0.jar": {JSONContent: `{"id": "mod_c", "version": "1.0"}`},
+	}
+	_, mock, _ := newTestApp(t, specs)
+
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	if len(initiallyDisabled) != 0 {
+		t.Errorf("expected no modules to be initially disabled, got %v", initiallyDisabled)
+	}
+}
+
+func TestCompleteInitialModStateKeepDisabled(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar.disabled": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-b-1.0.jar":          {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+	}
+	a, mock, _ := newTestApp(t, specs)
+
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	if !slices.Contains(initiallyDisabled, "mod_a") {
+		t.Fatalf("expected mod_a to be initially disabled, got %v", initiallyDisabled)
+	}
+
+	a.CompleteInitialModState(sets.Set{"mod_a": {}}, sets.Set{})
+	mock.WaitReady(t, timeout)
+
+	statuses := a.GetModStatusController().GetModStatuses()
+	if statuses["mod_a"].Override != ui.ModOverrideForceDisabled {
+		t.Fatalf("expected mod_a to stay force-disabled, got %q", statuses["mod_a"].Override)
+	}
+	if statuses["mod_b"].Override != ui.ModOverrideNone {
+		t.Fatalf("expected mod_b to remain enabled, got %q", statuses["mod_b"].Override)
+	}
+}
+
+func TestCompleteInitialModStateOmitMods(t *testing.T) {
+	specs := map[string]modSpec{
+		"mod-a-1.0.jar": {JSONContent: `{"id": "mod_a", "version": "1.0"}`},
+		"mod-b-1.0.jar": {JSONContent: `{"id": "mod_b", "version": "1.0"}`},
+	}
+	a, mock, _ := newTestApp(t, specs)
+
+	initiallyDisabled := mock.WaitInitialModStateSelection(t, timeout)
+	if len(initiallyDisabled) != 0 {
+		t.Fatalf("expected no mods to be initially disabled, got %v", initiallyDisabled)
+	}
+
+	a.CompleteInitialModState(sets.MakeSet(initiallyDisabled), sets.Set{"mod_b": {}})
+	mock.WaitReady(t, timeout)
+
+	statuses := a.GetModStatusController().GetModStatuses()
+	if statuses["mod_b"].Override != ui.ModOverrideOmitted {
+		t.Fatalf("expected mod_b to be omitted, got %q", statuses["mod_b"].Override)
+	}
+	if statuses["mod_a"].Override != ui.ModOverrideNone {
+		t.Fatalf("expected mod_a to remain enabled, got %q", statuses["mod_a"].Override)
+	}
 }
