@@ -67,7 +67,7 @@ func (a *App) StartLoadingProcess(modsPath string, loader mods.RunLoader) {
 
 		modLoader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: loader}, Adapter: a.adapter}
 		logging.Infof("App: Loading mods from '%s', Loader: %s", modsPath, loader.String())
-		allMods, providers, _, loadErr := modLoader.LoadMods(modsPath, overrides, a.view.OnLoadingProgress)
+		allMods, providers, loadErr := modLoader.LoadMods(modsPath, overrides, a.view.OnLoadingProgress)
 
 		a.onLoadingComplete(modsPath, allMods, providers, loadErr)
 	}()

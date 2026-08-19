@@ -21,7 +21,7 @@ func loadWith(t *testing.T, modsDir string, loader mods.RunLoader) (map[string]*
 	t.Helper()
 	adapter := mods.FileAdapter{BaseDirectory: modsDir}
 	ml := mods.ModLoader{ModParser: mods.ModParser{RunLoader: loader}, Adapter: &adapter}
-	allMods, providers, _, err := ml.LoadMods(modsDir, nil, nil)
+	allMods, providers, err := ml.LoadMods(modsDir, nil, nil)
 	return allMods, providers, err
 }
 

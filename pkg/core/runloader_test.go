@@ -68,7 +68,7 @@ func TestRunLoaderManifestPriority(t *testing.T) {
 
 			adapter := mods.FileAdapter{BaseDirectory: modsDir}
 			loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: tc.loader}, Adapter: &adapter}
-			allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
+			allMods, _, err := loader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
 			}
@@ -124,7 +124,7 @@ func TestRunLoaderSkipsForeignMods(t *testing.T) {
 
 			adapter := mods.FileAdapter{BaseDirectory: modsDir}
 			loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: tc.loader}, Adapter: &adapter}
-			allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
+			allMods, _, err := loader.LoadMods(modsDir, nil, nil)
 			if err != nil {
 				t.Fatalf("LoadMods failed: %v", err)
 			}

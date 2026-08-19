@@ -33,7 +33,7 @@ func TestModLoader(t *testing.T) {
 	loadAndCheck := func(t *testing.T, modsDir string, expectedModIDs []string, expectedProviderCount int, expectError bool) (map[string]*mods.Mod, mods.PotentialProvidersMap) {
 		adapter := mods.FileAdapter{BaseDirectory: modsDir}
 		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
-		allMods, providers, _, err := loader.LoadMods(modsDir, nil, nil)
+		allMods, providers, err := loader.LoadMods(modsDir, nil, nil)
 
 		if expectError {
 			if err == nil {
@@ -252,7 +252,7 @@ func TestModLoader(t *testing.T) {
 		setupDummyMods(t, modsDir, specs)
 		adapter := mods.FileAdapter{BaseDirectory: modsDir}
 		loader := mods.ModLoader{ModParser: mods.ModParser{RunLoader: mods.RunLoaderFabric}, Adapter: &adapter}
-		allMods, _, _, err := loader.LoadMods(modsDir, nil, nil)
+		allMods, _, err := loader.LoadMods(modsDir, nil, nil)
 		if err != nil {
 			t.Fatalf("LoadMods returned an unexpected error: %v", err)
 		}

@@ -61,13 +61,13 @@ type ModLoadingProgressCallback = func(fileName string, i, count int)
 
 // LoadMods discovers mods, parses metadata, resolves basic conflicts, and builds provider maps.
 func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, progressReport ModLoadingProgressCallback) (
-	map[string]*Mod, PotentialProvidersMap, []string, error,
+	map[string]*Mod, PotentialProvidersMap, error,
 ) {
 	if ml.Adapter == nil {
-		return nil, nil, nil, fmt.Errorf("ModLoader: Adapter is required")
+		return nil, nil, fmt.Errorf("ModLoader: Adapter is required")
 	}
 	if ml.RunLoader == "" {
-		return nil, nil, nil, fmt.Errorf("ModLoader: no mod loader selected")
+		return nil, nil, fmt.Errorf("ModLoader: no mod loader selected")
 	}
 	logging.Infof("ModLoader: Loading mods with loader: %s.", ml.RunLoader.String())
 
@@ -76,13 +76,13 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 
 	diskFiles, err := os.ReadDir(modsDir)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("reading mods directory %s: %w", modsDir, err)
+		return nil, nil, fmt.Errorf("reading mods directory %s: %w", modsDir, err)
 	}
 
 	filesToProcess := ml.filterJarFiles(diskFiles)
 	if len(filesToProcess) == 0 {
 		logging.Infof("ModLoader: No mod files found in %s", modsDir)
-		return make(map[string]*Mod), potentialProviders, []string{}, nil
+		return make(map[string]*Mod), potentialProviders, nil
 	}
 
 	parsedFileResults := ml.parseJarFilesConcurrently(filesToProcess, modsDir, progressReport)
@@ -101,15 +101,9 @@ func (ml *ModLoader) LoadMods(modsDir string, overrides *DependencyOverrides, pr
 
 	populateProviderMaps(allMods, potentialProviders)
 
-	sortedModIDs := make([]string, 0, len(allMods))
-	for id := range allMods {
-		sortedModIDs = append(sortedModIDs, id)
-	}
-	sort.Strings(sortedModIDs)
-
 	logging.Infof("ModLoader: Finished loading. Total %d mods loaded. %d potential capabilities provided.", len(allMods), len(potentialProviders))
 
-	return allMods, potentialProviders, sortedModIDs, nil
+	return allMods, potentialProviders, nil
 }
 
 // filterJarFiles returns a slice of os.DirEntry for files ending with .jar or .jar.disabled.
